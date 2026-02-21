@@ -67,7 +67,7 @@ const itemsDb = initDb(DATA_DIR);
 // ---------------------------------------------------------------------- express
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '512kb' }));
 
 // Trust first proxy (for correct IP logging behind nginx/caddy)
 app.set('trust proxy', 1);
