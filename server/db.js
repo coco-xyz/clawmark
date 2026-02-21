@@ -190,32 +190,32 @@ function initDb(dataDir) {
 
     function assignItem(item_id, assignee) {
         const now = new Date().toISOString();
-        stmts.updateItemAssignee.run({ id: item_id, assignee, status: 'in_progress', updated_at: now });
-        return { success: true };
+        const result = stmts.updateItemAssignee.run({ id: item_id, assignee, status: 'in_progress', updated_at: now });
+        return { success: result.changes > 0, changes: result.changes };
     }
 
     function resolveItem(item_id) {
         const now = new Date().toISOString();
-        stmts.updateItemStatus.run({ id: item_id, status: 'resolved', updated_at: now, resolved_at: now, verified_at: null });
-        return { success: true };
+        const result = stmts.updateItemStatus.run({ id: item_id, status: 'resolved', updated_at: now, resolved_at: now, verified_at: null });
+        return { success: result.changes > 0, changes: result.changes };
     }
 
     function verifyItem(item_id) {
         const now = new Date().toISOString();
-        stmts.updateItemStatus.run({ id: item_id, status: 'verified', updated_at: now, resolved_at: null, verified_at: now });
-        return { success: true };
+        const result = stmts.updateItemStatus.run({ id: item_id, status: 'verified', updated_at: now, resolved_at: null, verified_at: now });
+        return { success: result.changes > 0, changes: result.changes };
     }
 
     function reopenItem(item_id) {
         const now = new Date().toISOString();
-        stmts.updateItemStatus.run({ id: item_id, status: 'open', updated_at: now, resolved_at: null, verified_at: null });
-        return { success: true };
+        const result = stmts.updateItemStatus.run({ id: item_id, status: 'open', updated_at: now, resolved_at: null, verified_at: null });
+        return { success: result.changes > 0, changes: result.changes };
     }
 
     function closeItem(item_id) {
         const now = new Date().toISOString();
-        stmts.updateItemStatus.run({ id: item_id, status: 'closed', updated_at: now, resolved_at: null, verified_at: null });
-        return { success: true };
+        const result = stmts.updateItemStatus.run({ id: item_id, status: 'closed', updated_at: now, resolved_at: null, verified_at: null });
+        return { success: result.changes > 0, changes: result.changes };
     }
 
     function getItem(id) {

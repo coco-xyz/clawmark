@@ -411,33 +411,38 @@ function handleAddMessage(req, res) {
 function handleAssignItem(req, res) {
     const { assignee } = req.body;
     if (!assignee) return res.status(400).json({ error: 'Missing assignee' });
-    itemsDb.assignItem(req.params.id, assignee);
+    const result = itemsDb.assignItem(req.params.id, assignee);
+    if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.assigned', { id: req.params.id, assignee });
     res.json({ success: true });
 }
 
 // -- POST /items/:id/resolve
 function handleResolveItem(req, res) {
-    itemsDb.resolveItem(req.params.id);
+    const result = itemsDb.resolveItem(req.params.id);
+    if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.resolved', { id: req.params.id });
     res.json({ success: true });
 }
 
 // -- POST /items/:id/verify
 function handleVerifyItem(req, res) {
-    itemsDb.verifyItem(req.params.id);
+    const result = itemsDb.verifyItem(req.params.id);
+    if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
 }
 
 // -- POST /items/:id/reopen
 function handleReopenItem(req, res) {
-    itemsDb.reopenItem(req.params.id);
+    const result = itemsDb.reopenItem(req.params.id);
+    if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
 }
 
 // -- POST /items/:id/close
 function handleCloseItem(req, res) {
-    itemsDb.closeItem(req.params.id);
+    const result = itemsDb.closeItem(req.params.id);
+    if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
 }
 
