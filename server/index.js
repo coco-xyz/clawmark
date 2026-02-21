@@ -19,6 +19,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 
 // ---------------------------------------------------------------------- config
 
@@ -82,7 +83,11 @@ const upload = multer({
                path.extname(file.originalname || '.png'))
     }),
     limits: { fileSize: 5 * 1024 * 1024 },
-    fileFilter: (req, file, cb) => cb(null, file.mimetype.startsWith('image/'))
+    fileFilter: (req, file, cb) => {
+        const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico']);
+        const ext = path.extname(file.originalname || '').toLowerCase();
+        cb(null, file.mimetype.startsWith('image/') && ALLOWED_EXT.has(ext));
+    }
 });
 
 // ------------------------------------------------------------------ webhook
@@ -132,7 +137,8 @@ function sendWebhook(event, payload) {
 // ------------------------------------------------------------------- auth
 
 // Verify invite code — returns { valid: bool, userName?: string }
-app.post('/verify', (req, res) => {
+const verifyLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many attempts, try again later' } });
+app.post('/verify', verifyLimiter, (req, res) => {
     const { code } = req.body;
     if (code && VALID_CODES[code]) {
         res.json({ valid: true, userName: VALID_CODES[code] });
