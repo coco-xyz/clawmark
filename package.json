@@ -1,0 +1,18 @@
+{
+  "name": "clawmark",
+  "version": "0.1.0",
+  "description": "AI-native feedback & collaboration widget — annotate, comment, and track issues on any web page",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "keywords": ["feedback", "annotation", "collaboration", "bug-report", "comment", "ai", "openclaw"],
+  "author": "Kevin He",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "multer": "^2.0.2",
+    "better-sqlite3": "^12.6.2"
+  }
+}

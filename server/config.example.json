@@ -1,0 +1,15 @@
+{
+  "port": 3458,
+  "dataDir": "./data",
+  "auth": {
+    "type": "invite-code",
+    "codes": {
+      "demo-code": "DemoUser"
+    }
+  },
+  "webhook": {
+    "url": "",
+    "events": ["item.created", "item.resolved", "item.assigned"],
+    "secret": ""
+  }
+}

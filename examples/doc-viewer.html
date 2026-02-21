@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClawMark — Document Comment Example</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            line-height: 1.6;
+            color: #333;
+        }
+        h1 { color: #1a1a2e; }
+        .article-content {
+            background: #fff;
+            padding: 24px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .article-content p { margin: 16px 0; }
+    </style>
+</head>
+<body>
+    <h1>ClawMark — Document Comments</h1>
+    <p>Select any text in the article below to leave a comment. Comments can be resolved and reopened.</p>
+
+    <div class="article-content">
+        <h2>Why AI Agents Need Memory</h2>
+        <p>Traditional chatbots start every conversation from scratch. They have no memory of previous interactions, no understanding of ongoing projects, and no ability to build on past work.</p>
+        <p>AI agents are different. An agent that remembers its past conversations, understands the context of its work, and can reference previous decisions is fundamentally more useful than one that starts fresh every time.</p>
+        <p>The Inside Out memory architecture solves this by organizing agent memory into tiers: always-loaded identity and state, on-demand reference files, and archived session logs. This ensures the agent always knows who it is and what it's working on, while keeping detailed history accessible when needed.</p>
+        <p>With persistent memory, an AI agent can truly become a team member — one that grows more capable over time, not one that needs to be re-briefed every morning.</p>
+    </div>
+
+    <!-- ClawMark Integration — FAB + Comment plugins -->
+    <script src="../widget/index.js" type="module"></script>
+    <script type="module">
+        import ClawMark from '../widget/index.js';
+
+        const cm = new ClawMark({
+            api: 'http://localhost:3458/api/clawmark',
+            app: 'docs',
+            user: 'guest'
+        });
+
+        cm.use(ClawMark.Fab);
+        cm.use(ClawMark.Comment, {
+            contentSelector: '.article-content',
+            highlight: true,
+            aiEdit: false
+        });
+        cm.mount();
+    </script>
+</body>
+</html>
