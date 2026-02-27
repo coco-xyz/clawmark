@@ -63,6 +63,30 @@ extension/
 └── icons/                 # 插件图标 (16/32/48/128)
 ```
 
+### 消息归属：URL → 项目映射
+
+浏览器插件的一个核心问题：用户在任意网页产生消息，如何判定这条消息属于哪个项目？
+
+**方案：混合自动 + 手动**
+
+1. **URL 规则自动匹配**（优先）— 项目配置中定义 URL pattern：
+```json
+{
+  "projects": {
+    "coco-dashboard": {
+      "patterns": ["*.coco.xyz/*", "github.com/coco-xyz/coco-dashboard/*"]
+    },
+    "clawmark": {
+      "patterns": ["github.com/coco-xyz/clawmark/*", "clawmark.coco.xyz/*"]
+    }
+  }
+}
+```
+2. **用户手动选择**（兜底）— 匹配不到时，插件弹出项目选择器
+3. **记忆学习** — 用户选过的 URL-项目关联被记住，下次自动匹配
+
+插件侧边栏始终显示"当前项目"，用户可随时切换。
+
 ### 用户流程
 
 **流程 1：快速评论**
@@ -163,6 +187,18 @@ POST   /api/v2/auth/apikey        # 为插件签发 API Key
 - **官方托管**：`clawmark.coco.xyz` — COCO 运营
 - **自建部署**：`npm install && npm start` — 任何人都能跑自己的实例
 - 插件设置：服务端地址默认 `clawmark.coco.xyz`，用户可切换到自建地址
+
+### 部署体验（Agent UX 优先）
+
+部署的主要执行者是 AI agent（如 Lucy、Boot），不是人类运维。设计原则：
+
+1. **一条命令初始化** — `npx clawmark init` 生成 config.json（带注释），`npm start` 启动
+2. **Docker 一行跑起来** — `docker run -p 3458:3458 -v data:/data clawmark/server`
+3. **环境变量优先** — 所有配置项都能通过 `CLAWMARK_*` 环境变量覆盖，方便 PM2 / CI/CD
+4. **Config 自动生成** — `init` 命令检测环境，生成合理的默认配置
+5. **健康检查** — `GET /health` 返回 `{ status, version, uptime, db_ok }`，agent 可验证部署成功
+6. **错误信息明确** — 缺配置、端口冲突、DB 连接失败等，报错具体到可直接定位
+7. **幂等操作** — 重复执行 init/start 不会破坏已有数据
 
 ## 第三层：分发（渠道 Adapter）
 
