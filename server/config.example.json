@@ -11,5 +11,32 @@
     "url": "",
     "events": ["item.created", "item.resolved", "item.assigned"],
     "secret": ""
+  },
+  "distribution": {
+    "rules": [
+      {
+        "match": { "event": "item.created", "type": "issue", "priority": ["high", "critical"] },
+        "channels": ["lark-dev"]
+      },
+      {
+        "match": { "event": "item.created", "type": "comment" },
+        "channels": ["webhook-default"]
+      },
+      {
+        "match": { "event": "item.resolved" },
+        "channels": ["webhook-default"]
+      }
+    ],
+    "channels": {
+      "lark-dev": {
+        "adapter": "lark",
+        "webhook_url": "https://open.larksuite.com/open-apis/bot/v2/hook/YOUR_HOOK_ID"
+      },
+      "webhook-default": {
+        "adapter": "webhook",
+        "url": "https://your-service.com/webhook",
+        "secret": ""
+      }
+    }
   }
 }

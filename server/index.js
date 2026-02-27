@@ -65,6 +65,42 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const { initDb } = require('./db');
 const itemsDb = initDb(DATA_DIR);
 
+// ------------------------------------------------------------------ adapters
+
+const { AdapterRegistry } = require('./adapters/index');
+const { WebhookAdapter } = require('./adapters/webhook');
+const { LarkAdapter } = require('./adapters/lark');
+
+const registry = new AdapterRegistry();
+registry.registerType('webhook', WebhookAdapter);
+registry.registerType('lark', LarkAdapter);
+
+// Load distribution config
+if (config.distribution) {
+    registry.loadConfig(config.distribution);
+}
+
+// Legacy webhook → auto-register as 'webhook-legacy' channel if no distribution config
+if (WEBHOOK.url && !config.distribution) {
+    registry.loadConfig({
+        rules: [
+            { match: { event: 'item.created' }, channels: ['webhook-legacy'] },
+            { match: { event: 'item.resolved' }, channels: ['webhook-legacy'] },
+            { match: { event: 'item.assigned' }, channels: ['webhook-legacy'] },
+            { match: { event: 'discussion.created' }, channels: ['webhook-legacy'] },
+            { match: { event: 'discussion.message' }, channels: ['webhook-legacy'] },
+        ],
+        channels: {
+            'webhook-legacy': {
+                adapter: 'webhook',
+                url: WEBHOOK.url,
+                secret: WEBHOOK.secret || '',
+                events: WEBHOOK.events || null,
+            },
+        },
+    });
+}
+
 // ---------------------------------------------------------------------- express
 
 const app = express();
@@ -90,48 +126,20 @@ const upload = multer({
     }
 });
 
-// ------------------------------------------------------------------ webhook
+// ------------------------------------------------------------------ dispatch
 
 /**
- * Fire-and-forget POST to the configured webhook URL.
+ * Dispatch event through the adapter registry (fire-and-forget).
+ * Replaces the old sendWebhook — now routes through all configured channels.
  *
  * @param {string} event   Event name, e.g. 'item.created'
- * @param {object} payload Arbitrary JSON payload
+ * @param {object} payload The item/data payload
  */
 function sendWebhook(event, payload) {
-    const url = WEBHOOK.url;
-    const allowedEvents = WEBHOOK.events;
-
-    if (!url) return;
-    if (allowedEvents && allowedEvents.length && !allowedEvents.includes(event)) return;
-
-    const body = JSON.stringify({ event, payload, timestamp: new Date().toISOString() });
-    const secret = WEBHOOK.secret || '';
-
-    try {
-        const parsed = new URL(url);
-        const isHttps = parsed.protocol === 'https:';
-        const options = {
-            hostname: parsed.hostname,
-            port: parsed.port || (isHttps ? 443 : 80),
-            path: parsed.pathname + parsed.search,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-                ...(secret ? { 'X-ClawMark-Secret': secret } : {})
-            }
-        };
-
-        const req = (isHttps ? https : http).request(options, (res) => {
-            console.log(`[webhook] ${event} → ${res.statusCode}`);
-        });
-        req.on('error', (err) => console.error('[webhook] error:', err.message));
-        req.write(body);
-        req.end();
-    } catch (err) {
-        console.error('[webhook] failed to send:', err.message);
-    }
+    registry.dispatch(event, payload).catch(err => {
+        // dispatch already logs per-channel errors; this catches unexpected failures
+        console.error(`[dispatch] Unexpected error for ${event}:`, err.message);
+    });
 }
 
 // ------------------------------------------------------------------- auth
@@ -504,6 +512,196 @@ app.post('/api/clawmark/:app/items/:id/reopen',  handleReopenItem);
 app.post('/api/clawmark/:app/items/:id/close',   handleCloseItem);
 app.post('/api/clawmark/:app/items/:id/respond', handleRespondToItem);
 
+// ================================================================= V2 API
+//
+// New /api/v2/ endpoints for ClawMark V2.
+// Supports source_url, source_title, tags, screenshots.
+// Backward compatible — V1 routes above remain unchanged.
+// =================================================================
+
+// -- V2 auth middleware: accept invite code OR API key
+function v2Auth(req, res, next) {
+    // API key in Authorization header
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        const key = authHeader.slice(7);
+        const apiKey = itemsDb.validateApiKey(key);
+        if (apiKey) {
+            req.v2Auth = { type: 'apikey', app_id: apiKey.app_id, user: apiKey.created_by, keyName: apiKey.name };
+            return next();
+        }
+        return res.status(401).json({ error: 'Invalid API key' });
+    }
+    // Invite code in body or query
+    const code = req.body?.code || req.query?.code;
+    if (code && VALID_CODES[code]) {
+        req.v2Auth = { type: 'invite', user: VALID_CODES[code] };
+        return next();
+    }
+    // No auth — allow for read endpoints, block for writes
+    if (req.method === 'GET') {
+        req.v2Auth = null;
+        return next();
+    }
+    return res.status(401).json({ error: 'Authentication required (API key or invite code)' });
+}
+
+// -- POST /api/v2/items — create item with full V2 schema
+app.post('/api/v2/items', v2Auth, (req, res) => {
+    const { type, app_id, source_url, source_title, quote, quote_position,
+            screenshots, title, content, priority, tags, userName, version } = req.body;
+
+    const user = userName || req.v2Auth?.user;
+    const resolvedAppId = app_id || req.v2Auth?.app_id || 'default';
+    const doc = source_url || req.body.doc || '/';
+
+    if (!user) return res.status(400).json({ error: 'Missing userName' });
+
+    const item = itemsDb.createItem({
+        app_id: resolvedAppId,
+        doc,
+        type: type || 'comment',
+        title,
+        quote,
+        quote_position: quote_position ? JSON.stringify(quote_position) : null,
+        priority: priority || 'normal',
+        created_by: user,
+        version,
+        message: content,
+        source_url: source_url || null,
+        source_title: source_title || null,
+        tags: tags || [],
+        screenshots: screenshots || [],
+    });
+
+    sendWebhook('item.created', { app_id: resolvedAppId, item });
+    res.json({ success: true, item });
+});
+
+// -- GET /api/v2/items — query with url/tag support
+app.get('/api/v2/items', (req, res) => {
+    const { url, tag, doc, type, status, assignee, app_id } = req.query;
+    const resolvedAppId = app_id || 'default';
+
+    if (url) {
+        const items = itemsDb.getItemsByUrl({ app_id: resolvedAppId, url });
+        return res.json({ items });
+    }
+    if (tag) {
+        const items = itemsDb.getItemsByTag({ app_id: resolvedAppId, tag });
+        return res.json({ items });
+    }
+
+    const items = itemsDb.getItems({ app_id: resolvedAppId, doc, type, status, assignee });
+    res.json({ items });
+});
+
+// -- GET /api/v2/items/:id
+app.get('/api/v2/items/:id', (req, res) => {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    // Parse JSON fields for client convenience
+    if (typeof item.tags === 'string') item.tags = JSON.parse(item.tags || '[]');
+    if (typeof item.screenshots === 'string') item.screenshots = JSON.parse(item.screenshots || '[]');
+    res.json(item);
+});
+
+// -- POST /api/v2/items/:id/tags — add or remove tags
+app.post('/api/v2/items/:id/tags', v2Auth, (req, res) => {
+    const { add, remove } = req.body;
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+
+    let tags = typeof item.tags === 'string' ? JSON.parse(item.tags || '[]') : (item.tags || []);
+
+    if (add) {
+        const toAdd = Array.isArray(add) ? add : [add];
+        tags = [...new Set([...tags, ...toAdd])];
+    }
+    if (remove) {
+        const toRemove = new Set(Array.isArray(remove) ? remove : [remove]);
+        tags = tags.filter(t => !toRemove.has(t));
+    }
+
+    itemsDb.updateItemTags(req.params.id, tags);
+    res.json({ success: true, tags });
+});
+
+// -- POST /api/v2/items/:id/messages
+app.post('/api/v2/items/:id/messages', v2Auth, (req, res) => {
+    const { role, content, userName } = req.body;
+    if (!content) return res.status(400).json({ error: 'Missing content' });
+
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+
+    const user = userName || req.v2Auth?.user;
+    const result = itemsDb.addMessage({
+        item_id: req.params.id,
+        role: role || 'user',
+        content,
+        user_name: user,
+    });
+
+    res.json({ success: true, message: result });
+});
+
+// -- POST /api/v2/items/:id/resolve
+app.post('/api/v2/items/:id/resolve', v2Auth, (req, res) => {
+    const result = itemsDb.resolveItem(req.params.id);
+    if (!result.changes) return res.status(404).json({ error: 'Item not found' });
+    sendWebhook('item.resolved', { id: req.params.id });
+    res.json({ success: true });
+});
+
+// -- POST /api/v2/items/:id/assign
+app.post('/api/v2/items/:id/assign', v2Auth, (req, res) => {
+    const { assignee } = req.body;
+    if (!assignee) return res.status(400).json({ error: 'Missing assignee' });
+    const result = itemsDb.assignItem(req.params.id, assignee);
+    if (!result.changes) return res.status(404).json({ error: 'Item not found' });
+    sendWebhook('item.assigned', { id: req.params.id, assignee });
+    res.json({ success: true });
+});
+
+// -- POST /api/v2/items/:id/close
+app.post('/api/v2/items/:id/close', v2Auth, (req, res) => {
+    const result = itemsDb.closeItem(req.params.id);
+    if (!result.changes) return res.status(404).json({ error: 'Item not found' });
+    sendWebhook('item.closed', { id: req.params.id });
+    res.json({ success: true });
+});
+
+// -- POST /api/v2/items/:id/reopen
+app.post('/api/v2/items/:id/reopen', v2Auth, (req, res) => {
+    const result = itemsDb.reopenItem(req.params.id);
+    if (!result.changes) return res.status(404).json({ error: 'Item not found' });
+    res.json({ success: true });
+});
+
+// -- GET /api/v2/urls — list all annotated URLs for an app
+app.get('/api/v2/urls', (req, res) => {
+    const app_id = req.query.app_id || 'default';
+    const urls = itemsDb.getDistinctUrls(app_id);
+    res.json({ urls });
+});
+
+// -- POST /api/v2/auth/apikey — issue API key (requires invite code)
+app.post('/api/v2/auth/apikey', (req, res) => {
+    const { code, name, app_id } = req.body;
+    if (!code || !VALID_CODES[code]) {
+        return res.status(401).json({ error: 'Valid invite code required to create API key' });
+    }
+    const created_by = VALID_CODES[code];
+    const key = itemsDb.createApiKey({ app_id: app_id || 'default', name, created_by });
+    res.json({ success: true, ...key });
+});
+
+// -- GET /api/v2/adapters — list adapter channels and their status
+app.get('/api/v2/adapters', (req, res) => {
+    res.json({ channels: registry.getStatus(), rules: registry.rules.length });
+});
+
 // ----------------------------------------------------------------- queue
 
 // Get the consumer queue — open + in-progress items sorted by priority
@@ -523,14 +721,23 @@ app.get('/stats', (req, res) => {
 // ----------------------------------------------------------------- health
 
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', uptime: process.uptime() });
+    let dbOk = true;
+    try { itemsDb.db.prepare('SELECT 1').get(); } catch { dbOk = false; }
+    res.json({
+        status: 'ok',
+        version: '2.0.0',
+        uptime: process.uptime(),
+        db_ok: dbOk,
+        adapters: Object.keys(registry.getStatus()).length,
+    });
 });
 
 // ----------------------------------------------------------------- listen
 
 app.listen(PORT, () => {
-    console.log(`[+] ClawMark server running on port ${PORT}`);
-    console.log(`    data dir : ${DATA_DIR}`);
-    console.log(`    webhook  : ${WEBHOOK.url || '(not configured)'}`);
-    console.log(`    auth     : ${Object.keys(VALID_CODES).length} invite code(s)`);
+    console.log(`[+] ClawMark V2 server running on port ${PORT}`);
+    console.log(`    data dir  : ${DATA_DIR}`);
+    console.log(`    adapters  : ${Object.keys(registry.getStatus()).length} channel(s)`);
+    console.log(`    auth      : ${Object.keys(VALID_CODES).length} invite code(s)`);
+    console.log(`    api v2    : /api/v2/*`);
 });
