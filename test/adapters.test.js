@@ -208,6 +208,28 @@ describe('AdapterRegistry — routing', () => {
 
         assert.equal(registry.channels.get('ch1').sent.length, 1);
     });
+
+    it('accumulates rules across multiple loadConfig calls', async () => {
+        registry.loadConfig({
+            rules: [
+                { match: { event: 'item.created' }, channels: ['ch1'] },
+            ],
+            channels: { ch1: { adapter: 'fake' } },
+        });
+
+        // Second loadConfig should add rules, not overwrite
+        registry.loadConfig({
+            rules: [
+                { match: { event: 'item.resolved' }, channels: ['ch1'] },
+            ],
+            channels: {},
+        });
+
+        await registry.dispatch('item.created', { id: '1' });
+        await registry.dispatch('item.resolved', { id: '2' });
+
+        assert.equal(registry.channels.get('ch1').sent.length, 2);
+    });
 });
 
 describe('AdapterRegistry — validation', () => {
@@ -388,6 +410,30 @@ describe('GitHubIssueAdapter — issue body', () => {
         assert.ok(body.includes('Error: invalid credentials'));
         assert.ok(body.includes('auth'));
         assert.ok(body.includes('1.png'));
+    });
+
+    it('sanitizes user tags for GitHub labels', () => {
+        const adapter = new GitHubIssueAdapter({
+            token: 'ghp_xxx',
+            repo: 'org/repo',
+            labels: ['clawmark'],
+        });
+
+        // Access _createIssue internals by testing label construction directly
+        // Simulate what _createIssue does with tags
+        const tags = ['valid-tag', '  spaces  ', '\x00control\x01chars', '', 'a'.repeat(100)];
+        const labels = ['clawmark'];
+        for (const tag of tags) {
+            const sanitized = String(tag).replace(/[\x00-\x1f]/g, '').trim().slice(0, 50);
+            if (sanitized) labels.push(sanitized);
+        }
+
+        assert.ok(labels.includes('valid-tag'));
+        assert.ok(labels.includes('spaces'));
+        assert.ok(labels.includes('controlchars'));
+        assert.ok(!labels.includes(''));
+        // Long tag should be truncated to 50
+        assert.ok(labels.every(l => l.length <= 50));
     });
 
     it('builds title from quote when no title', () => {

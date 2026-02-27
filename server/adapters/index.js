@@ -34,7 +34,7 @@ class AdapterRegistry {
         if (!distributionConfig) return;
 
         const { rules = [], channels = {} } = distributionConfig;
-        this.rules = rules;
+        this.rules.push(...rules);
 
         for (const [name, channelConfig] of Object.entries(channels)) {
             const AdapterClass = this.adapterTypes.get(channelConfig.adapter);

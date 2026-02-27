@@ -73,10 +73,11 @@ class GitHubIssueAdapter {
         if (priorityLabel) labels.push(priorityLabel);
         if (item.type) labels.push(`type:${item.type}`);
 
-        // Add item tags as labels
+        // Add item tags as labels (sanitized: max 50 chars, no control chars)
         const tags = typeof item.tags === 'string' ? JSON.parse(item.tags || '[]') : (item.tags || []);
         for (const tag of tags) {
-            labels.push(tag);
+            const sanitized = String(tag).replace(/[\x00-\x1f]/g, '').trim().slice(0, 50);
+            if (sanitized) labels.push(sanitized);
         }
 
         const data = {

@@ -12,6 +12,7 @@
 
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
 
 class WebhookAdapter {
     constructor(config) {
@@ -56,7 +57,9 @@ class WebhookAdapter {
                         'Content-Type': 'application/json',
                         'Content-Length': Buffer.byteLength(body),
                         'User-Agent': 'ClawMark/2.0',
-                        ...(this.secret ? { 'X-ClawMark-Secret': this.secret } : {}),
+                        ...(this.secret ? {
+                            'X-ClawMark-Signature': 'sha256=' + crypto.createHmac('sha256', this.secret).update(body).digest('hex'),
+                        } : {}),
                     },
                 };
 
