@@ -34,7 +34,8 @@ function initDb(dataDir) {
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
 
-    // ------------------------------------------------------------------ schema
+    // ------------------------------------------------- schema: base tables
+    // Create tables without V2 columns first (safe for both new and existing DBs)
     db.exec(`
         CREATE TABLE IF NOT EXISTS items (
             id              TEXT PRIMARY KEY,
@@ -66,12 +67,43 @@ function initDb(dataDir) {
             created_at  TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id          TEXT PRIMARY KEY,
+            app_id      TEXT NOT NULL DEFAULT 'default',
+            key         TEXT NOT NULL UNIQUE,
+            name        TEXT,
+            created_by  TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            last_used   TEXT,
+            revoked     INTEGER DEFAULT 0
+        );
+
         CREATE INDEX IF NOT EXISTS idx_items_app_doc   ON items(app_id, doc);
         CREATE INDEX IF NOT EXISTS idx_items_status    ON items(status);
         CREATE INDEX IF NOT EXISTS idx_items_type      ON items(type);
         CREATE INDEX IF NOT EXISTS idx_items_assignee  ON items(assignee);
         CREATE INDEX IF NOT EXISTS idx_messages_item   ON messages(item_id);
+        CREATE INDEX IF NOT EXISTS idx_api_keys_key    ON api_keys(key);
     `);
+
+    // ------------------------------------------- schema migration: V2 columns
+    // Add V2 columns to existing databases that lack them.
+    const existingCols = db.pragma('table_info(items)').map(c => c.name);
+    const v2Columns = [
+        ['source_url',   'TEXT'],
+        ['source_title', 'TEXT'],
+        ['tags',         "TEXT DEFAULT '[]'"],
+        ['screenshots',  "TEXT DEFAULT '[]'"],
+    ];
+    for (const [col, typedef] of v2Columns) {
+        if (!existingCols.includes(col)) {
+            db.exec(`ALTER TABLE items ADD COLUMN ${col} ${typedef}`);
+            console.log(`[db] migrated: added column items.${col}`);
+        }
+    }
+
+    // V2 indexes (safe to run after migration)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_items_source_url ON items(source_url)`);
 
     // ---------------------------------------------------- prepared statements
     const stmts = {
@@ -79,11 +111,11 @@ function initDb(dataDir) {
             INSERT INTO items
                 (id, app_id, doc, type, status, priority, title, quote,
                  quote_position, assignee, created_by, created_at, updated_at,
-                 version, metadata)
+                 version, metadata, source_url, source_title, tags, screenshots)
             VALUES
                 (@id, @app_id, @doc, @type, @status, @priority, @title, @quote,
                  @quote_position, @assignee, @created_by, @created_at, @updated_at,
-                 @version, @metadata)
+                 @version, @metadata, @source_url, @source_title, @tags, @screenshots)
         `),
         insertMessage: db.prepare(`
             INSERT INTO messages (id, item_id, role, content, user_name, pending, created_at)
@@ -130,7 +162,8 @@ function initDb(dataDir) {
     // ------------------------------------------------------------- public API
 
     function createItem({ app_id = 'default', doc, type = 'discuss', title, quote,
-                          quote_position, priority = 'normal', created_by, version, message }) {
+                          quote_position, priority = 'normal', created_by, version, message,
+                          source_url, source_title, tags, screenshots }) {
         const now = new Date().toISOString();
         const itemId = genId(type === 'issue' ? 'issue' : 'disc');
 
@@ -145,7 +178,11 @@ function initDb(dataDir) {
             created_at: now,
             updated_at: now,
             version: version || 'latest',
-            metadata: '{}'
+            metadata: '{}',
+            source_url: source_url || null,
+            source_title: source_title || null,
+            tags: JSON.stringify(tags || []),
+            screenshots: JSON.stringify(screenshots || []),
         });
 
         if (message) {
@@ -156,7 +193,9 @@ function initDb(dataDir) {
             });
         }
 
-        return { id: itemId, app_id, doc, type, status: 'open', created_at: now };
+        return { id: itemId, app_id, doc, type, status: 'open', created_at: now,
+                 source_url: source_url || null, source_title: source_title || null,
+                 tags: tags || [], screenshots: screenshots || [] };
     }
 
     function addMessage({ item_id, role, content, user_name }) {
@@ -256,6 +295,66 @@ function initDb(dataDir) {
         `).all();
     }
 
+    // ---------------------------------------------------------- V2 query methods
+
+    function getItemsByUrl({ app_id = 'default', url }) {
+        return db.prepare(
+            'SELECT * FROM items WHERE app_id = ? AND source_url = ? ORDER BY created_at DESC'
+        ).all(app_id, url);
+    }
+
+    function getItemsByTag({ app_id = 'default', tag }) {
+        // SQLite JSON: tags is stored as '["bug","ui"]', search with LIKE
+        return db.prepare(
+            `SELECT * FROM items WHERE app_id = ? AND tags LIKE ? ORDER BY created_at DESC`
+        ).all(app_id, `%"${tag}"%`);
+    }
+
+    function getDistinctUrls(app_id = 'default') {
+        return db.prepare(
+            `SELECT DISTINCT source_url, source_title, COUNT(*) as item_count
+             FROM items
+             WHERE app_id = ? AND source_url IS NOT NULL
+             GROUP BY source_url
+             ORDER BY MAX(created_at) DESC`
+        ).all(app_id);
+    }
+
+    function updateItemTags(item_id, tags) {
+        const now = new Date().toISOString();
+        return db.prepare(
+            'UPDATE items SET tags = ?, updated_at = ? WHERE id = ?'
+        ).run(JSON.stringify(tags), now, item_id);
+    }
+
+    // ---------------------------------------------------------- API key methods
+
+    function createApiKey({ app_id = 'default', name, created_by }) {
+        const now = new Date().toISOString();
+        const id = genId('key');
+        const key = 'cmk_' + require('crypto').randomBytes(24).toString('hex');
+        db.prepare(
+            `INSERT INTO api_keys (id, app_id, key, name, created_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(id, app_id, key, name || null, created_by, now);
+        return { id, key, app_id, name, created_at: now };
+    }
+
+    function validateApiKey(key) {
+        const row = db.prepare(
+            'SELECT * FROM api_keys WHERE key = ? AND revoked = 0'
+        ).get(key);
+        if (row) {
+            db.prepare('UPDATE api_keys SET last_used = ? WHERE id = ?')
+              .run(new Date().toISOString(), row.id);
+        }
+        return row || null;
+    }
+
+    function revokeApiKey(id) {
+        return db.prepare('UPDATE api_keys SET revoked = 1 WHERE id = ?').run(id);
+    }
+
     // --------------------------------------------------- JSON migration (opt-in)
     /**
      * Migrate legacy JSON discussion files into SQLite.
@@ -342,6 +441,14 @@ function initDb(dataDir) {
         getStats,
         getPending,
         migrateFromJson,
+        // V2
+        getItemsByUrl,
+        getItemsByTag,
+        getDistinctUrls,
+        updateItemTags,
+        createApiKey,
+        validateApiKey,
+        revokeApiKey,
     };
 }
 
