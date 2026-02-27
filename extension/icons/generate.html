@@ -1,0 +1,33 @@
+<!-- Helper: open in browser to generate PNG icons from SVG. For dev only. -->
+<!DOCTYPE html>
+<html>
+<body>
+<p>Right-click each canvas → "Save image as" → icons/icon-{size}.png</p>
+<script>
+[16, 32, 48, 128].forEach(size => {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    // Background
+    ctx.fillStyle = '#5865f2';
+    ctx.beginPath();
+    ctx.roundRect(0, 0, size, size, size * 0.2);
+    ctx.fill();
+
+    // "C" letter
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${size * 0.6}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('C', size / 2, size / 2 + size * 0.03);
+
+    const label = document.createElement('div');
+    label.textContent = `${size}x${size}:`;
+    document.body.appendChild(label);
+    document.body.appendChild(canvas);
+});
+</script>
+</body>
+</html>

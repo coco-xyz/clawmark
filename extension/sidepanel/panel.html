@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClawMark</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            font-size: 13px;
+            min-height: 100vh;
+        }
+
+        /* ---- Header ---- */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: #1a1a2e;
+            border-bottom: 1px solid #2a2a3e;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .header h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .header .refresh-btn {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 4px;
+        }
+
+        .header .refresh-btn:hover { color: #fff; }
+
+        /* ---- Page Info ---- */
+        .page-info {
+            padding: 10px 16px;
+            background: rgba(88, 101, 242, 0.08);
+            border-bottom: 1px solid #2a2a3e;
+            font-size: 11px;
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ---- Tabs ---- */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #2a2a3e;
+            padding: 0 16px;
+        }
+
+        .tab {
+            padding: 10px 12px;
+            cursor: pointer;
+            color: #888;
+            font-size: 12px;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: all 0.15s;
+        }
+
+        .tab:hover { color: #ccc; }
+        .tab.active { color: #5865f2; border-bottom-color: #5865f2; }
+
+        .tab .count {
+            margin-left: 4px;
+            padding: 1px 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            font-size: 10px;
+        }
+
+        /* ---- Content ---- */
+        .content { padding: 12px 16px; }
+
+        /* ---- Item Card ---- */
+        .item-card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+
+        .item-card:hover { border-color: #5865f2; }
+
+        .item-card .item-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+
+        .item-card .item-type {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .item-card .item-type.issue { background: #dc2626; color: #fff; }
+        .item-card .item-type.comment { background: #5865f2; color: #fff; }
+
+        .item-card .item-priority {
+            font-size: 10px;
+            color: #888;
+        }
+
+        .item-card .item-priority.high { color: #f97316; }
+        .item-card .item-priority.critical { color: #ef4444; }
+
+        .item-card .item-title {
+            font-weight: 500;
+            color: #ddd;
+            margin-bottom: 4px;
+        }
+
+        .item-card .item-quote {
+            font-size: 12px;
+            color: #888;
+            border-left: 2px solid #333;
+            padding-left: 8px;
+            margin-bottom: 4px;
+            max-height: 36px;
+            overflow: hidden;
+        }
+
+        .item-card .item-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            color: #666;
+        }
+
+        .item-card .item-tags {
+            display: flex;
+            gap: 4px;
+            margin-top: 6px;
+        }
+
+        .item-card .tag {
+            padding: 1px 6px;
+            background: rgba(88, 101, 242, 0.15);
+            color: #8b9cf7;
+            border-radius: 8px;
+            font-size: 10px;
+        }
+
+        /* ---- Thread View ---- */
+        .thread-view {
+            display: none;
+        }
+
+        .thread-view.active {
+            display: block;
+        }
+
+        .thread-back {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 0;
+            color: #5865f2;
+            cursor: pointer;
+            font-size: 12px;
+            border: none;
+            background: none;
+        }
+
+        .thread-messages {
+            max-height: calc(100vh - 280px);
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+
+        .message {
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            border-radius: 8px;
+        }
+
+        .message.user { background: rgba(88, 101, 242, 0.1); }
+        .message.assistant { background: rgba(34, 197, 94, 0.1); }
+
+        .message .msg-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+
+        .message .msg-content {
+            color: #ddd;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        .thread-reply {
+            display: flex;
+            gap: 8px;
+            padding: 12px 0;
+            border-top: 1px solid #2a2a3e;
+            margin-top: 8px;
+        }
+
+        .thread-reply textarea {
+            flex: 1;
+            padding: 8px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 13px;
+            font-family: inherit;
+            resize: none;
+            min-height: 36px;
+            outline: none;
+        }
+
+        .thread-reply textarea:focus { border-color: #5865f2; }
+
+        .thread-reply button {
+            padding: 8px 12px;
+            background: #5865f2;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            align-self: flex-end;
+        }
+
+        /* ---- Empty / Loading ---- */
+        .empty {
+            text-align: center;
+            padding: 40px 16px;
+            color: #666;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+        }
+
+        .error-msg {
+            padding: 12px 16px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 8px;
+            color: #f87171;
+            font-size: 12px;
+            margin: 8px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>ClawMark</h1>
+        <button class="refresh-btn" id="refresh" title="Refresh">&#x21BB;</button>
+    </div>
+    <div class="page-info" id="page-info">Loading...</div>
+
+    <!-- List View -->
+    <div id="list-view">
+        <div class="tabs">
+            <div class="tab active" data-filter="all">All <span class="count" id="count-all">0</span></div>
+            <div class="tab" data-filter="comment">Comments <span class="count" id="count-comment">0</span></div>
+            <div class="tab" data-filter="issue">Issues <span class="count" id="count-issue">0</span></div>
+        </div>
+        <div class="content" id="items-container">
+            <div class="loading">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Thread View -->
+    <div id="thread-view" class="thread-view">
+        <div class="content">
+            <button class="thread-back" id="thread-back">&#x2190; Back</button>
+            <div id="thread-header"></div>
+            <div class="thread-messages" id="thread-messages"></div>
+            <div class="thread-reply">
+                <textarea id="reply-input" placeholder="Reply..." rows="1"></textarea>
+                <button id="reply-submit">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="panel.js"></script>
+</body>
+</html>
