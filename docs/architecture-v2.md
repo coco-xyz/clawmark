@@ -18,7 +18,15 @@ ClawMark V2 的核心是**消息管道**，分三层：
   Extension                    或自建部署               / Slack / 邮件 ...
 ```
 
-**大前提：** 代码嵌入（现有 Widget）和浏览器插件是**并列的两种产生方式**，不是替代关系。
+### 设计原则
+
+1. **代码嵌入和浏览器插件并列** — 两种产生方式不是替代关系，共享同一套消息 schema
+2. **HxA Friendly** — ClawMark 是标准 HxA 组件：独立部署、标准接口、可组合。遵循 HxA 组件规范（config.json、环境变量、health check），收集层和分发层都能被 HxA Connect 调度
+3. **Agent Embed — 产品本身是 Agent** — ClawMark 不只是被动的消息管道，它本身具备 agent 能力：
+   - 收到 comment → 自动分类、智能分配、生成回复建议
+   - 高优 issue → 主动通知相关人、追踪解决进度
+   - 插件端：智能推荐标签、自动识别 bug vs feature request
+   - 本质：消息管道 + 内置 AI Agent
 
 - **代码嵌入**：网站开发者在自己的页面中通过 `<script>` 引入 ClawMark Widget，适合产品内集成
 - **浏览器插件**：用户安装 Chrome Extension，在任意网页使用，适合跨站场景
