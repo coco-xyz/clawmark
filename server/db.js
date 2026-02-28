@@ -110,6 +110,19 @@ function initDb(dataDir) {
             updated_at      TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_user_rules_user ON user_rules(user_name, priority DESC);
+
+        CREATE TABLE IF NOT EXISTS users (
+            id              TEXT PRIMARY KEY,
+            google_id       TEXT UNIQUE,
+            email           TEXT NOT NULL UNIQUE,
+            name            TEXT NOT NULL,
+            picture         TEXT,
+            role            TEXT NOT NULL DEFAULT 'member',
+            created_at      TEXT NOT NULL,
+            last_login      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
+        CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     `);
 
     // ------------------------------------------- schema migration: V2 columns
@@ -548,6 +561,33 @@ function initDb(dataDir) {
         console.log(`[db] Migrated ${migrated} discussions from JSON to SQLite`);
     }
 
+    // ---------------------------------------------------------- user methods
+
+    function upsertUser({ google_id, email, name, picture }) {
+        const now = new Date().toISOString();
+        const existing = db.prepare('SELECT * FROM users WHERE google_id = ?').get(google_id);
+        if (existing) {
+            db.prepare(
+                'UPDATE users SET email = ?, name = ?, picture = ?, last_login = ? WHERE id = ?'
+            ).run(email, name, picture || null, now, existing.id);
+            return { ...existing, email, name, picture, last_login: now };
+        }
+        const id = genId('user');
+        db.prepare(
+            `INSERT INTO users (id, google_id, email, name, picture, role, created_at, last_login)
+             VALUES (?, ?, ?, ?, ?, 'member', ?, ?)`
+        ).run(id, google_id, email, name, picture || null, now, now);
+        return { id, google_id, email, name, picture, role: 'member', created_at: now, last_login: now };
+    }
+
+    function getUserById(id) {
+        return db.prepare('SELECT * FROM users WHERE id = ?').get(id) || null;
+    }
+
+    function getUserByEmail(email) {
+        return db.prepare('SELECT * FROM users WHERE email = ?').get(email) || null;
+    }
+
     return {
         db,
         genId,
@@ -584,6 +624,10 @@ function initDb(dataDir) {
         updateUserRule,
         deleteUserRule,
         getAllUserRules,
+        // Users
+        upsertUser,
+        getUserById,
+        getUserByEmail,
     };
 }
 
