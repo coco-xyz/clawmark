@@ -65,6 +65,25 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const { initDb } = require('./db');
 const itemsDb = initDb(DATA_DIR);
 
+// ------------------------------------------------------------------ auth module
+const { initAuth } = require('./auth');
+const JWT_SECRET = process.env.CLAWMARK_JWT_SECRET
+    || (config.auth && config.auth.jwtSecret)
+    || null;
+const GOOGLE_CLIENT_ID = process.env.CLAWMARK_GOOGLE_CLIENT_ID
+    || (config.auth && config.auth.googleClientId)
+    || null;
+const GOOGLE_CLIENT_SECRET = process.env.CLAWMARK_GOOGLE_CLIENT_SECRET
+    || (config.auth && config.auth.googleClientSecret)
+    || null;
+
+const { router: authRouter, verifyJwt } = initAuth({
+    db: itemsDb,
+    jwtSecret: JWT_SECRET,
+    googleClientId: GOOGLE_CLIENT_ID,
+    googleClientSecret: GOOGLE_CLIENT_SECRET,
+});
+
 // ------------------------------------------------------------------ adapters
 
 const { AdapterRegistry } = require('./adapters/index');
@@ -226,6 +245,10 @@ app.post('/verify', verifyLimiter, (req, res) => {
         res.json({ valid: false });
     }
 });
+
+// Mount OAuth auth routes — shares VALID_CODES with apikey endpoint
+app.locals.VALID_CODES = VALID_CODES;
+app.use('/api/v2/auth', authRouter);
 
 // -------------------------------------------------------------- discussion helpers
 
@@ -593,18 +616,32 @@ app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, handleRespondT
 // Backward compatible — V1 routes above remain unchanged.
 // =================================================================
 
-// -- V2 auth middleware: accept invite code OR API key (always required)
+// -- V2 auth middleware: accept JWT, API key, or invite code
 function v2Auth(req, res, next) {
-    // API key in Authorization header
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
-        const key = authHeader.slice(7);
-        const apiKey = itemsDb.validateApiKey(key);
-        if (apiKey) {
-            req.v2Auth = { type: 'apikey', app_id: apiKey.app_id, user: apiKey.created_by, keyName: apiKey.name };
-            return next();
+        const token = authHeader.slice(7);
+
+        // API key (cmk_ prefix)
+        if (token.startsWith('cmk_')) {
+            const apiKey = itemsDb.validateApiKey(token);
+            if (apiKey) {
+                req.v2Auth = { type: 'apikey', app_id: apiKey.app_id, user: apiKey.created_by, keyName: apiKey.name };
+                return next();
+            }
+            return res.status(401).json({ error: 'Invalid API key' });
         }
-        return res.status(401).json({ error: 'Invalid API key' });
+
+        // JWT token
+        if (verifyJwt) {
+            const payload = verifyJwt(token);
+            if (payload) {
+                req.v2Auth = { type: 'jwt', user: payload.email, userId: payload.userId, role: payload.role };
+                return next();
+            }
+        }
+
+        return res.status(401).json({ error: 'Invalid token' });
     }
     // Invite code in body or query
     const code = req.body?.code || req.query?.code;
@@ -612,7 +649,7 @@ function v2Auth(req, res, next) {
         req.v2Auth = { type: 'invite', user: VALID_CODES[code] };
         return next();
     }
-    return res.status(401).json({ error: 'Authentication required (API key or invite code)' });
+    return res.status(401).json({ error: 'Authentication required (JWT, API key, or invite code)' });
 }
 
 // -- POST /api/v2/items — create item with full V2 schema
@@ -755,8 +792,9 @@ app.get('/api/v2/urls', apiReadLimiter, (req, res) => {
     res.json({ urls });
 });
 
-// -- POST /api/v2/auth/apikey — issue API key (requires invite code)
-app.post('/api/v2/auth/apikey', apiWriteLimiter, (req, res) => {
+// -- POST /api/v2/auth/apikey — now handled by auth module (mounted at /api/v2/auth)
+// Legacy endpoint kept as redirect for backward compatibility
+app.post('/api/v2/auth/apikey-legacy', apiWriteLimiter, (req, res) => {
     const { code, name, app_id } = req.body;
     if (!code || !VALID_CODES[code]) {
         return res.status(401).json({ error: 'Valid invite code required to create API key' });
