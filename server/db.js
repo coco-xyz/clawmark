@@ -123,6 +123,18 @@ function initDb(dataDir) {
         );
         CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
         CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+        CREATE TABLE IF NOT EXISTS endpoints (
+            id          TEXT PRIMARY KEY,
+            user_name   TEXT NOT NULL,
+            name        TEXT NOT NULL,
+            type        TEXT NOT NULL,
+            config      TEXT NOT NULL DEFAULT '{}',
+            is_default  INTEGER DEFAULT 0,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_endpoints_user_default ON endpoints(user_name, is_default);
     `);
 
     // ------------------------------------------- schema migration: V2 columns
@@ -196,6 +208,30 @@ function initDb(dataDir) {
         countAll: db.prepare(`
             SELECT type, status, COUNT(*) as count FROM items GROUP BY type, status
         `),
+    };
+
+    // ------------------------------------------------- endpoint statements
+    const endpointStmts = {
+        insertEndpoint: db.prepare(`
+            INSERT INTO endpoints (id, user_name, name, type, config, is_default, created_at, updated_at)
+            VALUES (@id, @user_name, @name, @type, @config, @is_default, @created_at, @updated_at)
+        `),
+        getEndpointsByUser: db.prepare(
+            'SELECT * FROM endpoints WHERE user_name = ? ORDER BY is_default DESC, created_at ASC'
+        ),
+        getEndpointById: db.prepare('SELECT * FROM endpoints WHERE id = ?'),
+        updateEndpoint: db.prepare(`
+            UPDATE endpoints
+            SET name = @name, type = @type, config = @config, updated_at = @updated_at
+            WHERE id = @id
+        `),
+        deleteEndpoint: db.prepare('DELETE FROM endpoints WHERE id = ?'),
+        clearDefaultForUser: db.prepare(
+            'UPDATE endpoints SET is_default = 0, updated_at = ? WHERE user_name = ? AND is_default = 1'
+        ),
+        setDefault: db.prepare(
+            'UPDATE endpoints SET is_default = 1, updated_at = ? WHERE id = ?'
+        ),
     };
 
     // ------------------------------------------------- user_rules statements
@@ -469,6 +505,79 @@ function initDb(dataDir) {
         return ruleStmts.getAllRules.all();
     }
 
+    // ---------------------------------------------------- endpoint methods
+
+    function createEndpoint({ user_name, name, type, config, is_default = 0 }) {
+        const now = new Date().toISOString();
+        const id = genId('ep');
+        const configStr = typeof config === 'string' ? config : JSON.stringify(config || {});
+
+        // If this is the first endpoint for the user, make it default
+        const existing = endpointStmts.getEndpointsByUser.all(user_name);
+        const shouldDefault = existing.length === 0 ? 1 : (is_default ? 1 : 0);
+
+        if (shouldDefault) {
+            endpointStmts.clearDefaultForUser.run(now, user_name);
+        }
+
+        endpointStmts.insertEndpoint.run({
+            id, user_name, name, type,
+            config: configStr,
+            is_default: shouldDefault,
+            created_at: now, updated_at: now,
+        });
+        return { id, user_name, name, type, config: configStr, is_default: shouldDefault, created_at: now, updated_at: now };
+    }
+
+    function getEndpoints(user_name) {
+        return endpointStmts.getEndpointsByUser.all(user_name);
+    }
+
+    function getEndpoint(id) {
+        return endpointStmts.getEndpointById.get(id) || null;
+    }
+
+    function updateEndpoint(id, updates) {
+        const existing = endpointStmts.getEndpointById.get(id);
+        if (!existing) return null;
+        const now = new Date().toISOString();
+        const merged = {
+            id,
+            name: updates.name ?? existing.name,
+            type: updates.type ?? existing.type,
+            config: updates.config
+                ? (typeof updates.config === 'string' ? updates.config : JSON.stringify(updates.config))
+                : existing.config,
+            updated_at: now,
+        };
+        endpointStmts.updateEndpoint.run(merged);
+        return endpointStmts.getEndpointById.get(id);
+    }
+
+    function deleteEndpoint(id) {
+        const existing = endpointStmts.getEndpointById.get(id);
+        if (!existing) return { success: false };
+        const result = endpointStmts.deleteEndpoint.run(id);
+        // If we deleted the default, promote the next one
+        if (existing.is_default) {
+            const remaining = endpointStmts.getEndpointsByUser.all(existing.user_name);
+            if (remaining.length > 0) {
+                const now = new Date().toISOString();
+                endpointStmts.setDefault.run(now, remaining[0].id);
+            }
+        }
+        return { success: result.changes > 0 };
+    }
+
+    function setEndpointDefault(id) {
+        const existing = endpointStmts.getEndpointById.get(id);
+        if (!existing) return null;
+        const now = new Date().toISOString();
+        endpointStmts.clearDefaultForUser.run(now, existing.user_name);
+        endpointStmts.setDefault.run(now, id);
+        return endpointStmts.getEndpointById.get(id);
+    }
+
     // ------------------------------------------------- adapter mapping methods
 
     function setAdapterMapping({ item_id, adapter, channel = '', external_id, external_url }) {
@@ -628,6 +737,13 @@ function initDb(dataDir) {
         upsertUser,
         getUserById,
         getUserByEmail,
+        // Endpoints
+        createEndpoint,
+        getEndpoints,
+        getEndpoint,
+        updateEndpoint,
+        deleteEndpoint,
+        setEndpointDefault,
     };
 }
 

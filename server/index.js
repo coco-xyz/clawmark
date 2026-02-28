@@ -897,6 +897,150 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, (req, res) => {
     });
 });
 
+// ================================================================= Endpoints API
+//
+// CRUD for user delivery endpoints. Authenticated via V2 auth.
+// =================================================================
+
+const parseEndpointConfig = (ep) => {
+    if (typeof ep.config === 'string') {
+        try { ep.config = JSON.parse(ep.config); } catch {}
+    }
+    return ep;
+};
+
+// -- GET /api/v2/endpoints — list endpoints for current user
+app.get('/api/v2/endpoints', apiReadLimiter, v2Auth, (req, res) => {
+    const user = req.v2Auth?.user;
+    if (!user) return res.status(400).json({ error: 'Could not determine user' });
+    const endpoints = itemsDb.getEndpoints(user).map(parseEndpointConfig);
+    res.json({ endpoints });
+});
+
+// -- POST /api/v2/endpoints — create a new endpoint
+app.post('/api/v2/endpoints', apiWriteLimiter, v2Auth, (req, res) => {
+    const { name, type, config, is_default } = req.body;
+    const user = req.v2Auth?.user;
+    if (!user) return res.status(400).json({ error: 'Could not determine user' });
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Missing endpoint name' });
+    if (!type) return res.status(400).json({ error: 'Missing endpoint type' });
+
+    const validTypes = ['github-issue', 'lark', 'telegram', 'webhook'];
+    if (!validTypes.includes(type)) {
+        return res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(', ')}` });
+    }
+
+    // Validate required config fields by type
+    const cfg = typeof config === 'string' ? JSON.parse(config) : (config || {});
+    switch (type) {
+        case 'github-issue':
+            if (!cfg.repo) return res.status(400).json({ error: 'GitHub endpoint requires "repo" in config' });
+            break;
+        case 'webhook':
+            if (!cfg.url) return res.status(400).json({ error: 'Webhook endpoint requires "url" in config' });
+            break;
+        case 'lark':
+            if (!cfg.webhook_url) return res.status(400).json({ error: 'Lark endpoint requires "webhook_url" in config' });
+            break;
+        case 'telegram':
+            if (!cfg.chat_id) return res.status(400).json({ error: 'Telegram endpoint requires "chat_id" in config' });
+            break;
+    }
+
+    const endpoint = itemsDb.createEndpoint({
+        user_name: user, name: name.trim(), type, config: cfg, is_default: is_default ? 1 : 0,
+    });
+
+    res.json({ success: true, endpoint: parseEndpointConfig(endpoint) });
+});
+
+// -- GET /api/v2/endpoints/:id — get a single endpoint
+app.get('/api/v2/endpoints/:id', apiReadLimiter, v2Auth, (req, res) => {
+    const endpoint = itemsDb.getEndpoint(req.params.id);
+    if (!endpoint) return res.status(404).json({ error: 'Endpoint not found' });
+    // Ensure user owns this endpoint
+    if (endpoint.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to access this endpoint' });
+    }
+    res.json({ endpoint: parseEndpointConfig(endpoint) });
+});
+
+// -- PUT /api/v2/endpoints/:id — update an endpoint
+app.put('/api/v2/endpoints/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const existing = itemsDb.getEndpoint(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Endpoint not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to modify this endpoint' });
+    }
+
+    const { name, type, config } = req.body;
+
+    // Validate type if provided
+    if (type) {
+        const validTypes = ['github-issue', 'lark', 'telegram', 'webhook'];
+        if (!validTypes.includes(type)) {
+            return res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(', ')}` });
+        }
+    }
+
+    // Validate required config fields for the resolved type
+    const resolvedType = type || existing.type;
+    const cfg = config ? (typeof config === 'string' ? JSON.parse(config) : config) : null;
+    if (cfg) {
+        switch (resolvedType) {
+            case 'github-issue':
+                if (!cfg.repo) return res.status(400).json({ error: 'GitHub endpoint requires "repo" in config' });
+                break;
+            case 'webhook':
+                if (!cfg.url) return res.status(400).json({ error: 'Webhook endpoint requires "url" in config' });
+                break;
+            case 'lark':
+                if (!cfg.webhook_url) return res.status(400).json({ error: 'Lark endpoint requires "webhook_url" in config' });
+                break;
+            case 'telegram':
+                if (!cfg.chat_id) return res.status(400).json({ error: 'Telegram endpoint requires "chat_id" in config' });
+                break;
+        }
+    }
+
+    const updated = itemsDb.updateEndpoint(req.params.id, { name, type, config: cfg });
+    if (!updated) return res.status(404).json({ error: 'Endpoint not found' });
+    res.json({ success: true, endpoint: parseEndpointConfig(updated) });
+});
+
+// -- DELETE /api/v2/endpoints/:id — delete an endpoint
+app.delete('/api/v2/endpoints/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const existing = itemsDb.getEndpoint(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Endpoint not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to delete this endpoint' });
+    }
+    const result = itemsDb.deleteEndpoint(req.params.id);
+    if (!result.success) return res.status(404).json({ error: 'Endpoint not found' });
+    res.json({ success: true });
+});
+
+// -- POST /api/v2/endpoints/:id/default — set an endpoint as default
+app.post('/api/v2/endpoints/:id/default', apiWriteLimiter, v2Auth, (req, res) => {
+    const existing = itemsDb.getEndpoint(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Endpoint not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to modify this endpoint' });
+    }
+    const updated = itemsDb.setEndpointDefault(req.params.id);
+    if (!updated) return res.status(404).json({ error: 'Endpoint not found' });
+    res.json({ success: true, endpoint: parseEndpointConfig(updated) });
+});
+
+// ================================================================= Dashboard
+//
+// Serve the endpoint management dashboard as a standalone HTML page.
+// =================================================================
+
+app.get('/dashboard/endpoints', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dashboard', 'endpoints.html'));
+});
+
 // ----------------------------------------------------------------- queue
 
 // Get the consumer queue — open + in-progress items sorted by priority
