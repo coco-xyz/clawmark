@@ -151,8 +151,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleMessage(message, sender) {
     switch (message.type) {
-        case 'CREATE_ITEM':
-            return createItem(message.data);
+        case 'CREATE_ITEM': {
+            const result = await createItem(message.data);
+            // Notify side panel to refresh after item creation
+            chrome.runtime.sendMessage({ type: 'ITEM_CREATED' }).catch(() => {});
+            return result;
+        }
 
         case 'GET_ITEMS_BY_URL':
             return getItemsByUrl(message.url);

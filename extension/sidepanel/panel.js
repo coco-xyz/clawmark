@@ -297,6 +297,16 @@ function escapeHtml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ------------------------------------------------------------------ cross-script events
+
+// Auto-refresh when content script creates a new item
+chrome.runtime.onMessage.addListener((message) => {
+    if (message.type === 'ITEM_CREATED') {
+        invalidateCache(`items:${currentUrl}`);
+        loadItems(true);
+    }
+});
+
 // ------------------------------------------------------------------ start
 
 init();
