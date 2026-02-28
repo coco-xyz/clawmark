@@ -13,6 +13,34 @@ let currentFilter = 'all';
 let currentUrl = '';
 let currentItemId = null;
 
+// ------------------------------------------------------------------ debounce + cache
+
+const CACHE_TTL = 30_000; // 30 seconds
+const cache = new Map();
+
+function getCached(key) {
+    const entry = cache.get(key);
+    if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.data;
+    cache.delete(key);
+    return null;
+}
+
+function setCache(key, data) {
+    cache.set(key, { data, ts: Date.now() });
+}
+
+function invalidateCache(prefix) {
+    for (const key of cache.keys()) {
+        if (key.startsWith(prefix)) cache.delete(key);
+    }
+}
+
+let _loadItemsTimer = null;
+function debouncedLoadItems(delay = 300) {
+    clearTimeout(_loadItemsTimer);
+    _loadItemsTimer = setTimeout(() => loadItems(), delay);
+}
+
 // ------------------------------------------------------------------ elements
 
 const pageInfo = document.getElementById('page-info');
@@ -38,14 +66,14 @@ async function init() {
 
     loadItems();
 
-    // Listen for tab changes
+    // Listen for tab changes (debounced to avoid rapid-fire API calls)
     chrome.tabs.onActivated.addListener(async (info) => {
         const tab = await chrome.tabs.get(info.tabId);
         if (tab.url !== currentUrl) {
             currentUrl = tab.url;
             pageInfo.textContent = tab.title || tab.url;
             showListView();
-            loadItems();
+            debouncedLoadItems();
         }
     });
 
@@ -54,14 +82,25 @@ async function init() {
             currentUrl = changeInfo.url;
             pageInfo.textContent = tab.title || changeInfo.url;
             showListView();
-            loadItems();
+            debouncedLoadItems();
         }
     });
 }
 
 // ------------------------------------------------------------------ data
 
-async function loadItems() {
+async function loadItems(skipCache = false) {
+    const cacheKey = `items:${currentUrl}`;
+    if (!skipCache) {
+        const cached = getCached(cacheKey);
+        if (cached) {
+            items = cached;
+            updateCounts();
+            renderItems();
+            return;
+        }
+    }
+
     itemsContainer.innerHTML = '<div class="loading">Loading...</div>';
 
     try {
@@ -73,6 +112,7 @@ async function loadItems() {
         if (response.error) throw new Error(response.error);
 
         items = response.items || [];
+        setCache(cacheKey, items);
         updateCounts();
         renderItems();
     } catch (err) {
@@ -115,6 +155,7 @@ async function sendReply() {
         if (response.error) throw new Error(response.error);
 
         replyInput.value = '';
+        invalidateCache(`items:${currentUrl}`);
         loadThread(currentItemId); // Refresh thread
     } catch (err) {
         alert('Error: ' + err.message);
@@ -227,8 +268,9 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 threadBack.addEventListener('click', showListView);
 refreshBtn.addEventListener('click', () => {
+    invalidateCache(`items:${currentUrl}`);
     if (currentItemId) loadThread(currentItemId);
-    else loadItems();
+    else loadItems(true);
 });
 replySubmit.addEventListener('click', sendReply);
 replyInput.addEventListener('keydown', (e) => {
