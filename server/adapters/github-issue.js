@@ -33,9 +33,10 @@ class GitHubIssueAdapter {
         this.labels = config.labels || ['clawmark'];
         this.assignees = config.assignees || [];
         this.template = config.template || 'default';
-        // Track ClawMark item ID → GitHub issue number (in-memory; lost on restart)
-        // Production should use DB, but this is sufficient for Phase 3 MVP
-        this.issueMap = new Map();
+        this.channelName = config.channelName || '';
+        this.db = config.db || null;
+        // Fallback to in-memory map when no DB is provided (e.g. tests)
+        this._memoryMap = new Map();
     }
 
     validate() {
@@ -45,6 +46,32 @@ class GitHubIssueAdapter {
             return { ok: false, error: 'repo must be in "owner/repo" format' };
         }
         return { ok: true };
+    }
+
+    _setMapping(itemId, issueNumber, issueUrl) {
+        if (this.db) {
+            this.db.setAdapterMapping({
+                item_id: itemId,
+                adapter: 'github-issue',
+                channel: this.channelName,
+                external_id: String(issueNumber),
+                external_url: issueUrl || null,
+            });
+        } else {
+            this._memoryMap.set(itemId, issueNumber);
+        }
+    }
+
+    _getMapping(itemId) {
+        if (this.db) {
+            const row = this.db.getAdapterMapping({
+                item_id: itemId,
+                adapter: 'github-issue',
+                channel: this.channelName,
+            });
+            return row ? Number(row.external_id) : null;
+        }
+        return this._memoryMap.get(itemId) || null;
     }
 
     async send(event, item, context = {}) {
@@ -89,10 +116,10 @@ class GitHubIssueAdapter {
 
         const result = await this._apiRequest('POST', `/repos/${this.repo}/issues`, data);
 
-        // Track mapping for status sync
+        // Track mapping for status sync (persisted to DB when available)
         const itemId = item.id || item.item?.id;
         if (itemId && result.number) {
-            this.issueMap.set(itemId, result.number);
+            this._setMapping(itemId, result.number, result.html_url);
         }
 
         return { status: 'created', issue_number: result.number, url: result.html_url };
@@ -100,7 +127,7 @@ class GitHubIssueAdapter {
 
     async _closeIssue(item, context) {
         const itemId = item.id || item.item?.id;
-        const issueNumber = this.issueMap.get(itemId);
+        const issueNumber = this._getMapping(itemId);
 
         if (!issueNumber) {
             // Can't close what we didn't create — skip silently
@@ -118,7 +145,7 @@ class GitHubIssueAdapter {
 
     async _updateAssignee(item, context) {
         const itemId = item.id || item.item?.id;
-        const issueNumber = this.issueMap.get(itemId);
+        const issueNumber = this._getMapping(itemId);
 
         if (!issueNumber || !item.assignee) return;
 

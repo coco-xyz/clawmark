@@ -74,6 +74,7 @@ const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 
 const registry = new AdapterRegistry();
+registry.setDb(itemsDb);
 registry.registerType('webhook', WebhookAdapter);
 registry.registerType('lark', LarkAdapter);
 registry.registerType('telegram', TelegramAdapter);

@@ -15,6 +15,16 @@ class AdapterRegistry {
         this.channels = new Map();
         /** @type {Array} routing rules from config */
         this.rules = [];
+        /** @type {object|null} DB instance for adapters that need persistence */
+        this.db = null;
+    }
+
+    /**
+     * Set the database instance. Call before loadConfig so adapters get the DB.
+     * @param {object} db  The ClawMark DB API from initDb().
+     */
+    setDb(db) {
+        this.db = db;
     }
 
     /**
@@ -43,7 +53,7 @@ class AdapterRegistry {
                 continue;
             }
             try {
-                const instance = new AdapterClass(channelConfig);
+                const instance = new AdapterClass({ ...channelConfig, channelName: name, db: this.db || null });
                 const validation = instance.validate ? instance.validate() : { ok: true };
                 if (!validation.ok) {
                     console.warn(`[adapters] Channel "${name}" validation failed: ${validation.error}`);

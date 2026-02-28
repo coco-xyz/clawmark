@@ -84,6 +84,18 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_items_assignee  ON items(assignee);
         CREATE INDEX IF NOT EXISTS idx_messages_item   ON messages(item_id);
         CREATE INDEX IF NOT EXISTS idx_api_keys_key    ON api_keys(key);
+
+        CREATE TABLE IF NOT EXISTS adapter_mappings (
+            item_id     TEXT NOT NULL,
+            adapter     TEXT NOT NULL,
+            channel     TEXT NOT NULL DEFAULT '',
+            external_id TEXT NOT NULL,
+            external_url TEXT,
+            created_at  TEXT NOT NULL,
+            PRIMARY KEY (item_id, adapter, channel)
+        );
+        CREATE INDEX IF NOT EXISTS idx_adapter_mappings_external
+            ON adapter_mappings(adapter, external_id);
     `);
 
     // ------------------------------------------- schema migration: V2 columns
@@ -355,6 +367,29 @@ function initDb(dataDir) {
         return db.prepare('UPDATE api_keys SET revoked = 1 WHERE id = ?').run(id);
     }
 
+    // ------------------------------------------------- adapter mapping methods
+
+    function setAdapterMapping({ item_id, adapter, channel = '', external_id, external_url }) {
+        const now = new Date().toISOString();
+        db.prepare(`
+            INSERT OR REPLACE INTO adapter_mappings
+                (item_id, adapter, channel, external_id, external_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(item_id, adapter, channel, String(external_id), external_url || null, now);
+    }
+
+    function getAdapterMapping({ item_id, adapter, channel = '' }) {
+        return db.prepare(
+            'SELECT * FROM adapter_mappings WHERE item_id = ? AND adapter = ? AND channel = ?'
+        ).get(item_id, adapter, channel) || null;
+    }
+
+    function getAdapterMappingByExternalId({ adapter, external_id }) {
+        return db.prepare(
+            'SELECT * FROM adapter_mappings WHERE adapter = ? AND external_id = ?'
+        ).get(adapter, String(external_id)) || null;
+    }
+
     // --------------------------------------------------- JSON migration (opt-in)
     /**
      * Migrate legacy JSON discussion files into SQLite.
@@ -449,6 +484,10 @@ function initDb(dataDir) {
         createApiKey,
         validateApiKey,
         revokeApiKey,
+        // Adapter mappings
+        setAdapterMapping,
+        getAdapterMapping,
+        getAdapterMappingByExternalId,
     };
 }
 
