@@ -113,6 +113,32 @@ app.use(express.json({ limit: '512kb' }));
 // Trust first proxy (for correct IP logging behind nginx/caddy)
 app.set('trust proxy', 1);
 
+// ------------------------------------------------------------------ rate limiting
+
+const apiReadLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Rate limit exceeded, try again later' },
+});
+
+const apiWriteLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Rate limit exceeded, try again later' },
+});
+
+const uploadLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Upload rate limit exceeded' },
+});
+
 // ---------------------------------------------------------------------- multer
 
 const upload = multer({
@@ -353,7 +379,7 @@ app.get('/pending', (req, res) => {
 // -------------------------------------------------------------- image upload
 
 // Upload an image (screenshots, attachments, etc.)
-app.post('/upload', upload.single('image'), (req, res) => {
+app.post('/upload', uploadLimiter, upload.single('image'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
     const url = '/images/' + req.file.filename;
     res.json({ success: true, url });
@@ -491,30 +517,30 @@ function handleGetItemsFull(req, res) {
 //   /api/clawmark/:app/items  → named app (multi-tenant)
 
 // Flat routes (default app)
-app.get('/items',              handleGetItems);
-app.post('/items',             handleCreateItem);
-app.get('/items-full',         handleGetItemsFull);
-app.get('/items/:id',          handleGetItem);
-app.post('/items/:id/messages', handleAddMessage);
-app.post('/items/:id/assign',  handleAssignItem);
-app.post('/items/:id/resolve', handleResolveItem);
-app.post('/items/:id/verify',  handleVerifyItem);
-app.post('/items/:id/reopen',  handleReopenItem);
-app.post('/items/:id/close',   handleCloseItem);
-app.post('/items/:id/respond', handleRespondToItem);
+app.get('/items',              apiReadLimiter, handleGetItems);
+app.post('/items',             apiWriteLimiter, handleCreateItem);
+app.get('/items-full',         apiReadLimiter, handleGetItemsFull);
+app.get('/items/:id',          apiReadLimiter, handleGetItem);
+app.post('/items/:id/messages', apiWriteLimiter, handleAddMessage);
+app.post('/items/:id/assign',  apiWriteLimiter, handleAssignItem);
+app.post('/items/:id/resolve', apiWriteLimiter, handleResolveItem);
+app.post('/items/:id/verify',  apiWriteLimiter, handleVerifyItem);
+app.post('/items/:id/reopen',  apiWriteLimiter, handleReopenItem);
+app.post('/items/:id/close',   apiWriteLimiter, handleCloseItem);
+app.post('/items/:id/respond', apiWriteLimiter, handleRespondToItem);
 
 // Namespaced routes (multi-app)
-app.get('/api/clawmark/:app/items',              handleGetItems);
-app.post('/api/clawmark/:app/items',             handleCreateItem);
-app.get('/api/clawmark/:app/items-full',         handleGetItemsFull);
-app.get('/api/clawmark/:app/items/:id',          handleGetItem);
-app.post('/api/clawmark/:app/items/:id/messages', handleAddMessage);
-app.post('/api/clawmark/:app/items/:id/assign',  handleAssignItem);
-app.post('/api/clawmark/:app/items/:id/resolve', handleResolveItem);
-app.post('/api/clawmark/:app/items/:id/verify',  handleVerifyItem);
-app.post('/api/clawmark/:app/items/:id/reopen',  handleReopenItem);
-app.post('/api/clawmark/:app/items/:id/close',   handleCloseItem);
-app.post('/api/clawmark/:app/items/:id/respond', handleRespondToItem);
+app.get('/api/clawmark/:app/items',              apiReadLimiter, handleGetItems);
+app.post('/api/clawmark/:app/items',             apiWriteLimiter, handleCreateItem);
+app.get('/api/clawmark/:app/items-full',         apiReadLimiter, handleGetItemsFull);
+app.get('/api/clawmark/:app/items/:id',          apiReadLimiter, handleGetItem);
+app.post('/api/clawmark/:app/items/:id/messages', apiWriteLimiter, handleAddMessage);
+app.post('/api/clawmark/:app/items/:id/assign',  apiWriteLimiter, handleAssignItem);
+app.post('/api/clawmark/:app/items/:id/resolve', apiWriteLimiter, handleResolveItem);
+app.post('/api/clawmark/:app/items/:id/verify',  apiWriteLimiter, handleVerifyItem);
+app.post('/api/clawmark/:app/items/:id/reopen',  apiWriteLimiter, handleReopenItem);
+app.post('/api/clawmark/:app/items/:id/close',   apiWriteLimiter, handleCloseItem);
+app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, handleRespondToItem);
 
 // ================================================================= V2 API
 //
@@ -551,7 +577,7 @@ function v2Auth(req, res, next) {
 }
 
 // -- POST /api/v2/items — create item with full V2 schema
-app.post('/api/v2/items', v2Auth, (req, res) => {
+app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
     const { type, app_id, source_url, source_title, quote, quote_position,
             screenshots, title, content, priority, tags, userName, version } = req.body;
 
@@ -583,7 +609,7 @@ app.post('/api/v2/items', v2Auth, (req, res) => {
 });
 
 // -- GET /api/v2/items — query with url/tag support
-app.get('/api/v2/items', (req, res) => {
+app.get('/api/v2/items', apiReadLimiter, (req, res) => {
     const { url, tag, doc, type, status, assignee, app_id } = req.query;
     const resolvedAppId = app_id || 'default';
 
@@ -601,7 +627,7 @@ app.get('/api/v2/items', (req, res) => {
 });
 
 // -- GET /api/v2/items/:id
-app.get('/api/v2/items/:id', (req, res) => {
+app.get('/api/v2/items/:id', apiReadLimiter, (req, res) => {
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
     // Parse JSON fields for client convenience
@@ -611,7 +637,7 @@ app.get('/api/v2/items/:id', (req, res) => {
 });
 
 // -- POST /api/v2/items/:id/tags — add or remove tags
-app.post('/api/v2/items/:id/tags', v2Auth, (req, res) => {
+app.post('/api/v2/items/:id/tags', apiWriteLimiter, v2Auth, (req, res) => {
     const { add, remove } = req.body;
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
@@ -632,7 +658,7 @@ app.post('/api/v2/items/:id/tags', v2Auth, (req, res) => {
 });
 
 // -- POST /api/v2/items/:id/messages
-app.post('/api/v2/items/:id/messages', v2Auth, (req, res) => {
+app.post('/api/v2/items/:id/messages', apiWriteLimiter, v2Auth, (req, res) => {
     const { role, content, userName } = req.body;
     if (!content) return res.status(400).json({ error: 'Missing content' });
 
@@ -651,7 +677,7 @@ app.post('/api/v2/items/:id/messages', v2Auth, (req, res) => {
 });
 
 // -- POST /api/v2/items/:id/resolve
-app.post('/api/v2/items/:id/resolve', v2Auth, (req, res) => {
+app.post('/api/v2/items/:id/resolve', apiWriteLimiter, v2Auth, (req, res) => {
     const result = itemsDb.resolveItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.resolved', { id: req.params.id });
@@ -659,7 +685,7 @@ app.post('/api/v2/items/:id/resolve', v2Auth, (req, res) => {
 });
 
 // -- POST /api/v2/items/:id/assign
-app.post('/api/v2/items/:id/assign', v2Auth, (req, res) => {
+app.post('/api/v2/items/:id/assign', apiWriteLimiter, v2Auth, (req, res) => {
     const { assignee } = req.body;
     if (!assignee) return res.status(400).json({ error: 'Missing assignee' });
     const result = itemsDb.assignItem(req.params.id, assignee);
@@ -669,7 +695,7 @@ app.post('/api/v2/items/:id/assign', v2Auth, (req, res) => {
 });
 
 // -- POST /api/v2/items/:id/close
-app.post('/api/v2/items/:id/close', v2Auth, (req, res) => {
+app.post('/api/v2/items/:id/close', apiWriteLimiter, v2Auth, (req, res) => {
     const result = itemsDb.closeItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.closed', { id: req.params.id });
@@ -677,21 +703,21 @@ app.post('/api/v2/items/:id/close', v2Auth, (req, res) => {
 });
 
 // -- POST /api/v2/items/:id/reopen
-app.post('/api/v2/items/:id/reopen', v2Auth, (req, res) => {
+app.post('/api/v2/items/:id/reopen', apiWriteLimiter, v2Auth, (req, res) => {
     const result = itemsDb.reopenItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
 });
 
 // -- GET /api/v2/urls — list all annotated URLs for an app
-app.get('/api/v2/urls', (req, res) => {
+app.get('/api/v2/urls', apiReadLimiter, (req, res) => {
     const app_id = req.query.app_id || 'default';
     const urls = itemsDb.getDistinctUrls(app_id);
     res.json({ urls });
 });
 
 // -- POST /api/v2/auth/apikey — issue API key (requires invite code)
-app.post('/api/v2/auth/apikey', (req, res) => {
+app.post('/api/v2/auth/apikey', apiWriteLimiter, (req, res) => {
     const { code, name, app_id } = req.body;
     if (!code || !VALID_CODES[code]) {
         return res.status(401).json({ error: 'Valid invite code required to create API key' });
