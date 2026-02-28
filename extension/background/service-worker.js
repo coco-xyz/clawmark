@@ -232,6 +232,48 @@ async function checkHealth() {
     return res.json();
 }
 
+// ------------------------------------------------------------------ screenshot + upload
+
+async function captureTab(tabId) {
+    const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: 'png' });
+    return { dataUrl };
+}
+
+async function uploadImage(dataUrl) {
+    const config = await getConfig();
+    const { authToken } = await getAuthState();
+    const serverUrl = config.serverUrl.replace(/\/$/, '');
+
+    // Convert data URL to blob
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+
+    const formData = new FormData();
+    formData.append('image', blob, `screenshot-${Date.now()}.png`);
+
+    const headers = {};
+    if (config.apiKey) {
+        headers['Authorization'] = `Bearer ${config.apiKey}`;
+    } else if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+    }
+
+    const response = await fetch(`${serverUrl}/upload`, {
+        method: 'POST',
+        headers,
+        body: formData,
+    });
+
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(err.error || `Upload failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    // Return full URL (server returns relative path like /images/filename)
+    return { url: `${serverUrl}${data.url}` };
+}
+
 // --------------------------------------------------------- context menu
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -321,6 +363,13 @@ async function handleMessage(message, sender) {
 
         case 'CHECK_AUTH':
             return checkAuth();
+
+        // Screenshot + upload messages
+        case 'CAPTURE_TAB':
+            return captureTab(sender.tab?.id);
+
+        case 'UPLOAD_IMAGE':
+            return uploadImage(message.dataUrl);
 
         default:
             return { error: `Unknown message type: ${message.type}` };

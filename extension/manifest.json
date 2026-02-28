@@ -19,8 +19,8 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/inject.js"],
-      "css": ["content/inject.css"],
+      "js": ["content/screenshot.js", "content/inject.js"],
+      "css": ["content/inject.css", "content/screenshot.css"],
       "run_at": "document_idle"
     }
   ],

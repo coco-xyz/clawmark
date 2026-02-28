@@ -1,0 +1,227 @@
+/* ClawMark — Screenshot & Annotation Styles */
+
+/* ---- Area Selector Overlay ---- */
+#clawmark-area-selector {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 2147483647;
+    cursor: crosshair;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+#clawmark-area-selector .cm-sel-hint {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 13px;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+#clawmark-area-selector .cm-sel-box {
+    position: absolute;
+    display: none;
+    border: 2px dashed #5865f2;
+    background: rgba(88, 101, 242, 0.1);
+    pointer-events: none;
+}
+
+/* ---- Annotation Editor ---- */
+#clawmark-annotation-editor {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 2147483647;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    animation: clawmark-fade-in 0.15s ease-out;
+}
+
+#clawmark-annotation-editor .cm-ann-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 16px;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 10px;
+}
+
+#clawmark-annotation-editor .cm-ann-tools,
+#clawmark-annotation-editor .cm-ann-colors,
+#clawmark-annotation-editor .cm-ann-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+#clawmark-annotation-editor .cm-ann-tool {
+    padding: 6px 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+#clawmark-annotation-editor .cm-ann-tool:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+#clawmark-annotation-editor .cm-ann-tool.active {
+    background: rgba(88, 101, 242, 0.3);
+    border-color: #5865f2;
+    color: #fff;
+}
+
+#clawmark-annotation-editor .cm-ann-color {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    padding: 0;
+}
+
+#clawmark-annotation-editor .cm-ann-color:hover {
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+#clawmark-annotation-editor .cm-ann-color.active {
+    border-color: #fff;
+}
+
+#clawmark-annotation-editor .cm-ann-undo {
+    padding: 6px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #aaa;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+#clawmark-annotation-editor .cm-ann-undo:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+#clawmark-annotation-editor .cm-ann-cancel {
+    padding: 6px 14px;
+    background: rgba(255, 255, 255, 0.08);
+    border: none;
+    border-radius: 6px;
+    color: #ccc;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+#clawmark-annotation-editor .cm-ann-cancel:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+#clawmark-annotation-editor .cm-ann-done {
+    padding: 6px 14px;
+    background: #5865f2;
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+#clawmark-annotation-editor .cm-ann-done:hover {
+    background: #4752c4;
+}
+
+#clawmark-annotation-editor .cm-ann-canvas-wrap {
+    border: 1px solid #444;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+#clawmark-annotation-editor canvas {
+    display: block;
+    cursor: crosshair;
+}
+
+/* ---- Image previews in input overlay ---- */
+#clawmark-input-overlay .cm-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 12px 4px;
+}
+
+#clawmark-input-overlay .cm-image-preview {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #333;
+}
+
+#clawmark-input-overlay .cm-image-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+#clawmark-input-overlay .cm-image-preview .cm-image-remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    background: rgba(0, 0, 0, 0.7);
+    border: none;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+#clawmark-input-overlay .cm-image-preview .cm-image-remove:hover {
+    background: #ef4444;
+}
+
+#clawmark-input-overlay .cm-drop-hint {
+    padding: 6px 12px;
+    font-size: 11px;
+    color: #666;
+    text-align: center;
+}
+
+#clawmark-input-overlay.cm-dragover textarea {
+    border-color: #5865f2;
+    background: rgba(88, 101, 242, 0.1);
+}
