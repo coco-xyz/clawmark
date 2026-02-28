@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ClawMark",
   "version": "0.2.0",
-  "description": "标注、评论、追踪 — 在任意网页上收集反馈",
+  "description": "Annotate, comment, and track issues on any webpage — your feedback collection tool",
   "permissions": [
     "activeTab",
     "storage",
