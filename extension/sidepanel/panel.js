@@ -299,9 +299,9 @@ function escapeHtml(str) {
 
 // ------------------------------------------------------------------ cross-script events
 
-// Auto-refresh when content script creates a new item
+// Auto-refresh when content script creates a new item or auth state changes
 chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'ITEM_CREATED') {
+    if (message.type === 'ITEM_CREATED' || message.type === 'AUTH_STATE_CHANGED') {
         invalidateCache(`items:${currentUrl}`);
         loadItems(true);
     }

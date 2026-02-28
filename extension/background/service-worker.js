@@ -1,11 +1,11 @@
 /**
  * ClawMark Chrome Extension — Background Service Worker
  *
- * 职责：
- * - 管理认证状态（API Key / invite code）
- * - 向 ClawMark Server 发 API 请求
- * - 中转 content script ↔ sidepanel 消息
- * - 右键菜单
+ * Manages:
+ * - Authentication state (Google OAuth JWT / API Key / invite code)
+ * - API requests to ClawMark Server
+ * - Message relay between content script ↔ sidepanel
+ * - Context menu
  */
 
 'use strict';
@@ -14,6 +14,10 @@
 
 const DEFAULT_SERVER = 'https://clawmark.coco.xyz';
 
+// Google OAuth client ID — set by server admin via CLAWMARK_GOOGLE_CLIENT_ID
+// TODO: Replace with actual client ID from Jessie's OAuth setup
+const GOOGLE_CLIENT_ID = '';
+
 async function getConfig() {
     const result = await chrome.storage.sync.get({
         serverUrl: DEFAULT_SERVER,
@@ -21,6 +25,7 @@ async function getConfig() {
         inviteCode: '',
         userName: '',
         appId: 'default',
+        googleClientId: '',
     });
     return result;
 }
@@ -29,21 +34,134 @@ async function saveConfig(config) {
     await chrome.storage.sync.set(config);
 }
 
+// ------------------------------------------------------------------ auth state (JWT)
+
+async function getAuthState() {
+    const result = await chrome.storage.local.get({
+        authToken: '',
+        authUser: null,
+    });
+    return result;
+}
+
+async function setAuthState(token, user) {
+    await chrome.storage.local.set({ authToken: token, authUser: user });
+}
+
+async function clearAuthState() {
+    await chrome.storage.local.remove(['authToken', 'authUser']);
+}
+
+// ------------------------------------------------------------------ Google OAuth
+
+async function loginWithGoogle() {
+    const config = await getConfig();
+    const clientId = config.googleClientId || GOOGLE_CLIENT_ID;
+    if (!clientId) {
+        throw new Error('Google Client ID not configured');
+    }
+
+    const redirectUrl = chrome.identity.getRedirectURL();
+
+    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    authUrl.searchParams.set('client_id', clientId);
+    authUrl.searchParams.set('redirect_uri', redirectUrl);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('scope', 'openid email profile');
+    authUrl.searchParams.set('access_type', 'offline');
+    authUrl.searchParams.set('prompt', 'consent');
+
+    const responseUrl = await chrome.identity.launchWebAuthFlow({
+        url: authUrl.toString(),
+        interactive: true,
+    });
+
+    const url = new URL(responseUrl);
+    const code = url.searchParams.get('code');
+    if (!code) {
+        throw new Error('No authorization code received');
+    }
+
+    // Exchange code for JWT via our backend
+    const serverUrl = config.serverUrl.replace(/\/$/, '');
+    const response = await fetch(`${serverUrl}/api/v2/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, redirectUri: redirectUrl }),
+    });
+
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(err.error || `Login failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    await setAuthState(data.token, data.user);
+
+    // Update userName from OAuth profile if not manually set
+    if (data.user?.name && !config.userName) {
+        await saveConfig({ ...config, userName: data.user.name });
+    }
+
+    // Broadcast auth state change
+    chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
+
+    return data;
+}
+
+async function logout() {
+    await clearAuthState();
+    chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
+    return { success: true };
+}
+
+async function checkAuth() {
+    const { authToken } = await getAuthState();
+    if (!authToken) return { authenticated: false };
+
+    try {
+        const config = await getConfig();
+        const serverUrl = config.serverUrl.replace(/\/$/, '');
+        const response = await fetch(`${serverUrl}/api/v2/auth/me`, {
+            headers: { 'Authorization': `Bearer ${authToken}` },
+        });
+
+        if (!response.ok) {
+            // Token invalid/expired — clear it
+            await clearAuthState();
+            return { authenticated: false };
+        }
+
+        const data = await response.json();
+        // /auth/me returns flat user object (not nested under .user)
+        const user = data.user || data;
+        await setAuthState(authToken, user);
+        return { authenticated: true, user };
+    } catch {
+        return { authenticated: false, error: 'Network error' };
+    }
+}
+
 // ------------------------------------------------------------------ API
 
 async function apiRequest(method, path, body = null) {
     const config = await getConfig();
+    const { authToken } = await getAuthState();
     const url = `${config.serverUrl.replace(/\/$/, '')}${path}`;
 
     const headers = { 'Content-Type': 'application/json' };
+
+    // Auth priority: API key > JWT > invite code (body)
     if (config.apiKey) {
         headers['Authorization'] = `Bearer ${config.apiKey}`;
+    } else if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
     }
 
     const options = { method, headers };
     if (body) {
-        // Inject auth if no API key
-        if (!config.apiKey && config.inviteCode) {
+        // Inject invite code only if no other auth
+        if (!config.apiKey && !authToken && config.inviteCode) {
             body.code = config.inviteCode;
         }
         if (config.userName && !body.userName) {
@@ -54,6 +172,11 @@ async function apiRequest(method, path, body = null) {
 
     const response = await fetch(url, options);
     if (!response.ok) {
+        // If 401 with JWT, token may be expired — clear auth
+        if (response.status === 401 && authToken && !config.apiKey) {
+            await clearAuthState();
+            chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
+        }
         const err = await response.json().catch(() => ({ error: response.statusText }));
         throw new Error(err.error || `API ${response.status}`);
     }
@@ -115,12 +238,12 @@ async function checkHealth() {
 chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
         id: 'clawmark-comment',
-        title: 'ClawMark: 评论选中文本',
+        title: 'ClawMark: Comment on selection',
         contexts: ['selection'],
     });
     chrome.contextMenus.create({
         id: 'clawmark-issue',
-        title: 'ClawMark: 创建 Issue',
+        title: 'ClawMark: Create Issue',
         contexts: ['selection', 'page'],
     });
 });
@@ -186,6 +309,19 @@ async function handleMessage(message, sender) {
         case 'OPEN_SIDE_PANEL':
             await chrome.sidePanel.open({ tabId: sender.tab?.id });
             return { success: true };
+
+        // Auth messages
+        case 'LOGIN_GOOGLE':
+            return loginWithGoogle();
+
+        case 'LOGOUT':
+            return logout();
+
+        case 'GET_AUTH_STATE':
+            return getAuthState();
+
+        case 'CHECK_AUTH':
+            return checkAuth();
 
         default:
             return { error: `Unknown message type: ${message.type}` };
