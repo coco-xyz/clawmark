@@ -76,6 +76,13 @@ describe('matchUrlPattern', () => {
         assert.ok(matchUrlPattern('https://github.com/hxa-k/clawmark', 'github.com/hxa-k/*'));
     });
 
+    it('single * crosses path segments', () => {
+        // This was a bug: *github.com* failed because * didn't cross /
+        assert.ok(matchUrlPattern('https://github.com/coco-xyz/clawmark', '*github.com*'));
+        assert.ok(matchUrlPattern('https://github.com/coco-xyz/clawmark/issues/38', '*github.com*'));
+        assert.ok(matchUrlPattern('https://github.com/org/repo/blob/main/file.js', '*github.com*'));
+    });
+
     it('matches with double wildcard', () => {
         assert.ok(matchUrlPattern('https://github.com/coco-xyz/clawmark/issues/38', 'github.com/coco-xyz/**'));
         assert.ok(matchUrlPattern('https://github.com/coco-xyz/clawmark/blob/main/README.md', 'github.com/coco-xyz/**'));
@@ -253,6 +260,41 @@ describe('resolveTarget', () => {
 
         assert.strictEqual(result.method, 'user_rule');
         assert.strictEqual(result.target_config.repo, 'kevin/bugs');
+    });
+
+    it('tag_match rule matches item tags', () => {
+        const result = resolveTarget({
+            source_url: 'https://some-site.com/page',
+            user_name: 'Kevin',
+            tags: ['bug', 'ui'],
+            db: mockDb([{
+                user_name: 'Kevin', rule_type: 'tag_match',
+                pattern: 'bug', target_type: 'github-issue',
+                target_config: JSON.stringify({ repo: 'kevin/bugs' }),
+                priority: 5, enabled: 1,
+            }]),
+            defaultTarget: { repo: 'coco-xyz/clawmark' },
+        });
+
+        assert.strictEqual(result.method, 'user_rule');
+        assert.strictEqual(result.target_config.repo, 'kevin/bugs');
+    });
+
+    it('tag_match rule does not match when tag absent', () => {
+        const result = resolveTarget({
+            source_url: 'https://some-site.com/page',
+            user_name: 'Kevin',
+            tags: ['feature', 'ui'],
+            db: mockDb([{
+                user_name: 'Kevin', rule_type: 'tag_match',
+                pattern: 'bug', target_type: 'github-issue',
+                target_config: JSON.stringify({ repo: 'kevin/bugs' }),
+                priority: 5, enabled: 1,
+            }]),
+            defaultTarget: { repo: 'coco-xyz/clawmark' },
+        });
+
+        assert.strictEqual(result.method, 'system_default');
     });
 
     it('rules from other users are not applied', () => {

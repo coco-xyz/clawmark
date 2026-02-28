@@ -593,7 +593,7 @@ app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, handleRespondT
 // Backward compatible — V1 routes above remain unchanged.
 // =================================================================
 
-// -- V2 auth middleware: accept invite code OR API key
+// -- V2 auth middleware: accept invite code OR API key (always required)
 function v2Auth(req, res, next) {
     // API key in Authorization header
     const authHeader = req.headers.authorization;
@@ -610,11 +610,6 @@ function v2Auth(req, res, next) {
     const code = req.body?.code || req.query?.code;
     if (code && VALID_CODES[code]) {
         req.v2Auth = { type: 'invite', user: VALID_CODES[code] };
-        return next();
-    }
-    // No auth — allow for read endpoints, block for writes
-    if (req.method === 'GET') {
-        req.v2Auth = null;
         return next();
     }
     return res.status(401).json({ error: 'Authentication required (API key or invite code)' });
@@ -653,7 +648,7 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
 });
 
 // -- GET /api/v2/items — query with url/tag support
-app.get('/api/v2/items', apiReadLimiter, (req, res) => {
+app.get('/api/v2/items', apiReadLimiter, v2Auth, (req, res) => {
     const { url, tag, doc, type, status, assignee, app_id } = req.query;
     const resolvedAppId = app_id || 'default';
 
@@ -671,7 +666,7 @@ app.get('/api/v2/items', apiReadLimiter, (req, res) => {
 });
 
 // -- GET /api/v2/items/:id
-app.get('/api/v2/items/:id', apiReadLimiter, (req, res) => {
+app.get('/api/v2/items/:id', apiReadLimiter, v2Auth, (req, res) => {
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
     // Parse JSON fields for client convenience
@@ -784,11 +779,17 @@ app.get('/api/v2/adapters', (req, res) => {
 // -- GET /api/v2/routing/rules — list rules (for current user or all if admin)
 app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
     const user = req.query.user || req.v2Auth?.user;
+    const parseRuleConfig = (rule) => {
+        if (typeof rule.target_config === 'string') {
+            try { rule.target_config = JSON.parse(rule.target_config); } catch {}
+        }
+        return rule;
+    };
     if (user) {
-        const rules = itemsDb.getUserRules(user);
+        const rules = itemsDb.getUserRules(user).map(parseRuleConfig);
         return res.json({ rules });
     }
-    const rules = itemsDb.getAllUserRules();
+    const rules = itemsDb.getAllUserRules().map(parseRuleConfig);
     res.json({ rules });
 });
 

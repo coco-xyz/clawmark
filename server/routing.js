@@ -39,7 +39,7 @@ function extractGitHubRepo(url) {
 
 /**
  * Test if a URL matches a glob-like pattern.
- * Supports: * (any segment chars), ** (any path), exact match.
+ * Supports: * (any chars), ** (same as *), ? (single char), exact match.
  *
  * @param {string} url     The URL to test (with or without protocol)
  * @param {string} pattern The pattern to match against
@@ -54,12 +54,12 @@ function matchUrlPattern(url, pattern) {
     const normalPattern = normalize(pattern);
 
     // Convert glob to regex
+    // Note: both * and ** match any characters including /
+    // This is intentional — users expect *github.com* to match full URLs.
     const regexStr = normalPattern
         .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // escape regex chars (except * and ?)
-        .replace(/\*\*/g, '§§')                  // placeholder for **
-        .replace(/\*/g, '[^/]*')                  // * = any chars except /
-        .replace(/§§/g, '.*')                     // ** = any chars including /
-        .replace(/\?/g, '[^/]');                   // ? = single char
+        .replace(/\*+/g, '.*')                   // * or ** = any chars including /
+        .replace(/\?/g, '.');                     // ? = single char
 
     try {
         return new RegExp(`^${regexStr}$`, 'i').test(normalUrl);
@@ -103,6 +103,18 @@ function resolveTarget({ source_url, user_name, type, priority, tags, db, defaul
 
         if (rule.rule_type === 'content_type' && rule.pattern) {
             if (type && rule.pattern === type) {
+                const config = JSON.parse(rule.target_config);
+                return {
+                    target_type: rule.target_type,
+                    target_config: config,
+                    matched_rule: rule,
+                    method: 'user_rule',
+                };
+            }
+        }
+
+        if (rule.rule_type === 'tag_match' && rule.pattern) {
+            if (tags && Array.isArray(tags) && tags.includes(rule.pattern)) {
                 const config = JSON.parse(rule.target_config);
                 return {
                     target_type: rule.target_type,

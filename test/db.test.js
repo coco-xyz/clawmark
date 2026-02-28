@@ -580,6 +580,82 @@ describe('DB — adapter mappings', () => {
     });
 });
 
+describe('DB — user routing rules', () => {
+    beforeEach(setup);
+    afterEach(teardown);
+
+    it('createUserRule and getUserRules', () => {
+        const rule = dbApi.createUserRule({
+            user_name: 'Kevin', rule_type: 'url_pattern',
+            pattern: '*github.com*', target_type: 'github-issue',
+            target_config: { repo: 'kevin/notes' }, priority: 10,
+        });
+
+        assert.ok(rule.id.startsWith('rule-'));
+        assert.equal(rule.user_name, 'Kevin');
+        assert.equal(rule.rule_type, 'url_pattern');
+
+        const rules = dbApi.getUserRules('Kevin');
+        assert.equal(rules.length, 1);
+        assert.equal(rules[0].pattern, '*github.com*');
+    });
+
+    it('updateUserRule with boolean enabled:false', () => {
+        const rule = dbApi.createUserRule({
+            user_name: 'Kevin', rule_type: 'default',
+            target_type: 'github-issue',
+            target_config: { repo: 'kevin/default' },
+        });
+
+        // This was a bug: passing boolean false caused 500
+        const updated = dbApi.updateUserRule(rule.id, { enabled: false });
+        assert.ok(updated);
+        assert.equal(updated.enabled, 0);
+    });
+
+    it('updateUserRule with enabled:true', () => {
+        const rule = dbApi.createUserRule({
+            user_name: 'Kevin', rule_type: 'default',
+            target_type: 'github-issue',
+            target_config: { repo: 'kevin/default' },
+        });
+
+        dbApi.updateUserRule(rule.id, { enabled: false });
+        const updated = dbApi.updateUserRule(rule.id, { enabled: true });
+        assert.equal(updated.enabled, 1);
+    });
+
+    it('deleteUserRule', () => {
+        const rule = dbApi.createUserRule({
+            user_name: 'Kevin', rule_type: 'default',
+            target_type: 'github-issue',
+            target_config: { repo: 'kevin/default' },
+        });
+
+        const result = dbApi.deleteUserRule(rule.id);
+        assert.ok(result.success);
+
+        const rules = dbApi.getUserRules('Kevin');
+        assert.equal(rules.length, 0);
+    });
+
+    it('getAllUserRules returns rules from all users', () => {
+        dbApi.createUserRule({
+            user_name: 'Kevin', rule_type: 'default',
+            target_type: 'github-issue',
+            target_config: { repo: 'kevin/default' },
+        });
+        dbApi.createUserRule({
+            user_name: 'Jessie', rule_type: 'url_pattern',
+            pattern: '*docs*', target_type: 'github-issue',
+            target_config: { repo: 'jessie/docs' },
+        });
+
+        const all = dbApi.getAllUserRules();
+        assert.equal(all.length, 2);
+    });
+});
+
 describe('DB — genId', () => {
     beforeEach(setup);
     afterEach(teardown);

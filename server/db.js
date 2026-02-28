@@ -440,7 +440,7 @@ function initDb(dataDir) {
                 ? (typeof updates.target_config === 'string' ? updates.target_config : JSON.stringify(updates.target_config))
                 : existing.target_config,
             priority: updates.priority ?? existing.priority,
-            enabled: updates.enabled !== undefined ? updates.enabled : existing.enabled,
+            enabled: updates.enabled !== undefined ? (updates.enabled ? 1 : 0) : existing.enabled,
             updated_at: now,
         };
         ruleStmts.updateRule.run(merged);
