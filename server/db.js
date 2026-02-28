@@ -146,7 +146,6 @@ function initDb(dataDir) {
             updated_at  TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_apps_user ON apps(user_id);
-        CREATE INDEX IF NOT EXISTS idx_apps_org ON apps(org_id);
 
         CREATE TABLE IF NOT EXISTS organizations (
             id          TEXT PRIMARY KEY,
@@ -205,6 +204,10 @@ function initDb(dataDir) {
         db.exec(`ALTER TABLE user_rules ADD COLUMN org_id TEXT`);
         console.log('[db] migrated: added column user_rules.org_id');
     }
+
+    // org_id indexes (must run after migration adds the columns)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_apps_org ON apps(org_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_user_rules_org ON user_rules(org_id)`);
 
     // ---------------------------------------------------- prepared statements
     const stmts = {
