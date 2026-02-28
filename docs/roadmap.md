@@ -82,6 +82,7 @@
   - Email（摘要或逐条）
   - 通用 Webhook（POST 到任意 URL）
   - Linear / Jira（issue tracker 集成）
+  - HxA Connect（bot-to-bot，跨 agent 分发）
 - **多目标分发**：一条标注 → 同时发送到多个 adapter
 - **分发状态追踪**：查看哪些 adapter 收到了标注，失败时重试
 - **Adapter 市场**：社区贡献的 adapter（与 hxa-teams 模板系统打通）
