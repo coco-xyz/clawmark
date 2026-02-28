@@ -828,6 +828,9 @@ app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
     });
 
     if (!updated) return res.status(404).json({ error: 'Rule not found' });
+    if (typeof updated.target_config === 'string') {
+        try { updated.target_config = JSON.parse(updated.target_config); } catch {}
+    }
     res.json({ success: true, rule: updated });
 });
 
