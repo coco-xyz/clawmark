@@ -81,16 +81,21 @@ export class ApiClient {
   /**
    * Create a new item (discussion or issue).
    * @param {object} payload
-   * @param {string} payload.type    - 'discuss' | 'issue'
+   * @param {string} payload.type         - 'discuss' | 'issue'
    * @param {string} payload.doc
    * @param {string} payload.message
    * @param {string} [payload.quote]
+   * @param {string} [payload.quote_position] - JSON XPath position
    * @param {string} [payload.title]
    * @param {string} [payload.priority]
    * @param {string} [payload.userName]
+   * @param {string} [payload.source_url]    - Page URL where item was created
+   * @param {string} [payload.source_title]  - Page title
+   * @param {string[]} [payload.tags]        - Tag labels
+   * @param {string[]} [payload.screenshots] - Screenshot URLs
    */
   createItem(payload) {
-    return this._post('/items', {
+    const body = {
       doc: payload.doc || this.defaultDoc,
       type: payload.type,
       title: payload.title,
@@ -98,7 +103,13 @@ export class ApiClient {
       message: payload.message,
       quote: payload.quote,
       userName: payload.userName || 'anonymous',
-    });
+    };
+    if (payload.quote_position) body.quote_position = payload.quote_position;
+    if (payload.source_url)     body.source_url = payload.source_url;
+    if (payload.source_title)   body.source_title = payload.source_title;
+    if (payload.tags?.length)   body.tags = payload.tags;
+    if (payload.screenshots?.length) body.screenshots = payload.screenshots;
+    return this._post('/items', body);
   }
 
   /**
