@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClawMark - Endpoint Management</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            font-size: 14px;
+            min-height: 100vh;
+        }
+
+        /* ---- Header ---- */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            background: #1a1a2e;
+            border-bottom: 1px solid #2a2a3e;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .header .subtitle {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            font-family: inherit;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: #5865f2;
+            color: #fff;
+        }
+
+        .btn-primary:hover { background: #4752c4; }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.08);
+            color: #ccc;
+        }
+
+        .btn-secondary:hover { background: rgba(255,255,255,0.14); }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+        }
+
+        .btn-danger:hover { background: rgba(239, 68, 68, 0.25); }
+
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .btn-icon {
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            background: rgba(255,255,255,0.08);
+            border: none;
+            color: #ccc;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.15s;
+        }
+
+        .btn-icon:hover { background: rgba(255,255,255,0.14); }
+
+        /* ---- Auth Bar ---- */
+        .auth-bar {
+            padding: 12px 24px;
+            background: rgba(88, 101, 242, 0.06);
+            border-bottom: 1px solid #2a2a3e;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .auth-bar label {
+            font-size: 12px;
+            color: #888;
+            white-space: nowrap;
+        }
+
+        .auth-bar input {
+            flex: 1;
+            max-width: 400px;
+            padding: 6px 10px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 13px;
+            font-family: 'SF Mono', Monaco, monospace;
+            outline: none;
+        }
+
+        .auth-bar input:focus { border-color: #5865f2; }
+
+        .auth-bar .auth-status {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .auth-bar .auth-status.connected { color: #22c55e; }
+
+        /* ---- Content ---- */
+        .content {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        /* ---- Endpoint Cards ---- */
+        .endpoint-card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin-bottom: 12px;
+            transition: border-color 0.15s;
+        }
+
+        .endpoint-card:hover { border-color: #3a3a5e; }
+
+        .endpoint-card.is-default { border-color: rgba(88, 101, 242, 0.4); }
+
+        .card-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .card-top-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .endpoint-name {
+            font-weight: 600;
+            color: #fff;
+            font-size: 15px;
+        }
+
+        .type-badge {
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .type-badge.github-issue { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+        .type-badge.lark { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+        .type-badge.telegram { background: rgba(6, 182, 212, 0.15); color: #22d3ee; }
+        .type-badge.webhook { background: rgba(249, 115, 22, 0.15); color: #fb923c; }
+
+        .default-badge {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: rgba(88, 101, 242, 0.2);
+            color: #818cf8;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        .config-summary {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 10px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            word-break: break-all;
+        }
+
+        .card-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #555;
+        }
+
+        .card-footer .set-default-btn {
+            font-size: 12px;
+            color: #5865f2;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 2px 0;
+            font-family: inherit;
+        }
+
+        .card-footer .set-default-btn:hover { text-decoration: underline; }
+
+        /* ---- Empty State ---- */
+        .empty-state {
+            text-align: center;
+            padding: 60px 24px;
+            color: #666;
+        }
+
+        .empty-state .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.4;
+        }
+
+        .empty-state h2 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #999;
+            margin-bottom: 8px;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+            max-width: 400px;
+            margin: 0 auto 20px;
+            line-height: 1.5;
+        }
+
+        /* ---- Modal ---- */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active { display: flex; }
+
+        .modal {
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            border-radius: 12px;
+            width: 520px;
+            max-width: 90vw;
+            max-height: 85vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid #2a2a3e;
+        }
+
+        .modal-header h2 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 20px;
+            padding: 4px;
+            line-height: 1;
+        }
+
+        .modal-close:hover { color: #fff; }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 16px 20px;
+            border-top: 1px solid #2a2a3e;
+        }
+
+        /* ---- Form ---- */
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: #aaa;
+            margin-bottom: 6px;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 13px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus { border-color: #5865f2; }
+
+        .form-group select {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%23888' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 32px;
+        }
+
+        .form-group select option {
+            background: #1a1a2e;
+            color: #e0e0e0;
+        }
+
+        .form-group .hint {
+            font-size: 11px;
+            color: #555;
+            margin-top: 4px;
+        }
+
+        .config-fields {
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            padding: 16px;
+            margin-top: 4px;
+            background: rgba(0,0,0,0.15);
+        }
+
+        .config-fields .form-group:last-child { margin-bottom: 0; }
+
+        .field-label-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .field-optional {
+            font-size: 10px;
+            color: #555;
+            font-weight: 400;
+        }
+
+        /* ---- Delete Confirmation ---- */
+        .confirm-body {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .confirm-body p {
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+
+        .confirm-body .warning {
+            color: #f87171;
+            font-weight: 500;
+        }
+
+        .confirm-body .endpoint-label {
+            color: #fff;
+            font-weight: 600;
+        }
+
+        /* ---- Toast ---- */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            z-index: 300;
+            transform: translateY(80px);
+            opacity: 0;
+            transition: all 0.3s;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success {
+            background: rgba(34, 197, 94, 0.15);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            color: #4ade80;
+        }
+
+        .toast.error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #f87171;
+        }
+
+        /* ---- Loading ---- */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 2px solid #333;
+            border-top-color: #5865f2;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 8px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ---- Responsive ---- */
+        @media (max-width: 640px) {
+            .header { padding: 12px 16px; }
+            .content { padding: 16px; }
+            .auth-bar { flex-wrap: wrap; }
+            .auth-bar input { max-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <h1>Endpoint Management</h1>
+            <span class="subtitle">ClawMark</span>
+        </div>
+        <button class="btn btn-primary" id="btn-add" disabled>
+            <span>+</span> Add Endpoint
+        </button>
+    </div>
+
+    <!-- Auth Bar -->
+    <div class="auth-bar">
+        <label for="api-key">API Key</label>
+        <input type="password" id="api-key" placeholder="cmk_..." autocomplete="off">
+        <button class="btn btn-secondary btn-small" id="btn-connect">Connect</button>
+        <span class="auth-status" id="auth-status">Not connected</span>
+    </div>
+
+    <!-- Main Content -->
+    <div class="content">
+        <div id="endpoint-list">
+            <div class="empty-state" id="initial-state">
+                <div class="empty-icon">&#x1F511;</div>
+                <h2>Enter your API key to get started</h2>
+                <p>Paste your ClawMark API key above to manage your delivery endpoints.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modal-title">Add Endpoint</h2>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="ep-name">Name</label>
+                    <input type="text" id="ep-name" placeholder="e.g. My GitHub Repo">
+                </div>
+                <div class="form-group">
+                    <label for="ep-type">Type</label>
+                    <select id="ep-type">
+                        <option value="">Select endpoint type...</option>
+                        <option value="github-issue">GitHub Issue</option>
+                        <option value="lark">Lark</option>
+                        <option value="telegram">Telegram</option>
+                        <option value="webhook">Webhook</option>
+                    </select>
+                </div>
+                <div id="config-container"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
+                <button class="btn btn-primary" id="modal-save">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal-overlay" id="delete-overlay">
+        <div class="modal" style="width: 400px;">
+            <div class="modal-header">
+                <h2>Delete Endpoint</h2>
+                <button class="modal-close" id="delete-close">&times;</button>
+            </div>
+            <div class="confirm-body">
+                <p class="warning">Are you sure you want to delete this endpoint?</p>
+                <p>Endpoint: <span class="endpoint-label" id="delete-name"></span></p>
+                <p style="font-size: 12px; color: #666;">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="delete-cancel">Cancel</button>
+                <button class="btn btn-danger" id="delete-confirm">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+    (function() {
+        'use strict';
+
+        // ---- State ----
+        let apiKey = '';
+        let endpoints = [];
+        let editingId = null;
+        let deletingId = null;
+
+        // ---- DOM refs ----
+        const els = {
+            apiKeyInput: document.getElementById('api-key'),
+            btnConnect: document.getElementById('btn-connect'),
+            authStatus: document.getElementById('auth-status'),
+            btnAdd: document.getElementById('btn-add'),
+            list: document.getElementById('endpoint-list'),
+            modalOverlay: document.getElementById('modal-overlay'),
+            modalTitle: document.getElementById('modal-title'),
+            modalClose: document.getElementById('modal-close'),
+            modalCancel: document.getElementById('modal-cancel'),
+            modalSave: document.getElementById('modal-save'),
+            epName: document.getElementById('ep-name'),
+            epType: document.getElementById('ep-type'),
+            configContainer: document.getElementById('config-container'),
+            deleteOverlay: document.getElementById('delete-overlay'),
+            deleteClose: document.getElementById('delete-close'),
+            deleteCancel: document.getElementById('delete-cancel'),
+            deleteConfirm: document.getElementById('delete-confirm'),
+            deleteName: document.getElementById('delete-name'),
+            toast: document.getElementById('toast'),
+        };
+
+        // ---- Config field templates ----
+        const CONFIG_FIELDS = {
+            'github-issue': [
+                { key: 'repo', label: 'Repository', placeholder: 'owner/repo', required: true },
+                { key: 'token', label: 'GitHub Token', placeholder: 'ghp_... (optional, uses server default)', required: false, type: 'password' },
+                { key: 'labels', label: 'Labels', placeholder: 'clawmark, bug (comma-separated)', required: false },
+                { key: 'assignees', label: 'Assignees', placeholder: 'user1, user2 (comma-separated)', required: false },
+            ],
+            'webhook': [
+                { key: 'url', label: 'Webhook URL', placeholder: 'https://your-service.com/webhook', required: true },
+                { key: 'secret', label: 'Secret', placeholder: 'Optional signing secret', required: false, type: 'password' },
+                { key: 'method', label: 'HTTP Method', placeholder: 'POST', required: false, options: ['POST', 'PUT'] },
+            ],
+            'lark': [
+                { key: 'webhook_url', label: 'Webhook URL', placeholder: 'https://open.larksuite.com/open-apis/bot/v2/hook/...', required: true },
+            ],
+            'telegram': [
+                { key: 'chat_id', label: 'Chat ID', placeholder: '-100123456789', required: true },
+                { key: 'bot_token', label: 'Bot Token', placeholder: '123456:ABC-DEF... (optional, uses server default)', required: false, type: 'password' },
+            ],
+        };
+
+        // ---- API helper ----
+        async function api(method, path, body) {
+            const opts = {
+                method,
+                headers: {
+                    'Authorization': 'Bearer ' + apiKey,
+                    'Content-Type': 'application/json',
+                },
+            };
+            if (body) opts.body = JSON.stringify(body);
+            const resp = await fetch('/api/v2' + path, opts);
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.error || 'Request failed');
+            return data;
+        }
+
+        // ---- Toast ----
+        function showToast(message, type) {
+            els.toast.textContent = message;
+            els.toast.className = 'toast ' + type;
+            requestAnimationFrame(() => els.toast.classList.add('show'));
+            setTimeout(() => els.toast.classList.remove('show'), 3000);
+        }
+
+        // ---- Load from query params ----
+        function initFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            const key = params.get('key') || params.get('api_key');
+            if (key) {
+                els.apiKeyInput.value = key;
+                connect();
+            }
+        }
+
+        // ---- Connect ----
+        async function connect() {
+            apiKey = els.apiKeyInput.value.trim();
+            if (!apiKey) {
+                showToast('Please enter an API key', 'error');
+                return;
+            }
+
+            els.authStatus.textContent = 'Connecting...';
+            els.authStatus.className = 'auth-status';
+
+            try {
+                const data = await api('GET', '/endpoints');
+                endpoints = data.endpoints || [];
+                els.authStatus.textContent = 'Connected';
+                els.authStatus.className = 'auth-status connected';
+                els.btnAdd.disabled = false;
+                renderEndpoints();
+            } catch (err) {
+                els.authStatus.textContent = 'Auth failed';
+                els.authStatus.className = 'auth-status';
+                showToast('Authentication failed: ' + err.message, 'error');
+                els.btnAdd.disabled = true;
+            }
+        }
+
+        // ---- Render ----
+        function renderEndpoints() {
+            if (endpoints.length === 0) {
+                els.list.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">&#x26A1;</div>
+                        <h2>No endpoints configured</h2>
+                        <p>Add your first endpoint to start routing annotations to GitHub, Lark, Telegram, or custom webhooks.</p>
+                        <button class="btn btn-primary" onclick="document.getElementById('btn-add').click()">
+                            <span>+</span> Add Endpoint
+                        </button>
+                    </div>`;
+                return;
+            }
+
+            els.list.innerHTML = endpoints.map(ep => {
+                const cfg = typeof ep.config === 'string' ? JSON.parse(ep.config) : ep.config;
+                const summary = getConfigSummary(ep.type, cfg);
+                const typeClass = ep.type;
+                const isDefault = ep.is_default;
+
+                return `
+                <div class="endpoint-card ${isDefault ? 'is-default' : ''}" data-id="${ep.id}">
+                    <div class="card-top">
+                        <div class="card-top-left">
+                            <span class="endpoint-name">${escHtml(ep.name)}</span>
+                            <span class="type-badge ${typeClass}">${escHtml(ep.type)}</span>
+                            ${isDefault ? '<span class="default-badge">&#x2605; Default</span>' : ''}
+                        </div>
+                        <div class="card-actions">
+                            <button class="btn btn-secondary btn-small" onclick="app.editEndpoint('${ep.id}')" title="Edit">Edit</button>
+                            <button class="btn btn-danger btn-small" onclick="app.deleteEndpoint('${ep.id}')" title="Delete">Delete</button>
+                        </div>
+                    </div>
+                    <div class="config-summary">${escHtml(summary)}</div>
+                    <div class="card-footer">
+                        <span>Created ${formatDate(ep.created_at)}</span>
+                        ${!isDefault ? `<button class="set-default-btn" onclick="app.setDefault('${ep.id}')">Set as Default</button>` : '<span style="color:#818cf8;">Default endpoint</span>'}
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function getConfigSummary(type, cfg) {
+            switch (type) {
+                case 'github-issue':
+                    return cfg.repo || 'No repo configured';
+                case 'webhook':
+                    return cfg.url || 'No URL configured';
+                case 'lark':
+                    return cfg.webhook_url ? cfg.webhook_url.replace(/^https?:\/\//, '').substring(0, 50) + '...' : 'No URL configured';
+                case 'telegram':
+                    return 'Chat: ' + (cfg.chat_id || 'not set');
+                default:
+                    return JSON.stringify(cfg).substring(0, 60);
+            }
+        }
+
+        function escHtml(str) {
+            const d = document.createElement('div');
+            d.textContent = str || '';
+            return d.innerHTML;
+        }
+
+        function formatDate(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        // ---- Modal: Open ----
+        function openModal(endpoint) {
+            editingId = endpoint ? endpoint.id : null;
+            els.modalTitle.textContent = endpoint ? 'Edit Endpoint' : 'Add Endpoint';
+            els.epName.value = endpoint ? endpoint.name : '';
+
+            if (endpoint) {
+                els.epType.value = endpoint.type;
+                renderConfigFields(endpoint.type, typeof endpoint.config === 'string' ? JSON.parse(endpoint.config) : endpoint.config);
+            } else {
+                els.epType.value = '';
+                els.configContainer.innerHTML = '';
+            }
+
+            els.modalOverlay.classList.add('active');
+            els.epName.focus();
+        }
+
+        function closeModal() {
+            els.modalOverlay.classList.remove('active');
+            editingId = null;
+        }
+
+        // ---- Modal: Config fields ----
+        function renderConfigFields(type, values) {
+            const fields = CONFIG_FIELDS[type];
+            if (!fields) {
+                els.configContainer.innerHTML = '';
+                return;
+            }
+
+            values = values || {};
+
+            let html = '<div class="config-fields">';
+            for (const f of fields) {
+                const val = f.key === 'labels' || f.key === 'assignees'
+                    ? (Array.isArray(values[f.key]) ? values[f.key].join(', ') : (values[f.key] || ''))
+                    : (values[f.key] || '');
+
+                html += `<div class="form-group">
+                    <label>
+                        <span class="field-label-row">
+                            ${escHtml(f.label)}
+                            ${f.required ? '' : '<span class="field-optional">optional</span>'}
+                        </span>
+                    </label>`;
+
+                if (f.options) {
+                    html += `<select id="cfg-${f.key}">
+                        ${f.options.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('')}
+                    </select>`;
+                } else {
+                    html += `<input type="${f.type || 'text'}" id="cfg-${f.key}" placeholder="${escHtml(f.placeholder)}" value="${escHtml(val)}">`;
+                }
+
+                html += '</div>';
+            }
+            html += '</div>';
+            els.configContainer.innerHTML = html;
+        }
+
+        // ---- Modal: Save ----
+        async function saveEndpoint() {
+            const name = els.epName.value.trim();
+            const type = els.epType.value;
+
+            if (!name) { showToast('Please enter a name', 'error'); return; }
+            if (!type) { showToast('Please select a type', 'error'); return; }
+
+            const fields = CONFIG_FIELDS[type] || [];
+            const config = {};
+
+            for (const f of fields) {
+                const el = document.getElementById('cfg-' + f.key);
+                if (!el) continue;
+                let val = el.value.trim();
+
+                if (f.required && !val) {
+                    showToast(f.label + ' is required', 'error');
+                    el.focus();
+                    return;
+                }
+
+                if (val) {
+                    // Handle comma-separated arrays
+                    if (f.key === 'labels' || f.key === 'assignees') {
+                        config[f.key] = val.split(',').map(s => s.trim()).filter(Boolean);
+                    } else {
+                        config[f.key] = val;
+                    }
+                }
+            }
+
+            els.modalSave.disabled = true;
+            els.modalSave.textContent = 'Saving...';
+
+            try {
+                if (editingId) {
+                    await api('PUT', '/endpoints/' + editingId, { name, type, config });
+                    showToast('Endpoint updated', 'success');
+                } else {
+                    await api('POST', '/endpoints', { name, type, config });
+                    showToast('Endpoint created', 'success');
+                }
+                closeModal();
+                await refreshEndpoints();
+            } catch (err) {
+                showToast('Error: ' + err.message, 'error');
+            } finally {
+                els.modalSave.disabled = false;
+                els.modalSave.textContent = 'Save';
+            }
+        }
+
+        // ---- Delete ----
+        function openDeleteDialog(id) {
+            const ep = endpoints.find(e => e.id === id);
+            if (!ep) return;
+            deletingId = id;
+            els.deleteName.textContent = ep.name;
+            els.deleteOverlay.classList.add('active');
+        }
+
+        async function confirmDelete() {
+            if (!deletingId) return;
+            els.deleteConfirm.disabled = true;
+            els.deleteConfirm.textContent = 'Deleting...';
+
+            try {
+                await api('DELETE', '/endpoints/' + deletingId);
+                showToast('Endpoint deleted', 'success');
+                els.deleteOverlay.classList.remove('active');
+                deletingId = null;
+                await refreshEndpoints();
+            } catch (err) {
+                showToast('Error: ' + err.message, 'error');
+            } finally {
+                els.deleteConfirm.disabled = false;
+                els.deleteConfirm.textContent = 'Delete';
+            }
+        }
+
+        // ---- Set Default ----
+        async function setDefault(id) {
+            try {
+                await api('POST', '/endpoints/' + id + '/default');
+                showToast('Default endpoint updated', 'success');
+                await refreshEndpoints();
+            } catch (err) {
+                showToast('Error: ' + err.message, 'error');
+            }
+        }
+
+        // ---- Refresh ----
+        async function refreshEndpoints() {
+            try {
+                const data = await api('GET', '/endpoints');
+                endpoints = data.endpoints || [];
+                renderEndpoints();
+            } catch (err) {
+                showToast('Failed to load endpoints: ' + err.message, 'error');
+            }
+        }
+
+        // ---- Event listeners ----
+        els.btnConnect.addEventListener('click', connect);
+        els.apiKeyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') connect(); });
+        els.btnAdd.addEventListener('click', () => openModal(null));
+        els.modalClose.addEventListener('click', closeModal);
+        els.modalCancel.addEventListener('click', closeModal);
+        els.modalSave.addEventListener('click', saveEndpoint);
+        els.deleteClose.addEventListener('click', () => { els.deleteOverlay.classList.remove('active'); deletingId = null; });
+        els.deleteCancel.addEventListener('click', () => { els.deleteOverlay.classList.remove('active'); deletingId = null; });
+        els.deleteConfirm.addEventListener('click', confirmDelete);
+
+        els.epType.addEventListener('change', (e) => {
+            renderConfigFields(e.target.value, {});
+        });
+
+        // Close modals on overlay click
+        els.modalOverlay.addEventListener('click', (e) => { if (e.target === els.modalOverlay) closeModal(); });
+        els.deleteOverlay.addEventListener('click', (e) => { if (e.target === els.deleteOverlay) { els.deleteOverlay.classList.remove('active'); deletingId = null; } });
+
+        // Close modals on Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (els.deleteOverlay.classList.contains('active')) { els.deleteOverlay.classList.remove('active'); deletingId = null; }
+                else if (els.modalOverlay.classList.contains('active')) closeModal();
+            }
+        });
+
+        // ---- Public API (for inline onclick handlers) ----
+        window.app = {
+            editEndpoint: (id) => {
+                const ep = endpoints.find(e => e.id === id);
+                if (ep) openModal(ep);
+            },
+            deleteEndpoint: openDeleteDialog,
+            setDefault: setDefault,
+        };
+
+        // ---- Init ----
+        initFromUrl();
+    })();
+    </script>
+</body>
+</html>
