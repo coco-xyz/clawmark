@@ -136,6 +136,53 @@ class AdapterRegistry {
     }
 
     /**
+     * Dispatch an event to a dynamically resolved target (not from static rules).
+     * Creates an ad-hoc adapter instance using the registered adapter type.
+     *
+     * @param {string} event        e.g. 'item.created'
+     * @param {object} item         The item data
+     * @param {string} target_type  Adapter type, e.g. 'github-issue'
+     * @param {object} target_config Config for the adapter (repo, labels, etc.)
+     * @param {object} context      Additional context
+     */
+    async dispatchToTarget(event, item, target_type, target_config, context = {}) {
+        const AdapterClass = this.adapterTypes.get(target_type);
+        if (!AdapterClass) {
+            console.error(`[adapters] Unknown adapter type "${target_type}" for dynamic dispatch`);
+            return;
+        }
+
+        // Inherit token from default channel config if not provided.
+        // This is safe because dynamic targets are still GitHub repos the user
+        // explicitly configured — we just reuse the PAT from the static config
+        // rather than requiring each rule to carry its own token.
+        if (target_type === 'github-issue' && !target_config.token) {
+            for (const [, adapter] of this.channels) {
+                if (adapter.type === 'github-issue' && adapter.token) {
+                    target_config.token = adapter.token;
+                    break;
+                }
+            }
+        }
+
+        const channelName = `dynamic-${target_type}-${Date.now()}`;
+        try {
+            const instance = new AdapterClass({ ...target_config, channelName, db: this.db || null });
+            const validation = instance.validate ? instance.validate() : { ok: true };
+            if (!validation.ok) {
+                console.error(`[adapters] Dynamic channel validation failed: ${validation.error}`);
+                // Fallback to static dispatch
+                return this.dispatch(event, item, context);
+            }
+            await instance.send(event, item, context);
+            console.log(`[adapters] ${event} → dynamic ${target_type} (${target_config.repo || 'custom'}) ✓`);
+        } catch (err) {
+            console.error(`[adapters] ${event} → dynamic ${target_type} failed:`, err.message);
+            throw err;
+        }
+    }
+
+    /**
      * Get status of all registered channels.
      */
     getStatus() {
