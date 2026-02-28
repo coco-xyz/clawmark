@@ -25,6 +25,22 @@
       {
         "match": { "event": "item.resolved" },
         "channels": ["webhook-default"]
+      },
+      {
+        "match": { "event": "item.created", "priority": ["high", "critical"] },
+        "channels": ["telegram-alerts"]
+      },
+      {
+        "match": { "event": "item.created", "type": "issue" },
+        "channels": ["github-bugs"]
+      },
+      {
+        "match": { "event": "item.resolved" },
+        "channels": ["github-bugs"]
+      },
+      {
+        "match": { "event": "item.closed" },
+        "channels": ["github-bugs"]
       }
     ],
     "channels": {
@@ -36,6 +52,19 @@
         "adapter": "webhook",
         "url": "https://your-service.com/webhook",
         "secret": ""
+      },
+      "telegram-alerts": {
+        "adapter": "telegram",
+        "bot_token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+        "chat_id": "-100123456789",
+        "parse_mode": "MarkdownV2"
+      },
+      "github-bugs": {
+        "adapter": "github-issue",
+        "token": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "repo": "your-org/your-repo",
+        "labels": ["clawmark", "bug"],
+        "assignees": []
       }
     }
   }

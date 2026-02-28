@@ -15,7 +15,6 @@
 'use strict';
 
 const https = require('https');
-const crypto = require('crypto');
 
 class LarkAdapter {
     constructor(config) {
@@ -60,8 +59,8 @@ class LarkAdapter {
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
                     try {
-                        const parsed = JSON.parse(data);
-                        if (parsed.code === 0 || parsed.StatusCode === 0) {
+                        const result = JSON.parse(data);
+                        if (result.code === 0 || result.StatusCode === 0) {
                             resolve({ status: 'ok' });
                         } else {
                             reject(new Error(`Lark API error: ${data.slice(0, 200)}`));

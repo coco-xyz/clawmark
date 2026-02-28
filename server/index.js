@@ -70,10 +70,14 @@ const itemsDb = initDb(DATA_DIR);
 const { AdapterRegistry } = require('./adapters/index');
 const { WebhookAdapter } = require('./adapters/webhook');
 const { LarkAdapter } = require('./adapters/lark');
+const { TelegramAdapter } = require('./adapters/telegram');
+const { GitHubIssueAdapter } = require('./adapters/github-issue');
 
 const registry = new AdapterRegistry();
 registry.registerType('webhook', WebhookAdapter);
 registry.registerType('lark', LarkAdapter);
+registry.registerType('telegram', TelegramAdapter);
+registry.registerType('github-issue', GitHubIssueAdapter);
 
 // Load distribution config
 if (config.distribution) {
