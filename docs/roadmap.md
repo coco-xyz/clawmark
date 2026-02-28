@@ -20,7 +20,17 @@
   - 测试环境：https://jessie.coco.site/clawmark（v0.3.0）
   - 生产环境：https://api.coco.xyz/clawmark（待更新）
 
-## 下一步：v0.4.0 — 目标声明协议
+## 下一步：v0.3.5 — 用户体验基础
+
+**目标**：让用户能登录、管理自己的投递端点，标注端体验升级。
+
+- **用户认证**：Google OAuth 登录/注册（替代邀请码的纯人工模式）
+- **投递端点管理**：用户登录后可管理自己的投递 endpoint，设置默认 endpoint
+- **扩展登录态**：Chrome 扩展和标注页面共享登录状态
+- **截图标注**：支持选区截图并在图上标注
+- **贴图支持**：标注时直接粘贴图片
+
+## v0.4.0 — 目标声明协议
 
 **目标**：让项目主动声明路由偏好，标注自动路由，用户无需手动配置规则。
 
@@ -70,7 +80,7 @@
 
 **目标**：生产就绪，完整认证、实时同步、多浏览器支持。
 
-- **OAuth 认证**：替代邀请码，支持 Google/GitHub OAuth
+- **完整 OAuth**：在 v0.3.5 Google OAuth 基础上扩展 GitHub OAuth，完善权限体系
 - **实时推送**：WebSocket 连接，实时标注更新（替代轮询）
 - **多浏览器**：Firefox、Edge、Safari 扩展
 - **完整 API 文档 + SDK**：TypeScript/JavaScript SDK
