@@ -448,6 +448,71 @@ describe('GitHubIssueAdapter — issue body', () => {
     });
 });
 
+describe('GitHubIssueAdapter — persistence', () => {
+    it('uses in-memory map when no db provided', () => {
+        const adapter = new GitHubIssueAdapter({
+            token: 'ghp_xxx',
+            repo: 'org/repo',
+        });
+
+        adapter._setMapping('item-1', 42, 'https://github.com/org/repo/issues/42');
+        assert.equal(adapter._getMapping('item-1'), 42);
+        assert.equal(adapter._getMapping('nonexistent'), null);
+    });
+
+    it('uses db when provided', () => {
+        // Minimal mock of the db adapter mapping methods
+        const store = new Map();
+        const mockDb = {
+            setAdapterMapping({ item_id, adapter, channel, external_id, external_url }) {
+                store.set(`${item_id}:${adapter}:${channel}`, { item_id, adapter, channel, external_id, external_url });
+            },
+            getAdapterMapping({ item_id, adapter, channel }) {
+                return store.get(`${item_id}:${adapter}:${channel}`) || null;
+            },
+        };
+
+        const adapter = new GitHubIssueAdapter({
+            token: 'ghp_xxx',
+            repo: 'org/repo',
+            db: mockDb,
+            channelName: 'gh-test',
+        });
+
+        adapter._setMapping('item-1', 99, 'https://github.com/org/repo/issues/99');
+        assert.equal(adapter._getMapping('item-1'), 99);
+        assert.equal(adapter._getMapping('nonexistent'), null);
+
+        // Verify it went through the db, not the memory map
+        assert.equal(adapter._memoryMap.size, 0);
+        assert.ok(store.has('item-1:github-issue:gh-test'));
+    });
+
+    it('survives adapter reconstruction with db', () => {
+        const store = new Map();
+        const mockDb = {
+            setAdapterMapping({ item_id, adapter, channel, external_id, external_url }) {
+                store.set(`${item_id}:${adapter}:${channel}`, { item_id, adapter, channel, external_id, external_url });
+            },
+            getAdapterMapping({ item_id, adapter, channel }) {
+                return store.get(`${item_id}:${adapter}:${channel}`) || null;
+            },
+        };
+
+        // First adapter instance writes mapping
+        const adapter1 = new GitHubIssueAdapter({
+            token: 'ghp_xxx', repo: 'org/repo', db: mockDb, channelName: 'ch1',
+        });
+        adapter1._setMapping('item-1', 55, 'https://github.com/org/repo/issues/55');
+
+        // Second adapter instance (simulating restart) reads it back
+        const adapter2 = new GitHubIssueAdapter({
+            token: 'ghp_xxx', repo: 'org/repo', db: mockDb, channelName: 'ch1',
+        });
+        assert.equal(adapter2._getMapping('item-1'), 55);
+    });
+});
+
 describe('LarkAdapter — validation', () => {
     it('requires webhook_url', () => {
         const adapter = new LarkAdapter({});
