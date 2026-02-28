@@ -118,6 +118,11 @@ const CSS = `
   font-size: 13px; color: #e6edf3; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;
 }
 .cm-issue-item-meta { font-size: 11px; color: #8b949e; }
+.cm-issue-item-tags { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.cm-tag-chip-sm {
+  padding: 1px 6px; border-radius: 8px; font-size: 10px;
+  background: #21262d; color: #8b949e; border: 1px solid #30363d;
+}
 
 .cm-issue-priority { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .cm-issue-priority.critical, .cm-issue-priority.high { background: #f85149; }
@@ -190,6 +195,16 @@ const CSS = `
 }
 .cm-issue-priority-row input[type="radio"] { margin: 0 2px 0 0; }
 .cm-modal-hint { font-size: 12px; color: #8b949e; margin-bottom: 12px; }
+/* Tag picker */
+.cm-tag-row { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.cm-tag-chip {
+  padding: 4px 10px; border-radius: 12px; font-size: 12px; cursor: pointer;
+  background: #21262d; color: #8b949e; border: 1px solid #30363d;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.cm-tag-chip:hover { background: #30363d; color: #e6edf3; }
+.cm-tag-chip.selected { background: #8957e5; color: #fff; border-color: #8957e5; }
 .cm-modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
 .cm-modal-footer button {
   padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-family: inherit;
@@ -475,6 +490,14 @@ export class FabPlugin {
           <label><input type="radio" name="cm-priority" value="high"> 高</label>
           <label><input type="radio" name="cm-priority" value="critical"> 紧急</label>
         </div>
+        <label>标签</label>
+        <div class="cm-tag-row">
+          <span class="cm-tag-chip" data-tag="bug">bug</span>
+          <span class="cm-tag-chip" data-tag="ui">ui</span>
+          <span class="cm-tag-chip" data-tag="feature">feature</span>
+          <span class="cm-tag-chip" data-tag="content">content</span>
+          <span class="cm-tag-chip" data-tag="performance">perf</span>
+        </div>
         <label>描述</label>
         <textarea class="cm-issue-desc" rows="5" placeholder="描述你遇到的问题或建议...&#10;&#10;💡 支持 Ctrl+V 粘贴截图"></textarea>
         <div class="cm-issue-images-preview"></div>
@@ -584,6 +607,11 @@ export class FabPlugin {
         this._issueModal.classList.remove('visible');
         this._cleanupAnnotation();
       }
+    });
+
+    // Tag chip toggle
+    this._issueModal.querySelectorAll('.cm-tag-chip').forEach(chip => {
+      chip.addEventListener('click', () => chip.classList.toggle('selected'));
     });
 
     // Modal submit
@@ -819,12 +847,18 @@ export class FabPlugin {
 
     list.innerHTML = filtered.map(item => {
       const priority = item.priority || 'normal';
+      let tags = [];
+      try { tags = typeof item.tags === 'string' ? JSON.parse(item.tags) : (item.tags || []); } catch {}
+      const tagHtml = tags.length
+        ? `<div class="cm-issue-item-tags">${tags.map(t => `<span class="cm-tag-chip-sm">${escapeHtml(t)}</span>`).join('')}</div>`
+        : '';
       return `<div class="cm-issue-item" data-issue-id="${item.id}">
         <div class="cm-issue-item-title">
           <span class="cm-issue-priority ${priority}"></span>
           <span>${escapeHtml(item.title || '(untitled)')}</span>
           <span class="cm-issue-status-badge ${item.status}">${item.status}</span>
         </div>
+        ${tagHtml}
         <div class="cm-issue-item-meta">${escapeHtml(item.created_by || '')} · ${timeAgo(item.created_at)}${item.assignee ? ' · → ' + escapeHtml(item.assignee) : ''}</div>
       </div>`;
     }).join('');
@@ -864,6 +898,16 @@ export class FabPlugin {
       }
       if (item.status !== 'closed') actions.push(`<button class="cm-issue-action-btn" data-action="close">关闭</button>`);
 
+      // V2: source attribution and tags
+      let detailTags = [];
+      try { detailTags = typeof item.tags === 'string' ? JSON.parse(item.tags) : (item.tags || []); } catch {}
+      const detailTagHtml = detailTags.length
+        ? `<div class="cm-issue-item-tags" style="margin:6px 0;">${detailTags.map(t => `<span class="cm-tag-chip-sm">${escapeHtml(t)}</span>`).join('')}</div>`
+        : '';
+      const sourceHtml = item.source_url
+        ? `<div style="font-size:11px;color:#8b949e;margin-bottom:6px;">来源: <a href="${escapeHtml(item.source_url)}" target="_blank" style="color:#58a6ff;text-decoration:none;">${escapeHtml(item.source_title || item.source_url)}</a></div>`
+        : '';
+
       detailEl.innerHTML = `
         <button class="cm-issue-detail-back">← 返回列表</button>
         <div class="cm-issue-detail-title">${escapeHtml(item.title || '(untitled)')}</div>
@@ -871,6 +915,8 @@ export class FabPlugin {
           ${item.status} · ${item.priority || 'normal'} · ${escapeHtml(item.created_by || '')} · ${timeAgo(item.created_at)}
           ${item.assignee ? ' · → ' + escapeHtml(item.assignee) : ''}
         </div>
+        ${detailTagHtml}
+        ${sourceHtml}
         ${item.quote ? `<div class="cm-issue-detail-quote">"${escapeHtml(item.quote)}"</div>` : ''}
         <div class="cm-issue-detail-messages">${msgs || '<div style="color:#8b949e;font-size:12px;">无消息</div>'}</div>
         <div class="cm-issue-detail-actions" data-issue-id="${item.id}">${actions.join('')}</div>
@@ -927,6 +973,8 @@ export class FabPlugin {
     ssThumb.style.display = 'none';
     this._issueImageUrls = [];
     this._screenshotUrl  = null;
+    // Reset tag selection
+    this._issueModal.querySelectorAll('.cm-tag-chip').forEach(c => c.classList.remove('selected'));
   }
 
   _openIssueFormDirect() {
@@ -1032,15 +1080,29 @@ export class FabPlugin {
       description = (description ? description + '\n\n' : '') + attachments.join('\n');
     }
 
+    // Collect tags from the tag picker
+    const selectedTags = Array.from(
+      this._issueModal.querySelectorAll('.cm-tag-chip.selected')
+    ).map(el => el.dataset.tag).filter(Boolean);
+
+    // Collect screenshot URLs for V2 field
+    const screenshotUrls = [];
+    if (this._screenshotUrl) screenshotUrls.push(this._screenshotUrl);
+    screenshotUrls.push(...this._issueImageUrls);
+
     try {
       const result = await this.core.api.createItem({
-        doc:      this.core.docId || undefined,
-        type:     'issue',
+        doc:          this.core.docId || undefined,
+        type:         'issue',
         title,
         priority,
-        message:  description,
+        message:      description,
         quote,
-        userName: this.core.user || 'anonymous',
+        userName:     this.core.user || 'anonymous',
+        source_url:   this.core.sourceUrl || undefined,
+        source_title: this.core.sourceTitle || undefined,
+        tags:         selectedTags.length ? selectedTags : undefined,
+        screenshots:  screenshotUrls.length ? screenshotUrls : undefined,
       });
 
       if (result.success) {

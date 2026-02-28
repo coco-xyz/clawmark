@@ -41,10 +41,33 @@ export class ClawMark {
     // Active document context — plugins read & write these.
     this._docId = null;
 
+    // Source page context — auto-detected from the embedding page.
+    this._sourceUrl   = null;
+    this._sourceTitle = null;
+
     // Plugin registry: [{ plugin, options, instance }]
     this._plugins = [];
 
     this._mounted = false;
+  }
+
+  // ─── Source context (V2) ───────────────────────────────────────────────────
+
+  /** Current page URL (auto-detected or manually set). */
+  get sourceUrl()   { return this._sourceUrl; }
+
+  /** Current page title (auto-detected or manually set). */
+  get sourceTitle() { return this._sourceTitle; }
+
+  /**
+   * Detect source URL and title from the embedding page.
+   * Called automatically during mount(). Can be called manually to refresh.
+   */
+  detectSource() {
+    try {
+      this._sourceUrl   = window.location.href;
+      this._sourceTitle = document.title || null;
+    } catch {}
   }
 
   // ─── Document context ──────────────────────────────────────────────────────
@@ -79,6 +102,16 @@ export class ClawMark {
   // ─── Plugin system ─────────────────────────────────────────────────────────
 
   /**
+   * Retrieve the instance of a registered plugin by its class.
+   * @param {Function} PluginClass
+   * @returns {object|null}
+   */
+  getPlugin(PluginClass) {
+    const entry = this._plugins.find(p => p.instance instanceof PluginClass);
+    return entry?.instance || null;
+  }
+
+  /**
    * Register a plugin class (or factory function) with optional options.
    * Plugins are instantiated lazily during mount().
    *
@@ -107,6 +140,9 @@ export class ClawMark {
    */
   mount() {
     if (this._mounted) return this;
+
+    // Detect source page context
+    this.detectSource();
 
     // Restore session
     this._restoreSession();

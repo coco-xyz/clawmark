@@ -10,13 +10,19 @@
  *
  * Plugin constructor: new CommentPlugin(core, options)
  *   core    — ClawMark core instance
- *   options — { contentSelector, authHandler }
+ *   options — { contentSelector, authHandler, panelMode, sidebarPosition,
+ *               sidebarWidth, sidebarTopOffset }
  *
  *   contentSelector: CSS selector for the element whose text is selectable
  *                    (default: 'body' — any text on the page).
  *   authHandler:     Optional async function called when the user is not logged
  *                    in. Should resolve once the user has authenticated.
  *                    Defaults to showing the built-in invite-code modal.
+ *   panelMode:       'float' (default) — floating panels;
+ *                    'sidebar' — slide-in sidebar panel.
+ *   sidebarPosition: 'right' (default) | 'left'
+ *   sidebarWidth:    sidebar width in px (default: 380)
+ *   sidebarTopOffset: top offset in px (default: 0)
  */
 
 // ─── CSS ─────────────────────────────────────────────────────────────────────
@@ -301,6 +307,100 @@ const CSS = `
 @media (max-width: 768px) {
   .cm-discuss-panel { width: calc(100% - 20px); left: 10px; right: 10px; }
 }
+
+/* ─── Sidebar mode ─── */
+.cm-comment-sidebar {
+  position: fixed;
+  top: 0;
+  width: 380px;
+  height: 100%;
+  background: #161b22;
+  z-index: 9002;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.25s ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.cm-comment-sidebar.cm-pos-right {
+  right: 0;
+  border-left: 1px solid #30363d;
+  transform: translateX(100%);
+}
+.cm-comment-sidebar.cm-pos-left {
+  left: 0;
+  border-right: 1px solid #30363d;
+  transform: translateX(-100%);
+}
+.cm-comment-sidebar.cm-open { transform: translateX(0); }
+
+.cm-sidebar-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid #30363d;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+.cm-sidebar-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e6edf3;
+  margin: 0;
+}
+.cm-sidebar-back-btn {
+  background: none; border: none; color: #8b949e; cursor: pointer;
+  font-size: 13px; padding: 4px 8px; border-radius: 4px;
+  font-family: inherit;
+}
+.cm-sidebar-back-btn:hover { background: #21262d; color: #e6edf3; }
+.cm-sidebar-resolve-btn {
+  background: none; border: 1px solid #30363d; color: #8b949e;
+  border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  display: flex; align-items: center; gap: 4px; transition: all 0.15s; font-family: inherit;
+}
+.cm-sidebar-resolve-btn:hover { border-color: #238636; color: #238636; background: rgba(35,134,54,0.1); }
+.cm-sidebar-resolve-btn.resolved { border-color: #238636; color: #238636; background: rgba(35,134,54,0.15); }
+.cm-sidebar-close-btn {
+  background: none; border: none; color: #8b949e; font-size: 18px;
+  cursor: pointer; padding: 2px 6px;
+}
+.cm-sidebar-close-btn:hover { color: #e6edf3; }
+
+/* Override child panel styles when inside sidebar */
+.cm-comment-sidebar .cm-discuss-list-panel,
+.cm-comment-sidebar .cm-discuss-panel {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  max-height: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  z-index: auto !important;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.cm-comment-sidebar .cm-discuss-list-panel.visible,
+.cm-comment-sidebar .cm-discuss-panel.visible {
+  display: flex;
+}
+
+/* Hide panels' own headers in sidebar (sidebar header replaces them) */
+.cm-comment-sidebar .cm-discuss-list-header,
+.cm-comment-sidebar .cm-discuss-header,
+.cm-comment-sidebar .cm-discuss-resize-handle {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .cm-comment-sidebar { width: 100%; }
+}
 `;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -334,9 +434,14 @@ export class CommentPlugin {
   constructor(core, options = {}) {
     this.core = core;
     this.opts = {
-      contentSelector: options.contentSelector || 'body',
-      authHandler:     options.authHandler     || null,
+      contentSelector:  options.contentSelector  || 'body',
+      authHandler:      options.authHandler      || null,
+      panelMode:        options.panelMode        || 'float',
+      sidebarPosition:  options.sidebarPosition  || 'right',
+      sidebarWidth:     options.sidebarWidth     || 380,
+      sidebarTopOffset: options.sidebarTopOffset || 0,
     };
+    this._isSidebar = this.opts.panelMode === 'sidebar';
 
     // State
     this._discussions       = [];
@@ -352,6 +457,8 @@ export class CommentPlugin {
     this._listPanel    = null;
     this._commentCount = null;
     this._authModal    = null;
+    this._sidebar      = null;
+    this._sidebarHeader = null;
 
     // Pending auth resolve
     this._authResolve = null;
@@ -410,28 +517,63 @@ export class CommentPlugin {
   // ─── DOM ───────────────────────────────────────────────────────────────────
 
   _buildDOM() {
-    // Discuss bubble button
+    // Discuss bubble button (always on body — appears near text selection)
     this._discussBtn = document.createElement('button');
     this._discussBtn.className = 'cm-discuss-btn';
     this._discussBtn.innerHTML = '&#128172; 讨论';
     document.body.appendChild(this._discussBtn);
 
-    // Comment count badge
+    // Comment count badge (float mode only)
     this._commentCount = document.createElement('div');
     this._commentCount.className = 'cm-comment-count';
-    document.body.appendChild(this._commentCount);
+    if (!this._isSidebar) document.body.appendChild(this._commentCount);
 
     // Discussion panel
     this._panel = this._buildPanel();
-    document.body.appendChild(this._panel);
 
     // Discussion list panel
     this._listPanel = this._buildListPanel();
-    document.body.appendChild(this._listPanel);
 
-    // Auth modal
+    // Auth modal (always on body)
     this._authModal = this._buildAuthModal();
     document.body.appendChild(this._authModal);
+
+    if (this._isSidebar) {
+      this._buildSidebar();
+    } else {
+      document.body.appendChild(this._panel);
+      document.body.appendChild(this._listPanel);
+    }
+  }
+
+  _buildSidebar() {
+    this._sidebar = document.createElement('div');
+    this._sidebar.className = `cm-comment-sidebar cm-pos-${this.opts.sidebarPosition}`;
+    if (this.opts.sidebarWidth !== 380) {
+      this._sidebar.style.width = this.opts.sidebarWidth + 'px';
+    }
+    if (this.opts.sidebarTopOffset) {
+      this._sidebar.style.top = this.opts.sidebarTopOffset + 'px';
+      this._sidebar.style.height = `calc(100% - ${this.opts.sidebarTopOffset}px)`;
+    }
+
+    // Sidebar header
+    this._sidebarHeader = document.createElement('div');
+    this._sidebarHeader.className = 'cm-sidebar-header';
+    this._sidebarHeader.innerHTML = `
+      <button class="cm-sidebar-back-btn" style="display:none;">← Back</button>
+      <span class="cm-sidebar-title">Comments</span>
+      <button class="cm-sidebar-resolve-btn" style="display:none;">✓ Resolve</button>
+      <button class="cm-sidebar-close-btn">✕</button>
+    `;
+
+    this._sidebar.appendChild(this._sidebarHeader);
+    this._sidebar.appendChild(this._listPanel);
+    this._sidebar.appendChild(this._panel);
+    document.body.appendChild(this._sidebar);
+
+    // Start with list view visible
+    this._listPanel.classList.add('visible');
   }
 
   _buildPanel() {
@@ -494,6 +636,7 @@ export class CommentPlugin {
   }
 
   _removeDOM() {
+    if (this._isSidebar) this._sidebar?.remove();
     [this._styleEl, this._discussBtn, this._commentCount,
      this._panel, this._listPanel, this._authModal]
       .forEach(el => el?.remove());
@@ -581,7 +724,20 @@ export class CommentPlugin {
 
     // List panel close
     this._listPanel.querySelector('.cm-discuss-list-close')
-      .addEventListener('click', () => this._listPanel.classList.remove('visible'));
+      .addEventListener('click', () => {
+        if (this._isSidebar) this.close();
+        else this._listPanel.classList.remove('visible');
+      });
+
+    // Sidebar-specific bindings
+    if (this._isSidebar && this._sidebarHeader) {
+      this._sidebarHeader.querySelector('.cm-sidebar-close-btn')
+        .addEventListener('click', () => this.close());
+      this._sidebarHeader.querySelector('.cm-sidebar-back-btn')
+        .addEventListener('click', () => this._sidebarShowList());
+      this._sidebarHeader.querySelector('.cm-sidebar-resolve-btn')
+        .addEventListener('click', () => this._toggleResolve());
+    }
 
     // List panel tab clicks
     this._listPanel.querySelectorAll('.cm-discuss-list-tab').forEach(tab => {
@@ -668,12 +824,25 @@ export class CommentPlugin {
       titleEl.textContent = '新讨论';
     }
 
-    this._panel.classList.add('visible');
+    if (this._isSidebar) {
+      this._listPanel.classList.remove('visible');
+      this._panel.classList.add('visible');
+      this._sidebar.classList.add('cm-open');
+      this._sidebarUpdateHeader('detail');
+    } else {
+      this._panel.classList.add('visible');
+    }
     this._panel.querySelector('.cm-discuss-input').focus();
   }
 
   _closePanel() {
-    this._panel.classList.remove('visible');
+    if (this._isSidebar) {
+      // Go back to list view within the sidebar
+      this._panel.classList.remove('visible');
+      this._sidebarShowList();
+    } else {
+      this._panel.classList.remove('visible');
+    }
     this._stopPolling();
   }
 
@@ -706,11 +875,13 @@ export class CommentPlugin {
       } else {
         // Create new discussion
         const result = await this.core.api.createItem({
-          doc:      this.core.docId,
-          type:     'discuss',
-          quote:    this._selectedText,
+          doc:          this.core.docId,
+          type:         'discuss',
+          quote:        this._selectedText,
           message,
-          userName: this.core.user,
+          userName:     this.core.user,
+          source_url:   this.core.sourceUrl || undefined,
+          source_title: this.core.sourceTitle || undefined,
         });
         if (result.success) this._currentDiscId = result.item.id;
       }
@@ -819,6 +990,9 @@ export class CommentPlugin {
       messagesEl.innerHTML += '<div class="cm-discuss-waiting">正在回复...</div>';
     }
     messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    // Update sidebar header if in detail view
+    if (this._isSidebar) this._sidebarUpdateHeader('detail');
   }
 
   // ─── Resolve / reopen ──────────────────────────────────────────────────────
@@ -913,6 +1087,15 @@ export class CommentPlugin {
 
     this.core.events.emit('comment:count:updated', { open: openCount, total: totalCount });
 
+    if (this._isSidebar) {
+      // Sidebar mode: update sidebar header if list view is active
+      if (this._listPanel.classList.contains('visible')) {
+        this._sidebarUpdateHeader('list');
+      }
+      return;
+    }
+
+    // Float mode: update badge
     if (totalCount > 0) {
       const label = openCount > 0 ? `💬 ${openCount} open` : `💬 ${totalCount} comments`;
       this._commentCount.textContent    = label;
@@ -967,7 +1150,14 @@ export class CommentPlugin {
     this._selectedText  = disc.quote || '';
     this._currentDiscId = disc.id;
     this._renderDiscussion(disc);
-    this._panel.classList.add('visible');
+    if (this._isSidebar) {
+      this._listPanel.classList.remove('visible');
+      this._panel.classList.add('visible');
+      this._sidebar.classList.add('cm-open');
+      this._sidebarUpdateHeader('detail');
+    } else {
+      this._panel.classList.add('visible');
+    }
     this._startPolling();
   }
 
@@ -990,7 +1180,15 @@ export class CommentPlugin {
     });
 
     this._renderDiscussList();
-    this._listPanel.classList.add('visible');
+
+    if (this._isSidebar) {
+      this._panel.classList.remove('visible');
+      this._listPanel.classList.add('visible');
+      this._sidebar.classList.add('cm-open');
+      this._sidebarUpdateHeader('list');
+    } else {
+      this._listPanel.classList.add('visible');
+    }
   }
 
   _renderDiscussList() {
@@ -1077,5 +1275,69 @@ export class CommentPlugin {
   _renderUserState() {
     // Expose to integrators via event — no built-in user badge in core
     this.core.events.emit('comment:user:changed', { user: this.core.user });
+  }
+
+  // ─── Sidebar public API ───────────────────────────────────────────────────
+
+  /** Toggle the sidebar open/closed. No-op in float mode. */
+  toggle() {
+    if (!this._isSidebar) return;
+    if (this._sidebar.classList.contains('cm-open')) this.close();
+    else this.open();
+  }
+
+  /** Open the sidebar (list view). No-op in float mode. */
+  open() {
+    if (!this._isSidebar) return;
+    this._loadAllDiscussions();
+    this._sidebarShowList();
+    this._sidebar.classList.add('cm-open');
+  }
+
+  /** Close the sidebar. No-op in float mode. */
+  close() {
+    if (!this._isSidebar) return;
+    this._sidebar.classList.remove('cm-open');
+    this._stopPolling();
+  }
+
+  /** Whether the sidebar is currently open. */
+  get isOpen() {
+    return this._isSidebar && this._sidebar?.classList.contains('cm-open');
+  }
+
+  // ─── Sidebar helpers ──────────────────────────────────────────────────────
+
+  _sidebarShowList() {
+    if (!this._isSidebar) return;
+    this._panel.classList.remove('visible');
+    this._listPanel.classList.add('visible');
+    this._renderDiscussList();
+    this._sidebarUpdateHeader('list');
+  }
+
+  _sidebarUpdateHeader(view) {
+    if (!this._sidebarHeader) return;
+    const backBtn    = this._sidebarHeader.querySelector('.cm-sidebar-back-btn');
+    const title      = this._sidebarHeader.querySelector('.cm-sidebar-title');
+    const resolveBtn = this._sidebarHeader.querySelector('.cm-sidebar-resolve-btn');
+
+    if (view === 'list') {
+      backBtn.style.display    = 'none';
+      resolveBtn.style.display = 'none';
+      const openCount = this._discussions.filter(d => this._discStatus(d) === 'open').length;
+      const total     = this._discussions.length;
+      title.textContent = total > 0
+        ? `Comments${openCount > 0 ? ` (${openCount} open)` : ` (${total})`}`
+        : 'Comments';
+    } else {
+      backBtn.style.display    = '';
+      resolveBtn.style.display = '';
+      const disc = this._discussions.find(d => d.id === this._currentDiscId);
+      const isResolved = disc && (disc.status === 'resolved' || disc.status === 'closed');
+      resolveBtn.classList.toggle('resolved', !!isResolved);
+      resolveBtn.textContent = isResolved ? '✓ Resolved' : '✓ Resolve';
+      title.textContent = isResolved ? '已解决' : '讨论';
+    }
   }
 }

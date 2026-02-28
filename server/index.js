@@ -391,7 +391,8 @@ function handleGetItem(req, res) {
 
 // -- POST /items
 function handleCreateItem(req, res) {
-    const { doc, type, title, quote, quote_position, priority, message, userName, version } = req.body;
+    const { doc, type, title, quote, quote_position, priority, message, userName, version,
+            source_url, source_title, tags, screenshots } = req.body;
     const app_id = resolveAppId(req);
 
     if (!doc || !userName) return res.status(400).json({ error: 'Missing doc or userName' });
@@ -399,7 +400,8 @@ function handleCreateItem(req, res) {
 
     const item = itemsDb.createItem({
         app_id, doc, type: type || 'discuss', title, quote, quote_position,
-        priority: priority || 'normal', created_by: userName, version, message
+        priority: priority || 'normal', created_by: userName, version, message,
+        source_url, source_title, tags, screenshots
     });
 
     sendWebhook('item.created', { app_id, item });
