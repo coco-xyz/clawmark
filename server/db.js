@@ -135,6 +135,16 @@ function initDb(dataDir) {
             updated_at  TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_endpoints_user_default ON endpoints(user_name, is_default);
+
+        CREATE TABLE IF NOT EXISTS apps (
+            id          TEXT PRIMARY KEY,
+            user_id     TEXT NOT NULL,
+            name        TEXT NOT NULL,
+            description TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_apps_user ON apps(user_id);
     `);
 
     // ------------------------------------------- schema migration: V2 columns
@@ -578,6 +588,73 @@ function initDb(dataDir) {
         return endpointStmts.getEndpointById.get(id);
     }
 
+    // ---------------------------------------------------------- app methods
+
+    function createApp({ user_id, name, description }) {
+        const now = new Date().toISOString();
+        const id = genId('app');
+        db.prepare(
+            `INSERT INTO apps (id, user_id, name, description, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(id, user_id, name, description || null, now, now);
+
+        // Auto-generate an AppKey for the new app
+        const key = createApiKey({ app_id: id, name: `${name} key`, created_by: user_id });
+
+        return {
+            id, user_id, name, description: description || null,
+            created_at: now, updated_at: now,
+            key: key.key, key_id: key.id,
+        };
+    }
+
+    function getApp(id) {
+        return db.prepare('SELECT * FROM apps WHERE id = ?').get(id) || null;
+    }
+
+    function getAppsByUser(user_id) {
+        return db.prepare(
+            'SELECT * FROM apps WHERE user_id = ? ORDER BY created_at DESC'
+        ).all(user_id);
+    }
+
+    function updateApp(id, updates) {
+        const existing = db.prepare('SELECT * FROM apps WHERE id = ?').get(id);
+        if (!existing) return null;
+        const now = new Date().toISOString();
+        const name = updates.name ?? existing.name;
+        const description = updates.description !== undefined ? updates.description : existing.description;
+        db.prepare(
+            'UPDATE apps SET name = ?, description = ?, updated_at = ? WHERE id = ?'
+        ).run(name, description, now, id);
+        return { ...existing, name, description, updated_at: now };
+    }
+
+    function deleteApp(id) {
+        const existing = db.prepare('SELECT * FROM apps WHERE id = ?').get(id);
+        if (!existing) return { success: false };
+        // Revoke all keys for this app
+        db.prepare('UPDATE api_keys SET revoked = 1 WHERE app_id = ?').run(id);
+        const result = db.prepare('DELETE FROM apps WHERE id = ?').run(id);
+        return { success: result.changes > 0 };
+    }
+
+    function getAppKeys(app_id) {
+        return db.prepare(
+            'SELECT id, app_id, key, name, created_by, created_at, last_used, revoked FROM api_keys WHERE app_id = ? ORDER BY created_at DESC'
+        ).all(app_id);
+    }
+
+    function rotateAppKey(app_id, created_by) {
+        const now = new Date().toISOString();
+        // Revoke existing active keys for this app
+        db.prepare('UPDATE api_keys SET revoked = 1 WHERE app_id = ? AND revoked = 0').run(app_id);
+        // Create a new key
+        const app = db.prepare('SELECT name FROM apps WHERE id = ?').get(app_id);
+        const keyName = app ? `${app.name} key` : 'rotated key';
+        return createApiKey({ app_id, name: keyName, created_by });
+    }
+
     // ------------------------------------------------- adapter mapping methods
 
     function setAdapterMapping({ item_id, adapter, channel = '', external_id, external_url }) {
@@ -744,6 +821,14 @@ function initDb(dataDir) {
         updateEndpoint,
         deleteEndpoint,
         setEndpointDefault,
+        // Apps
+        createApp,
+        getApp,
+        getAppsByUser,
+        updateApp,
+        deleteApp,
+        getAppKeys,
+        rotateAppKey,
     };
 }
 

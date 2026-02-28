@@ -1032,6 +1032,109 @@ app.post('/api/v2/endpoints/:id/default', apiWriteLimiter, v2Auth, (req, res) =>
     res.json({ success: true, endpoint: parseEndpointConfig(updated) });
 });
 
+// ================================================================= Apps API
+//
+// CRUD for user apps + AppKey management. JWT-only auth.
+// =================================================================
+
+// JWT-only middleware — apps require a logged-in user, not API keys
+function jwtAuth(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'JWT authentication required' });
+    }
+    const token = authHeader.slice(7);
+    if (token.startsWith('cmk_')) {
+        return res.status(401).json({ error: 'JWT authentication required (API keys not accepted for app management)' });
+    }
+    if (!verifyJwt) {
+        return res.status(503).json({ error: 'JWT authentication not configured' });
+    }
+    const payload = verifyJwt(token);
+    if (!payload) {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    req.jwtUser = { userId: payload.userId, email: payload.email, role: payload.role };
+    next();
+}
+
+// -- POST /api/v2/apps — create a new app (auto-generates AppKey)
+app.post('/api/v2/apps', apiWriteLimiter, jwtAuth, (req, res) => {
+    const { name, description } = req.body;
+    if (!name || !name.trim()) {
+        return res.status(400).json({ error: 'Missing app name' });
+    }
+
+    const result = itemsDb.createApp({
+        user_id: req.jwtUser.userId,
+        name: name.trim(),
+        description: description || null,
+    });
+
+    res.json({ success: true, app: result });
+});
+
+// -- GET /api/v2/apps — list my apps
+app.get('/api/v2/apps', apiReadLimiter, jwtAuth, (req, res) => {
+    const apps = itemsDb.getAppsByUser(req.jwtUser.userId);
+    res.json({ apps });
+});
+
+// -- GET /api/v2/apps/:id — get app details + keys
+app.get('/api/v2/apps/:id', apiReadLimiter, jwtAuth, (req, res) => {
+    const theApp = itemsDb.getApp(req.params.id);
+    if (!theApp) return res.status(404).json({ error: 'App not found' });
+    if (theApp.user_id !== req.jwtUser.userId) {
+        return res.status(403).json({ error: 'Not authorized to access this app' });
+    }
+    const keys = itemsDb.getAppKeys(theApp.id).map(k => ({
+        id: k.id, key: k.key, name: k.name,
+        created_at: k.created_at, last_used: k.last_used, revoked: !!k.revoked,
+    }));
+    res.json({ app: theApp, keys });
+});
+
+// -- PUT /api/v2/apps/:id — update app name/description
+app.put('/api/v2/apps/:id', apiWriteLimiter, jwtAuth, (req, res) => {
+    const existing = itemsDb.getApp(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'App not found' });
+    if (existing.user_id !== req.jwtUser.userId) {
+        return res.status(403).json({ error: 'Not authorized to modify this app' });
+    }
+    const { name, description } = req.body;
+    if (name !== undefined && !name.trim()) {
+        return res.status(400).json({ error: 'App name cannot be empty' });
+    }
+    const updated = itemsDb.updateApp(req.params.id, {
+        name: name ? name.trim() : undefined,
+        description,
+    });
+    res.json({ success: true, app: updated });
+});
+
+// -- DELETE /api/v2/apps/:id — delete app + revoke keys
+app.delete('/api/v2/apps/:id', apiWriteLimiter, jwtAuth, (req, res) => {
+    const existing = itemsDb.getApp(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'App not found' });
+    if (existing.user_id !== req.jwtUser.userId) {
+        return res.status(403).json({ error: 'Not authorized to delete this app' });
+    }
+    const result = itemsDb.deleteApp(req.params.id);
+    if (!result.success) return res.status(404).json({ error: 'App not found' });
+    res.json({ success: true });
+});
+
+// -- POST /api/v2/apps/:id/rotate-key — rotate AppKey
+app.post('/api/v2/apps/:id/rotate-key', apiWriteLimiter, jwtAuth, (req, res) => {
+    const existing = itemsDb.getApp(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'App not found' });
+    if (existing.user_id !== req.jwtUser.userId) {
+        return res.status(403).json({ error: 'Not authorized to rotate keys for this app' });
+    }
+    const newKey = itemsDb.rotateAppKey(req.params.id, req.jwtUser.userId);
+    res.json({ success: true, key: newKey.key, key_id: newKey.id });
+});
+
 // ================================================================= Dashboard
 //
 // Serve the endpoint management dashboard as a standalone HTML page.
