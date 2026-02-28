@@ -431,7 +431,7 @@ function handleCreateItem(req, res) {
         source_url, source_title, tags, screenshots
     });
 
-    sendWebhook('item.created', { app_id, item });
+    sendWebhook('item.created', item);
 
     res.json({ success: true, item });
 }
@@ -607,7 +607,7 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
         screenshots: screenshots || [],
     });
 
-    sendWebhook('item.created', { app_id: resolvedAppId, item });
+    sendWebhook('item.created', item);
     res.json({ success: true, item });
 });
 

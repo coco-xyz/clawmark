@@ -205,7 +205,9 @@ function initDb(dataDir) {
             });
         }
 
-        return { id: itemId, app_id, doc, type, status: 'open', created_at: now,
+        return { id: itemId, app_id, doc, type, status: 'open', priority,
+                 title: title || null, quote: quote || null,
+                 created_by, created_at: now, message: message || null,
                  source_url: source_url || null, source_title: source_title || null,
                  tags: tags || [], screenshots: screenshots || [] };
     }
