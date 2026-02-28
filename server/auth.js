@@ -24,13 +24,18 @@ const https = require('https');
  * @param {number} [opts.tokenExpiresIn]     JWT lifetime in seconds (default: 7 days)
  * @returns {object} Auth API { router, verifyJwt }
  */
-function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpiresIn = 7 * 24 * 3600 }) {
+function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpiresIn = 7 * 24 * 3600, _verifyGoogleIdToken, _exchangeAuthCode } = {}) {
     const express = require('express');
+    const rateLimit = require('express-rate-limit');
     const router = express.Router();
 
     if (!jwtSecret) {
         console.warn('[auth] JWT_SECRET not configured — OAuth endpoints disabled');
         return { router, verifyJwt: () => null };
+    }
+
+    if (!googleClientId) {
+        console.warn('[auth] GOOGLE_CLIENT_ID not configured — any Google app ID tokens will be accepted');
     }
 
     // --------------------------------------------------- helpers
@@ -129,14 +134,14 @@ function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpi
         return jwt.sign(
             { userId: user.id, email: user.email, role: user.role },
             jwtSecret,
-            { expiresIn: tokenExpiresIn }
+            { expiresIn: tokenExpiresIn, algorithm: 'HS256' }
         );
     }
 
     /** Verify a JWT and return the payload, or null if invalid. */
     function verifyJwt(token) {
         try {
-            return jwt.verify(token, jwtSecret);
+            return jwt.verify(token, jwtSecret, { algorithms: ['HS256'] });
         } catch {
             return null;
         }
@@ -154,15 +159,28 @@ function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpi
      * Returns:
      *   { token: "jwt...", user: { id, email, name, picture, role } }
      */
-    router.post('/google', async (req, res) => {
+    // Rate limiter for auth endpoints
+    const authLimiter = rateLimit({
+        windowMs: 15 * 60 * 1000,
+        max: 20,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Too many auth attempts, try again later' },
+    });
+
+    // Allow injecting mock functions for testing
+    const doVerifyGoogleIdToken = _verifyGoogleIdToken || verifyGoogleIdToken;
+    const doExchangeAuthCode = _exchangeAuthCode || exchangeAuthCode;
+
+    router.post('/google', authLimiter, async (req, res) => {
         try {
             const { idToken, code, redirectUri } = req.body;
 
             let googleUser;
             if (idToken) {
-                googleUser = await verifyGoogleIdToken(idToken);
+                googleUser = await doVerifyGoogleIdToken(idToken);
             } else if (code) {
-                googleUser = await exchangeAuthCode(code, redirectUri || '');
+                googleUser = await doExchangeAuthCode(code, redirectUri || '');
             } else {
                 return res.status(400).json({ error: 'Provide idToken or code' });
             }
@@ -185,7 +203,7 @@ function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpi
             });
         } catch (err) {
             console.error('[auth] Google auth failed:', err.message);
-            res.status(401).json({ error: 'Authentication failed', details: err.message });
+            res.status(401).json({ error: 'Authentication failed' });
         }
     });
 
@@ -210,12 +228,14 @@ function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpi
             return res.status(401).json({ error: 'User not found' });
         }
         res.json({
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            picture: user.picture,
-            role: user.role,
-            created_at: user.created_at,
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                picture: user.picture,
+                role: user.role,
+                created_at: user.created_at,
+            },
         });
     });
 
