@@ -8,6 +8,7 @@
 
 const serverUrlInput = document.getElementById('server-url');
 const apiKeyInput = document.getElementById('api-key');
+const inviteCodeInput = document.getElementById('invite-code');
 const userNameInput = document.getElementById('user-name');
 const saveBtn = document.getElementById('save-btn');
 const panelBtn = document.getElementById('panel-btn');
@@ -20,14 +21,16 @@ async function loadConfig() {
     const config = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
     serverUrlInput.value = config.serverUrl || '';
     apiKeyInput.value = config.apiKey || '';
+    inviteCodeInput.value = config.inviteCode || '';
     userNameInput.value = config.userName || '';
 }
 
 // Save config
 saveBtn.addEventListener('click', async () => {
     const config = {
-        serverUrl: serverUrlInput.value.trim().replace(/\/$/, '') || 'https://clawmark.coco.xyz',
+        serverUrl: serverUrlInput.value.trim().replace(/\/$/, '') || 'https://jessie.coco.site/clawmark',
         apiKey: apiKeyInput.value.trim(),
+        inviteCode: inviteCodeInput.value.trim(),
         userName: userNameInput.value.trim(),
     };
 
