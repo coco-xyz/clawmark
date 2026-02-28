@@ -444,7 +444,7 @@ app.get('/pending', (req, res) => {
 // -------------------------------------------------------------- image upload
 
 // Upload an image (screenshots, attachments, etc.)
-app.post('/upload', uploadLimiter, upload.single('image'), (req, res) => {
+app.post('/upload', uploadLimiter, v2Auth, upload.single('image'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
     const url = '/images/' + req.file.filename;
     res.json({ success: true, url });

@@ -1,10 +1,12 @@
 /**
  * ClawMark Chrome Extension — Content Script
  *
- * 职责：
- * - 检测文本选择 → 显示浮动工具栏
- * - 评论/Issue 输入界面
- * - 将消息发送到 background service worker
+ * Features:
+ * - Text selection → floating toolbar
+ * - Comment/Issue input overlay
+ * - Screenshot capture + annotation (#69)
+ * - Image paste + drag-drop (#70)
+ * - Message relay to background service worker
  */
 
 'use strict';
@@ -17,6 +19,7 @@
     // ----------------------------------------------------------- state
 
     let currentSelection = null; // { text, range, position }
+    let pendingImages = [];      // { dataUrl, uploaded: bool, url: string }
 
     // ----------------------------------------------------------- DOM
 
@@ -28,6 +31,8 @@
             <div class="separator"></div>
             <button data-action="issue"><span class="icon">\u{1F41B}</span> Issue</button>
             <div class="separator"></div>
+            <button data-action="screenshot"><span class="icon">\u{1F4F7}</span> Screenshot</button>
+            <div class="separator"></div>
             <button data-action="sidepanel"><span class="icon">\u{1F4CB}</span> Panel</button>
         `;
         document.body.appendChild(toolbar);
@@ -38,6 +43,7 @@
             const action = btn.dataset.action;
             if (action === 'comment') showInputOverlay('comment');
             else if (action === 'issue') showInputOverlay('issue');
+            else if (action === 'screenshot') startScreenshot();
             else if (action === 'sidepanel') openSidePanel();
             hideToolbar();
         });
@@ -54,7 +60,9 @@
                 <button class="cm-close">\u00D7</button>
             </div>
             <div class="cm-quote"></div>
+            <div class="cm-images"></div>
             <textarea placeholder="Write your comment..."></textarea>
+            <div class="cm-drop-hint">Paste or drag images here</div>
             <div class="cm-footer">
                 <div class="cm-tags">
                     <button class="cm-tag" data-tag="bug">bug</button>
@@ -78,7 +86,8 @@
         overlay.querySelector('.cm-submit').addEventListener('click', handleSubmit);
 
         // Keyboard shortcuts
-        overlay.querySelector('textarea').addEventListener('keydown', (e) => {
+        const textarea = overlay.querySelector('textarea');
+        textarea.addEventListener('keydown', (e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                 handleSubmit();
             }
@@ -86,6 +95,19 @@
                 hideInputOverlay();
             }
         });
+
+        // Paste image (#70)
+        textarea.addEventListener('paste', handlePaste);
+
+        // Drag & drop image (#70)
+        overlay.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            overlay.classList.add('cm-dragover');
+        });
+        overlay.addEventListener('dragleave', () => {
+            overlay.classList.remove('cm-dragover');
+        });
+        overlay.addEventListener('drop', handleDrop);
 
         return overlay;
     }
@@ -111,6 +133,119 @@
 
     function hideToolbar() {
         toolbar.classList.remove('visible');
+    }
+
+    // ----------------------------------------------------------- screenshot (#69)
+
+    function startScreenshot() {
+        if (typeof window.__clawmarkStartScreenshot !== 'function') {
+            showToast('Screenshot module not loaded', 'error');
+            return;
+        }
+
+        window.__clawmarkStartScreenshot(async (dataUrl) => {
+            if (!dataUrl) return; // cancelled
+
+            // Add to pending images
+            addPendingImage(dataUrl);
+
+            // Show input overlay if not visible (screenshot can open it)
+            if (!inputOverlay.classList.contains('visible')) {
+                showInputOverlay('comment');
+            }
+        });
+    }
+
+    // ----------------------------------------------------------- image management
+
+    function addPendingImage(dataUrl) {
+        const img = { dataUrl, uploaded: false, url: null };
+        pendingImages.push(img);
+        renderImagePreviews();
+    }
+
+    function removePendingImage(index) {
+        pendingImages.splice(index, 1);
+        renderImagePreviews();
+    }
+
+    function renderImagePreviews() {
+        const container = inputOverlay.querySelector('.cm-images');
+        container.innerHTML = pendingImages.map((img, i) => `
+            <div class="cm-image-preview">
+                <img src="${img.dataUrl}" alt="Screenshot">
+                <button class="cm-image-remove" data-index="${i}">\u00D7</button>
+            </div>
+        `).join('');
+
+        container.querySelectorAll('.cm-image-remove').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                removePendingImage(parseInt(btn.dataset.index));
+            });
+        });
+    }
+
+    async function uploadPendingImages() {
+        const urls = [];
+        for (const img of pendingImages) {
+            if (img.uploaded && img.url) {
+                urls.push(img.url);
+                continue;
+            }
+            try {
+                const result = await chrome.runtime.sendMessage({
+                    type: 'UPLOAD_IMAGE',
+                    dataUrl: img.dataUrl,
+                });
+                if (result.error) throw new Error(result.error);
+                img.uploaded = true;
+                img.url = result.url;
+                urls.push(result.url);
+            } catch (err) {
+                console.error('[ClawMark] Image upload failed:', err);
+                // Skip failed uploads
+            }
+        }
+        return urls;
+    }
+
+    // ----------------------------------------------------------- paste + drag-drop (#70)
+
+    function handlePaste(e) {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                const blob = item.getAsFile();
+                if (blob) blobToDataUrl(blob).then(addPendingImage);
+                return;
+            }
+        }
+    }
+
+    function handleDrop(e) {
+        e.preventDefault();
+        inputOverlay.classList.remove('cm-dragover');
+
+        const files = e.dataTransfer?.files;
+        if (!files) return;
+
+        for (const file of files) {
+            if (file.type.startsWith('image/')) {
+                blobToDataUrl(file).then(addPendingImage);
+            }
+        }
+    }
+
+    function blobToDataUrl(blob) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+        });
     }
 
     // ----------------------------------------------------------- input overlay
@@ -152,12 +287,14 @@
         textarea.value = '';
         textarea.focus();
 
-        // Reset tags
+        // Reset tags (but keep images if screenshot was just taken)
         inputOverlay.querySelectorAll('.cm-tag').forEach(t => t.classList.remove('active'));
     }
 
     function hideInputOverlay() {
         inputOverlay.classList.remove('visible');
+        pendingImages = [];
+        renderImagePreviews();
     }
 
     // ----------------------------------------------------------- submit
@@ -165,13 +302,19 @@
     async function handleSubmit() {
         const textarea = inputOverlay.querySelector('textarea');
         const content = textarea.value.trim();
-        if (!content) return;
+        if (!content && pendingImages.length === 0) return;
 
         const submitBtn = inputOverlay.querySelector('.cm-submit');
         submitBtn.disabled = true;
-        submitBtn.textContent = '...';
+        submitBtn.textContent = pendingImages.length > 0 ? 'Uploading...' : '...';
 
         const activeTags = [...inputOverlay.querySelectorAll('.cm-tag.active')].map(t => t.dataset.tag);
+
+        // Upload images first
+        let screenshots = [];
+        if (pendingImages.length > 0) {
+            screenshots = await uploadPendingImages();
+        }
 
         // Build quote position from saved range
         let quote_position = null;
@@ -189,13 +332,14 @@
 
         const data = {
             type: currentMode === 'issue' ? 'issue' : 'comment',
-            title: currentMode === 'issue' ? content.split('\n')[0] : undefined,
-            content,
+            title: currentMode === 'issue' ? (content.split('\n')[0] || 'Screenshot') : undefined,
+            content: content || 'Screenshot annotation',
             source_url: window.location.href,
             source_title: document.title,
             quote: currentSelection?.text || undefined,
             quote_position,
             tags: activeTags.length > 0 ? activeTags : undefined,
+            screenshots,
         };
 
         try {
@@ -227,6 +371,7 @@
     document.addEventListener('mouseup', (e) => {
         // Ignore clicks on our own UI
         if (e.target.closest('#clawmark-toolbar') || e.target.closest('#clawmark-input-overlay')) return;
+        if (e.target.closest('#clawmark-area-selector') || e.target.closest('#clawmark-annotation-editor')) return;
 
         // Small delay to let selection finalize
         setTimeout(() => {
@@ -247,7 +392,7 @@
                 };
 
                 showToolbar(
-                    rect.left + (rect.width / 2) - 100,
+                    rect.left + (rect.width / 2) - 120,
                     rect.bottom + 8
                 );
             } else {
