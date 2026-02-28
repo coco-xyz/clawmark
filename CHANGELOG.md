@@ -2,6 +2,21 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号采用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.1.0] — 2026-03-01
+
+### 新增
+
+- 去中心化路由系统 Phase 1（#38）
+  - URL pattern 匹配引擎：glob 风格通配符（`*`, `**`）
+  - GitHub URL 自动检测：从 source_url 提取 org/repo，自动路由到对应仓库
+  - 用户路由规则：每个用户可配置 URL → 目标的映射规则
+  - 路由解析优先级：用户规则 > GitHub 自动检测 > 用户默认 > 系统默认
+  - 动态 adapter 分发：按路由结果即时创建 adapter 实例
+  - 路由规则 CRUD API：`/api/v2/routing/rules`
+  - 路由测试端点：`POST /api/v2/routing/resolve`（dry run）
+  - user_rules 数据库表 + 完整索引
+  - 24 个路由测试（extractGitHubRepo、matchUrlPattern、resolveTarget）
+
 ## [0.2.0] — 2026-02-28
 
 ### 新增

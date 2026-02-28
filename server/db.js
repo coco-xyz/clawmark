@@ -96,6 +96,20 @@ function initDb(dataDir) {
         );
         CREATE INDEX IF NOT EXISTS idx_adapter_mappings_external
             ON adapter_mappings(adapter, external_id);
+
+        CREATE TABLE IF NOT EXISTS user_rules (
+            id              TEXT PRIMARY KEY,
+            user_name       TEXT NOT NULL,
+            rule_type       TEXT NOT NULL,
+            pattern         TEXT,
+            target_type     TEXT NOT NULL,
+            target_config   TEXT NOT NULL,
+            priority        INTEGER DEFAULT 0,
+            enabled         INTEGER DEFAULT 1,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_rules_user ON user_rules(user_name, priority DESC);
     `);
 
     // ------------------------------------------- schema migration: V2 columns
@@ -169,6 +183,26 @@ function initDb(dataDir) {
         countAll: db.prepare(`
             SELECT type, status, COUNT(*) as count FROM items GROUP BY type, status
         `),
+    };
+
+    // ------------------------------------------------- user_rules statements
+    const ruleStmts = {
+        insertRule: db.prepare(`
+            INSERT INTO user_rules (id, user_name, rule_type, pattern, target_type, target_config, priority, enabled, created_at, updated_at)
+            VALUES (@id, @user_name, @rule_type, @pattern, @target_type, @target_config, @priority, @enabled, @created_at, @updated_at)
+        `),
+        getRulesByUser: db.prepare(
+            'SELECT * FROM user_rules WHERE user_name = ? ORDER BY priority DESC, created_at ASC'
+        ),
+        getRuleById: db.prepare('SELECT * FROM user_rules WHERE id = ?'),
+        updateRule: db.prepare(`
+            UPDATE user_rules
+            SET rule_type = @rule_type, pattern = @pattern, target_type = @target_type,
+                target_config = @target_config, priority = @priority, enabled = @enabled, updated_at = @updated_at
+            WHERE id = @id
+        `),
+        deleteRule: db.prepare('DELETE FROM user_rules WHERE id = ?'),
+        getAllRules: db.prepare('SELECT * FROM user_rules ORDER BY user_name, priority DESC'),
     };
 
     // ------------------------------------------------------------- public API
@@ -369,6 +403,59 @@ function initDb(dataDir) {
         return db.prepare('UPDATE api_keys SET revoked = 1 WHERE id = ?').run(id);
     }
 
+    // ----------------------------------------------------- user rules methods
+
+    function createUserRule({ user_name, rule_type, pattern, target_type, target_config, priority = 0, enabled = 1 }) {
+        const now = new Date().toISOString();
+        const id = genId('rule');
+        ruleStmts.insertRule.run({
+            id, user_name, rule_type,
+            pattern: pattern || null,
+            target_type,
+            target_config: typeof target_config === 'string' ? target_config : JSON.stringify(target_config),
+            priority, enabled,
+            created_at: now, updated_at: now,
+        });
+        return { id, user_name, rule_type, pattern, target_type, target_config, priority, enabled, created_at: now };
+    }
+
+    function getUserRules(user_name) {
+        return ruleStmts.getRulesByUser.all(user_name);
+    }
+
+    function getUserRule(id) {
+        return ruleStmts.getRuleById.get(id) || null;
+    }
+
+    function updateUserRule(id, updates) {
+        const existing = ruleStmts.getRuleById.get(id);
+        if (!existing) return null;
+        const now = new Date().toISOString();
+        const merged = {
+            id,
+            rule_type: updates.rule_type ?? existing.rule_type,
+            pattern: updates.pattern !== undefined ? updates.pattern : existing.pattern,
+            target_type: updates.target_type ?? existing.target_type,
+            target_config: updates.target_config
+                ? (typeof updates.target_config === 'string' ? updates.target_config : JSON.stringify(updates.target_config))
+                : existing.target_config,
+            priority: updates.priority ?? existing.priority,
+            enabled: updates.enabled !== undefined ? updates.enabled : existing.enabled,
+            updated_at: now,
+        };
+        ruleStmts.updateRule.run(merged);
+        return ruleStmts.getRuleById.get(id);
+    }
+
+    function deleteUserRule(id) {
+        const result = ruleStmts.deleteRule.run(id);
+        return { success: result.changes > 0 };
+    }
+
+    function getAllUserRules() {
+        return ruleStmts.getAllRules.all();
+    }
+
     // ------------------------------------------------- adapter mapping methods
 
     function setAdapterMapping({ item_id, adapter, channel = '', external_id, external_url }) {
@@ -490,6 +577,13 @@ function initDb(dataDir) {
         setAdapterMapping,
         getAdapterMapping,
         getAdapterMappingByExternalId,
+        // User routing rules
+        createUserRule,
+        getUserRules,
+        getUserRule,
+        updateUserRule,
+        deleteUserRule,
+        getAllUserRules,
     };
 }
 

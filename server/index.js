@@ -72,6 +72,7 @@ const { WebhookAdapter } = require('./adapters/webhook');
 const { LarkAdapter } = require('./adapters/lark');
 const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
+const { resolveTarget } = require('./routing');
 
 const registry = new AdapterRegistry();
 registry.setDb(itemsDb);
@@ -159,16 +160,56 @@ const upload = multer({
 
 // ------------------------------------------------------------------ dispatch
 
+// Default target from config (used as fallback by routing resolver)
+const defaultGitHubTarget = config.distribution?.channels?.['github-clawmark']
+    ? {
+        repo: config.distribution.channels['github-clawmark'].repo,
+        labels: config.distribution.channels['github-clawmark'].labels || ['clawmark'],
+        assignees: config.distribution.channels['github-clawmark'].assignees || [],
+    }
+    : { repo: 'coco-xyz/clawmark', labels: ['clawmark'], assignees: [] };
+
 /**
  * Dispatch event through the adapter registry (fire-and-forget).
- * Replaces the old sendWebhook — now routes through all configured channels.
+ * For item.created events, uses the routing resolver to determine the target.
+ * Other events fall through to static rules.
  *
  * @param {string} event   Event name, e.g. 'item.created'
  * @param {object} payload The item/data payload
  */
 function sendWebhook(event, payload) {
+    if (event === 'item.created') {
+        // Use routing resolver to find the right target
+        const routing = resolveTarget({
+            source_url: payload.source_url,
+            user_name: payload.created_by,
+            type: payload.type,
+            priority: payload.priority,
+            tags: payload.tags,
+            db: itemsDb,
+            defaultTarget: defaultGitHubTarget,
+        });
+
+        console.log(`[routing] ${event}: ${routing.method} → ${routing.target_type} (${routing.target_config.repo || 'custom'})`);
+
+        // Store routing decision on the item for debugging/auditing
+        payload._routing = { method: routing.method, target_type: routing.target_type, repo: routing.target_config.repo };
+
+        if (routing.method !== 'system_default') {
+            // Dynamic dispatch to the resolved target
+            registry.dispatchToTarget(event, payload, routing.target_type, { ...routing.target_config }, {}).catch(err => {
+                console.error(`[dispatch] Routed dispatch failed for ${event}, falling back to default:`, err.message);
+                // Fallback to static dispatch on error
+                registry.dispatch(event, payload).catch(e => {
+                    console.error(`[dispatch] Fallback also failed:`, e.message);
+                });
+            });
+            return;
+        }
+    }
+
+    // Default static dispatch (for non-routed events or system_default routing)
     registry.dispatch(event, payload).catch(err => {
-        // dispatch already logs per-channel errors; this catches unexpected failures
         console.error(`[dispatch] Unexpected error for ${event}:`, err.message);
     });
 }
@@ -735,6 +776,85 @@ app.get('/api/v2/adapters', (req, res) => {
     res.json({ channels: registry.getStatus(), rules: registry.rules.length });
 });
 
+// ================================================================= Routing Rules API
+//
+// CRUD for user routing rules. Authenticated via V2 auth.
+// =================================================================
+
+// -- GET /api/v2/routing/rules — list rules (for current user or all if admin)
+app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
+    const user = req.query.user || req.v2Auth?.user;
+    if (user) {
+        const rules = itemsDb.getUserRules(user);
+        return res.json({ rules });
+    }
+    const rules = itemsDb.getAllUserRules();
+    res.json({ rules });
+});
+
+// -- POST /api/v2/routing/rules — create a routing rule
+app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
+    const { rule_type, pattern, target_type, target_config, priority, userName } = req.body;
+    const user = userName || req.v2Auth?.user;
+
+    if (!user) return res.status(400).json({ error: 'Missing userName' });
+    if (!rule_type) return res.status(400).json({ error: 'Missing rule_type' });
+    if (!target_type) return res.status(400).json({ error: 'Missing target_type' });
+    if (!target_config) return res.status(400).json({ error: 'Missing target_config' });
+
+    const validTypes = ['url_pattern', 'content_type', 'tag_match', 'default'];
+    if (!validTypes.includes(rule_type)) {
+        return res.status(400).json({ error: `Invalid rule_type. Must be one of: ${validTypes.join(', ')}` });
+    }
+    if (rule_type !== 'default' && !pattern) {
+        return res.status(400).json({ error: 'Pattern is required for non-default rules' });
+    }
+
+    const rule = itemsDb.createUserRule({
+        user_name: user, rule_type, pattern,
+        target_type, target_config, priority: priority || 0,
+    });
+
+    res.json({ success: true, rule });
+});
+
+// -- PUT /api/v2/routing/rules/:id — update a routing rule
+app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const { rule_type, pattern, target_type, target_config, priority, enabled } = req.body;
+
+    const updated = itemsDb.updateUserRule(req.params.id, {
+        rule_type, pattern, target_type, target_config, priority, enabled,
+    });
+
+    if (!updated) return res.status(404).json({ error: 'Rule not found' });
+    res.json({ success: true, rule: updated });
+});
+
+// -- DELETE /api/v2/routing/rules/:id — delete a routing rule
+app.delete('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const result = itemsDb.deleteUserRule(req.params.id);
+    if (!result.success) return res.status(404).json({ error: 'Rule not found' });
+    res.json({ success: true });
+});
+
+// -- POST /api/v2/routing/resolve — test routing resolution (dry run)
+app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, (req, res) => {
+    const { source_url, userName, type, priority, tags } = req.body;
+    const user = userName || req.v2Auth?.user;
+
+    const result = resolveTarget({
+        source_url, user_name: user, type, priority, tags,
+        db: itemsDb, defaultTarget: defaultGitHubTarget,
+    });
+
+    res.json({
+        target_type: result.target_type,
+        target_config: result.target_config,
+        method: result.method,
+        matched_rule: result.matched_rule ? { id: result.matched_rule.id, pattern: result.matched_rule.pattern } : null,
+    });
+});
+
 // ----------------------------------------------------------------- queue
 
 // Get the consumer queue — open + in-progress items sorted by priority
@@ -758,7 +878,7 @@ app.get('/health', (req, res) => {
     try { itemsDb.db.prepare('SELECT 1').get(); } catch { dbOk = false; }
     res.json({
         status: 'ok',
-        version: '2.0.0',
+        version: '2.1.0',
         uptime: process.uptime(),
         db_ok: dbOk,
         adapters: Object.keys(registry.getStatus()).length,
