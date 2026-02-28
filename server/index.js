@@ -1135,6 +1135,201 @@ app.post('/api/v2/apps/:id/rotate-key', apiWriteLimiter, jwtAuth, (req, res) => 
     res.json({ success: true, key: newKey.key, key_id: newKey.id });
 });
 
+// ================================================================= Orgs API
+//
+// Organization CRUD + member management + RBAC. JWT-only auth.
+// =================================================================
+
+// RBAC role hierarchy: owner > admin > member
+const ROLE_LEVEL = { owner: 3, admin: 2, member: 1 };
+
+/**
+ * Middleware factory: require the caller to hold at least `minRole` in the org.
+ * Extracts org_id from req.params.id. Attaches req.orgRole on success.
+ */
+function requireOrgRole(minRole) {
+    return (req, res, next) => {
+        const orgId = req.params.id;
+        const role = itemsDb.getOrgMemberRole(orgId, req.jwtUser.userId);
+        if (!role) {
+            return res.status(403).json({ error: 'Not a member of this organization' });
+        }
+        if ((ROLE_LEVEL[role] || 0) < (ROLE_LEVEL[minRole] || 0)) {
+            return res.status(403).json({ error: `Requires ${minRole} role or higher` });
+        }
+        req.orgRole = role;
+        next();
+    };
+}
+
+// Validate slug: lowercase alphanumeric + hyphens, 2-64 chars, no leading/trailing hyphen
+function isValidSlug(slug) {
+    return /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(slug) || /^[a-z0-9]{1,2}$/.test(slug);
+}
+
+// -- POST /api/v2/orgs — create organization
+app.post('/api/v2/orgs', apiWriteLimiter, jwtAuth, (req, res) => {
+    const { name, slug, description } = req.body;
+    if (!name || !name.trim()) {
+        return res.status(400).json({ error: 'Missing organization name' });
+    }
+    if (!slug || !slug.trim()) {
+        return res.status(400).json({ error: 'Missing organization slug' });
+    }
+    const cleanSlug = slug.trim().toLowerCase();
+    if (!isValidSlug(cleanSlug)) {
+        return res.status(400).json({ error: 'Invalid slug: use lowercase letters, numbers, and hyphens (2-64 chars)' });
+    }
+    // Check slug uniqueness
+    if (itemsDb.getOrgBySlug(cleanSlug)) {
+        return res.status(409).json({ error: 'Slug already taken' });
+    }
+    const org = itemsDb.createOrg({
+        name: name.trim(),
+        slug: cleanSlug,
+        description: description || null,
+        created_by: req.jwtUser.userId,
+    });
+    res.json({ success: true, org });
+});
+
+// -- GET /api/v2/orgs — list user's organizations
+app.get('/api/v2/orgs', apiReadLimiter, jwtAuth, (req, res) => {
+    const orgs = itemsDb.getOrgsByUser(req.jwtUser.userId);
+    res.json({ orgs });
+});
+
+// -- GET /api/v2/orgs/:id — get org details (member only)
+app.get('/api/v2/orgs/:id', apiReadLimiter, jwtAuth, requireOrgRole('member'), (req, res) => {
+    const org = itemsDb.getOrg(req.params.id);
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
+    res.json({ org, role: req.orgRole });
+});
+
+// -- PUT /api/v2/orgs/:id — update org (admin/owner only)
+app.put('/api/v2/orgs/:id', apiWriteLimiter, jwtAuth, requireOrgRole('admin'), (req, res) => {
+    const { name, slug, description } = req.body;
+    if (name !== undefined && !name.trim()) {
+        return res.status(400).json({ error: 'Organization name cannot be empty' });
+    }
+    if (slug !== undefined) {
+        const cleanSlug = slug.trim().toLowerCase();
+        if (!isValidSlug(cleanSlug)) {
+            return res.status(400).json({ error: 'Invalid slug' });
+        }
+        const existing = itemsDb.getOrgBySlug(cleanSlug);
+        if (existing && existing.id !== req.params.id) {
+            return res.status(409).json({ error: 'Slug already taken' });
+        }
+    }
+    const updated = itemsDb.updateOrg(req.params.id, {
+        name: name ? name.trim() : undefined,
+        slug: slug ? slug.trim().toLowerCase() : undefined,
+        description,
+    });
+    if (!updated) return res.status(404).json({ error: 'Organization not found' });
+    res.json({ success: true, org: updated });
+});
+
+// -- DELETE /api/v2/orgs/:id — delete org (owner only)
+app.delete('/api/v2/orgs/:id', apiWriteLimiter, jwtAuth, requireOrgRole('owner'), (req, res) => {
+    const result = itemsDb.deleteOrg(req.params.id);
+    if (!result.success) return res.status(404).json({ error: 'Organization not found' });
+    res.json({ success: true });
+});
+
+// -- GET /api/v2/orgs/:id/members — list members (member only)
+app.get('/api/v2/orgs/:id/members', apiReadLimiter, jwtAuth, requireOrgRole('member'), (req, res) => {
+    const members = itemsDb.getOrgMembers(req.params.id);
+    res.json({ members });
+});
+
+// -- POST /api/v2/orgs/:id/members — add member (admin/owner only)
+app.post('/api/v2/orgs/:id/members', apiWriteLimiter, jwtAuth, requireOrgRole('admin'), (req, res) => {
+    const { user_id, role } = req.body;
+    if (!user_id) {
+        return res.status(400).json({ error: 'Missing user_id' });
+    }
+    const validRoles = ['member', 'admin'];
+    const memberRole = role || 'member';
+    if (!validRoles.includes(memberRole)) {
+        return res.status(400).json({ error: 'Invalid role. Use member or admin' });
+    }
+    // Cannot add owner role via this endpoint
+    if (role === 'owner') {
+        return res.status(400).json({ error: 'Cannot assign owner role via member invitation' });
+    }
+    // Check if user exists
+    const user = itemsDb.getUserById(user_id);
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    // Check if already a member
+    const existingRole = itemsDb.getOrgMemberRole(req.params.id, user_id);
+    if (existingRole) {
+        return res.status(409).json({ error: 'User is already a member of this organization' });
+    }
+    const member = itemsDb.addOrgMember(req.params.id, user_id, memberRole, req.jwtUser.userId);
+    res.json({ success: true, member });
+});
+
+// -- PUT /api/v2/orgs/:id/members/:userId — update member role (owner only)
+app.put('/api/v2/orgs/:id/members/:userId', apiWriteLimiter, jwtAuth, requireOrgRole('owner'), (req, res) => {
+    const { role } = req.body;
+    if (!role) {
+        return res.status(400).json({ error: 'Missing role' });
+    }
+    const validRoles = ['member', 'admin', 'owner'];
+    if (!validRoles.includes(role)) {
+        return res.status(400).json({ error: 'Invalid role' });
+    }
+    // Check target is a member
+    const currentRole = itemsDb.getOrgMemberRole(req.params.id, req.params.userId);
+    if (!currentRole) {
+        return res.status(404).json({ error: 'User is not a member of this organization' });
+    }
+    // Cannot change own role
+    if (req.params.userId === req.jwtUser.userId) {
+        return res.status(400).json({ error: 'Cannot change your own role' });
+    }
+    const result = itemsDb.updateOrgMemberRole(req.params.id, req.params.userId, role);
+    if (!result.success) return res.status(404).json({ error: 'Member not found' });
+    res.json({ success: true });
+});
+
+// -- DELETE /api/v2/orgs/:id/members/:userId — remove member (admin/owner, or self-leave)
+app.delete('/api/v2/orgs/:id/members/:userId', apiWriteLimiter, jwtAuth, (req, res) => {
+    const callerRole = itemsDb.getOrgMemberRole(req.params.id, req.jwtUser.userId);
+    if (!callerRole) {
+        return res.status(403).json({ error: 'Not a member of this organization' });
+    }
+
+    const isSelf = req.params.userId === req.jwtUser.userId;
+    const targetRole = itemsDb.getOrgMemberRole(req.params.id, req.params.userId);
+    if (!targetRole) {
+        return res.status(404).json({ error: 'User is not a member of this organization' });
+    }
+
+    if (isSelf) {
+        // Self-leave: owners cannot leave (must transfer ownership first)
+        if (callerRole === 'owner') {
+            return res.status(400).json({ error: 'Owner cannot leave. Transfer ownership first.' });
+        }
+    } else {
+        // Removing another member: need admin+ role and cannot remove someone with higher/equal role
+        if ((ROLE_LEVEL[callerRole] || 0) < ROLE_LEVEL['admin']) {
+            return res.status(403).json({ error: 'Requires admin role or higher' });
+        }
+        if ((ROLE_LEVEL[targetRole] || 0) >= (ROLE_LEVEL[callerRole] || 0)) {
+            return res.status(403).json({ error: 'Cannot remove a member with equal or higher role' });
+        }
+    }
+
+    const result = itemsDb.removeOrgMember(req.params.id, req.params.userId);
+    if (!result.success) return res.status(404).json({ error: 'Member not found' });
+    res.json({ success: true });
+});
+
 // ================================================================= Dashboard
 //
 // Serve the endpoint management dashboard as a standalone HTML page.

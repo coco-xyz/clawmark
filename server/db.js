@@ -141,10 +141,36 @@ function initDb(dataDir) {
             user_id     TEXT NOT NULL,
             name        TEXT NOT NULL,
             description TEXT,
+            org_id      TEXT,
             created_at  TEXT NOT NULL,
             updated_at  TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_apps_user ON apps(user_id);
+        CREATE INDEX IF NOT EXISTS idx_apps_org ON apps(org_id);
+
+        CREATE TABLE IF NOT EXISTS organizations (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            slug        TEXT NOT NULL UNIQUE,
+            description TEXT,
+            created_by  TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_orgs_slug ON organizations(slug);
+        CREATE INDEX IF NOT EXISTS idx_orgs_created_by ON organizations(created_by);
+
+        CREATE TABLE IF NOT EXISTS org_members (
+            id          TEXT PRIMARY KEY,
+            org_id      TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            user_id     TEXT NOT NULL,
+            role        TEXT NOT NULL DEFAULT 'member',
+            invited_by  TEXT,
+            joined_at   TEXT NOT NULL,
+            UNIQUE(org_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members(org_id);
+        CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id);
     `);
 
     // ------------------------------------------- schema migration: V2 columns
@@ -165,6 +191,20 @@ function initDb(dataDir) {
 
     // V2 indexes (safe to run after migration)
     db.exec(`CREATE INDEX IF NOT EXISTS idx_items_source_url ON items(source_url)`);
+
+    // ----------------------------------------- schema migration: org_id columns
+    // Add org_id column to apps and user_rules for existing databases.
+    const appCols = db.pragma('table_info(apps)').map(c => c.name);
+    if (!appCols.includes('org_id')) {
+        db.exec(`ALTER TABLE apps ADD COLUMN org_id TEXT`);
+        console.log('[db] migrated: added column apps.org_id');
+    }
+
+    const ruleCols = db.pragma('table_info(user_rules)').map(c => c.name);
+    if (!ruleCols.includes('org_id')) {
+        db.exec(`ALTER TABLE user_rules ADD COLUMN org_id TEXT`);
+        console.log('[db] migrated: added column user_rules.org_id');
+    }
 
     // ---------------------------------------------------- prepared statements
     const stmts = {
@@ -655,6 +695,112 @@ function initDb(dataDir) {
         return createApiKey({ app_id, name: keyName, created_by });
     }
 
+    // ------------------------------------------------- organization methods
+
+    function createOrg({ name, slug, description, created_by }) {
+        const now = new Date().toISOString();
+        const id = genId('org');
+        db.prepare(
+            `INSERT INTO organizations (id, name, slug, description, created_by, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(id, name, slug, description || null, created_by, now, now);
+        // Add creator as owner
+        const memId = genId('mem');
+        db.prepare(
+            `INSERT INTO org_members (id, org_id, user_id, role, invited_by, joined_at)
+             VALUES (?, ?, ?, 'owner', ?, ?)`
+        ).run(memId, id, created_by, created_by, now);
+        return { id, name, slug, description: description || null, created_by, created_at: now, updated_at: now };
+    }
+
+    function getOrg(id) {
+        return db.prepare('SELECT * FROM organizations WHERE id = ?').get(id) || null;
+    }
+
+    function getOrgBySlug(slug) {
+        return db.prepare('SELECT * FROM organizations WHERE slug = ?').get(slug) || null;
+    }
+
+    function getOrgsByUser(user_id) {
+        return db.prepare(
+            `SELECT o.*, om.role AS user_role
+             FROM organizations o
+             JOIN org_members om ON om.org_id = o.id
+             WHERE om.user_id = ?
+             ORDER BY o.created_at DESC`
+        ).all(user_id);
+    }
+
+    function updateOrg(id, updates) {
+        const existing = db.prepare('SELECT * FROM organizations WHERE id = ?').get(id);
+        if (!existing) return null;
+        const now = new Date().toISOString();
+        const name = updates.name ?? existing.name;
+        const slug = updates.slug ?? existing.slug;
+        const description = updates.description !== undefined ? updates.description : existing.description;
+        db.prepare(
+            'UPDATE organizations SET name = ?, slug = ?, description = ?, updated_at = ? WHERE id = ?'
+        ).run(name, slug, description, now, id);
+        return { ...existing, name, slug, description, updated_at: now };
+    }
+
+    function deleteOrg(id) {
+        const existing = db.prepare('SELECT * FROM organizations WHERE id = ?').get(id);
+        if (!existing) return { success: false };
+        // org_members cascade-deleted by FK. Also clean up org_id refs in apps and user_rules.
+        db.prepare('UPDATE apps SET org_id = NULL WHERE org_id = ?').run(id);
+        db.prepare('UPDATE user_rules SET org_id = NULL WHERE org_id = ?').run(id);
+        const result = db.prepare('DELETE FROM organizations WHERE id = ?').run(id);
+        return { success: result.changes > 0 };
+    }
+
+    function addOrgMember(org_id, user_id, role, invited_by) {
+        const now = new Date().toISOString();
+        const id = genId('mem');
+        db.prepare(
+            `INSERT INTO org_members (id, org_id, user_id, role, invited_by, joined_at)
+             VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(id, org_id, user_id, role || 'member', invited_by || null, now);
+        return { id, org_id, user_id, role: role || 'member', invited_by: invited_by || null, joined_at: now };
+    }
+
+    function removeOrgMember(org_id, user_id) {
+        const result = db.prepare(
+            'DELETE FROM org_members WHERE org_id = ? AND user_id = ?'
+        ).run(org_id, user_id);
+        return { success: result.changes > 0 };
+    }
+
+    function updateOrgMemberRole(org_id, user_id, role) {
+        const result = db.prepare(
+            'UPDATE org_members SET role = ? WHERE org_id = ? AND user_id = ?'
+        ).run(role, org_id, user_id);
+        return { success: result.changes > 0 };
+    }
+
+    function getOrgMembers(org_id) {
+        return db.prepare(
+            `SELECT om.*, u.email, u.name AS user_name, u.picture
+             FROM org_members om
+             JOIN users u ON u.id = om.user_id
+             WHERE om.org_id = ?
+             ORDER BY
+                 CASE om.role
+                     WHEN 'owner' THEN 0
+                     WHEN 'admin' THEN 1
+                     WHEN 'member' THEN 2
+                 END,
+                 om.joined_at ASC`
+        ).all(org_id);
+    }
+
+    function getOrgMemberRole(org_id, user_id) {
+        const row = db.prepare(
+            'SELECT role FROM org_members WHERE org_id = ? AND user_id = ?'
+        ).get(org_id, user_id);
+        return row ? row.role : null;
+    }
+
     // ------------------------------------------------- adapter mapping methods
 
     function setAdapterMapping({ item_id, adapter, channel = '', external_id, external_url }) {
@@ -829,6 +975,18 @@ function initDb(dataDir) {
         deleteApp,
         getAppKeys,
         rotateAppKey,
+        // Organizations
+        createOrg,
+        getOrg,
+        getOrgBySlug,
+        getOrgsByUser,
+        updateOrg,
+        deleteOrg,
+        addOrgMember,
+        removeOrgMember,
+        updateOrgMemberRole,
+        getOrgMembers,
+        getOrgMemberRole,
     };
 }
 
