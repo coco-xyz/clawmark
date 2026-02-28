@@ -2,7 +2,7 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号采用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [2.0.0] — 2026-02-28
+## [0.2.0] — 2026-02-28
 
 ### 新增
 
@@ -37,5 +37,5 @@
 - JSON body 大小限制（512KB）
 - 不存在 item 的状态操作返回 404
 
-[2.0.0]: https://github.com/coco-xyz/clawmark/releases/tag/v2.0.0
+[0.2.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.2.0
 [0.1.0]: https://github.com/coco-xyz/clawmark/commits/0c02d6b
