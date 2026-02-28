@@ -14,7 +14,7 @@
 - **用户规则 CRUD API**：`/api/v2/routing/rules` — 创建、查询、更新、删除自定义路由规则
 - **Dry run**：`/api/v2/routing/resolve` — 测试路由解析，不实际创建标注
 - **动态 adapter 派发**：标注根据来源 URL 自动路由到正确的 adapter
-- **测试覆盖**：62 个测试（24 路由 + 38 数据库/API）
+- **测试覆盖**：117+ 个测试（路由 + 数据库/API + bug 修复回归）
 - **Chrome Web Store**：扩展已提交，等待 Google 审核
 - **环境**：
   - 测试环境：https://jessie.coco.site/clawmark（v0.3.0）
