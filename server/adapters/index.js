@@ -152,9 +152,11 @@ class AdapterRegistry {
             return;
         }
 
-        // Inherit token from default channel config if not provided
+        // Inherit token from default channel config if not provided.
+        // This is safe because dynamic targets are still GitHub repos the user
+        // explicitly configured — we just reuse the PAT from the static config
+        // rather than requiring each rule to carry its own token.
         if (target_type === 'github-issue' && !target_config.token) {
-            // Look for an existing github-issue channel to borrow the token
             for (const [, adapter] of this.channels) {
                 if (adapter.type === 'github-issue' && adapter.token) {
                     target_config.token = adapter.token;

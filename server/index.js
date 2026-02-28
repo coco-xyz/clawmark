@@ -878,7 +878,7 @@ app.get('/health', (req, res) => {
     try { itemsDb.db.prepare('SELECT 1').get(); } catch { dbOk = false; }
     res.json({
         status: 'ok',
-        version: '2.1.0',
+        version: '0.3.0',
         uptime: process.uptime(),
         db_ok: dbOk,
         adapters: Object.keys(registry.getStatus()).length,

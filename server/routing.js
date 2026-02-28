@@ -82,35 +82,34 @@ function matchUrlPattern(url, pattern) {
  * @returns {{ target_type: string, target_config: object, matched_rule: object|null, method: string }}
  */
 function resolveTarget({ source_url, user_name, type, priority, tags, db, defaultTarget }) {
+    // Fetch user rules once (used in steps 1 and 3)
+    const userRules = (db && user_name) ? db.getUserRules(user_name) : [];
+
     // Step 1: Check user-defined rules (ordered by priority DESC)
-    if (db && user_name) {
-        const rules = db.getUserRules(user_name);
-        for (const rule of rules) {
-            if (!rule.enabled) continue;
+    for (const rule of userRules) {
+        if (!rule.enabled) continue;
 
-            if (rule.rule_type === 'url_pattern' && rule.pattern) {
-                if (matchUrlPattern(source_url, rule.pattern)) {
-                    const config = JSON.parse(rule.target_config);
-                    return {
-                        target_type: rule.target_type,
-                        target_config: config,
-                        matched_rule: rule,
-                        method: 'user_rule',
-                    };
-                }
+        if (rule.rule_type === 'url_pattern' && rule.pattern) {
+            if (matchUrlPattern(source_url, rule.pattern)) {
+                const config = JSON.parse(rule.target_config);
+                return {
+                    target_type: rule.target_type,
+                    target_config: config,
+                    matched_rule: rule,
+                    method: 'user_rule',
+                };
             }
+        }
 
-            if (rule.rule_type === 'content_type' && rule.pattern) {
-                // Match against item type
-                if (type && rule.pattern === type) {
-                    const config = JSON.parse(rule.target_config);
-                    return {
-                        target_type: rule.target_type,
-                        target_config: config,
-                        matched_rule: rule,
-                        method: 'user_rule',
-                    };
-                }
+        if (rule.rule_type === 'content_type' && rule.pattern) {
+            if (type && rule.pattern === type) {
+                const config = JSON.parse(rule.target_config);
+                return {
+                    target_type: rule.target_type,
+                    target_config: config,
+                    matched_rule: rule,
+                    method: 'user_rule',
+                };
             }
         }
     }
@@ -131,18 +130,15 @@ function resolveTarget({ source_url, user_name, type, priority, tags, db, defaul
     }
 
     // Step 3: User's personal default rule
-    if (db && user_name) {
-        const rules = db.getUserRules(user_name);
-        const defaultRule = rules.find(r => r.rule_type === 'default' && r.enabled);
-        if (defaultRule) {
-            const config = JSON.parse(defaultRule.target_config);
-            return {
-                target_type: defaultRule.target_type,
-                target_config: config,
-                matched_rule: defaultRule,
-                method: 'user_default',
-            };
-        }
+    const defaultRule = userRules.find(r => r.rule_type === 'default' && r.enabled);
+    if (defaultRule) {
+        const config = JSON.parse(defaultRule.target_config);
+        return {
+            target_type: defaultRule.target_type,
+            target_config: config,
+            matched_rule: defaultRule,
+            method: 'user_default',
+        };
     }
 
     // Step 4: System default
