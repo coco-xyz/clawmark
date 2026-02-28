@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -54,6 +54,122 @@
             color: #888;
         }
 
+        /* ---- auth section ---- */
+
+        .auth-section {
+            padding: 12px 16px;
+            border-bottom: 1px solid #2a2a3e;
+        }
+
+        .user-info {
+            display: none;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .user-info.visible { display: flex; }
+
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #5865f2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .user-details {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .user-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .user-email {
+            font-size: 11px;
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .sign-out-btn {
+            padding: 4px 10px;
+            background: rgba(255,255,255,0.08);
+            color: #aaa;
+            border: none;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            font-family: inherit;
+            flex-shrink: 0;
+        }
+
+        .sign-out-btn:hover { background: rgba(239,68,68,0.2); color: #ef4444; }
+
+        .google-btn {
+            display: none;
+            width: 100%;
+            padding: 9px 12px;
+            background: #fff;
+            color: #3c4043;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: inherit;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .google-btn.visible { display: flex; }
+
+        .google-btn:hover { background: #f1f3f4; }
+
+        .google-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .google-btn svg {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
+        .auth-note {
+            display: none;
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            margin-top: 8px;
+        }
+
+        .auth-note.visible { display: block; }
+
+        /* ---- config section ---- */
+
         .section {
             padding: 12px 16px;
         }
@@ -80,6 +196,32 @@
         }
 
         .section input:focus { border-color: #5865f2; }
+
+        .section-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: #666;
+            cursor: pointer;
+            margin-bottom: 8px;
+            user-select: none;
+        }
+
+        .section-toggle:hover { color: #888; }
+
+        .section-toggle .arrow {
+            font-size: 9px;
+            transition: transform 0.15s;
+        }
+
+        .section-toggle .arrow.open { transform: rotate(90deg); }
+
+        .collapsible {
+            display: none;
+        }
+
+        .collapsible.open { display: block; }
 
         .btn {
             width: 100%;
@@ -117,7 +259,7 @@
 <body>
     <div class="header">
         <h1>ClawMark</h1>
-        <span class="version">v2.0.0</span>
+        <span class="version">v0.3.0</span>
     </div>
 
     <div class="status" id="status">
@@ -125,15 +267,50 @@
         <span class="text" id="status-text">Checking...</span>
     </div>
 
+    <!-- Auth section -->
+    <div class="auth-section">
+        <div class="user-info" id="user-info">
+            <div class="user-avatar" id="user-avatar"></div>
+            <div class="user-details">
+                <div class="user-name" id="user-display-name"></div>
+                <div class="user-email" id="user-email"></div>
+            </div>
+            <button class="sign-out-btn" id="sign-out-btn">Sign out</button>
+        </div>
+
+        <button class="google-btn" id="google-btn">
+            <svg viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            Sign in with Google
+        </button>
+
+        <div class="auth-note" id="auth-note">Or use API Key / Invite Code below</div>
+    </div>
+
+    <!-- Config section -->
     <div class="section">
         <label>Server URL</label>
-        <input type="text" id="server-url" placeholder="https://jessie.coco.site/clawmark">
+        <input type="text" id="server-url" placeholder="https://clawmark.coco.xyz">
 
-        <label>API Key</label>
-        <input type="password" id="api-key" placeholder="cmk_...">
+        <div class="section-toggle" id="manual-auth-toggle">
+            <span class="arrow" id="manual-auth-arrow">&#9654;</span>
+            <span>Manual Authentication</span>
+        </div>
 
-        <label>Invite Code</label>
-        <input type="password" id="invite-code" placeholder="Used if no API Key">
+        <div class="collapsible" id="manual-auth-section">
+            <label>API Key</label>
+            <input type="password" id="api-key" placeholder="cmk_...">
+
+            <label>Invite Code</label>
+            <input type="password" id="invite-code" placeholder="Used if no API Key">
+
+            <label>Google Client ID</label>
+            <input type="text" id="google-client-id" placeholder="Optional — override default">
+        </div>
 
         <label>Username</label>
         <input type="text" id="user-name" placeholder="Your name">
