@@ -2,7 +2,46 @@
 
 ## Quick Start
 
-### Option 1: Node.js
+### Option 1: Docker
+
+```bash
+docker run -d \
+  -p 3458:3458 \
+  -v clawmark-data:/data \
+  -e CLAWMARK_INVITE_CODES_JSON='{"team-code":"Alice","guest":"Guest"}' \
+  ghcr.io/coco-xyz/clawmark:latest
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/coco-xyz/clawmark.git
+cd clawmark
+docker build -t clawmark .
+docker run -d -p 3458:3458 -v clawmark-data:/data clawmark
+```
+
+### Docker Compose
+
+```yaml
+services:
+  clawmark:
+    build: .
+    ports:
+      - "3458:3458"
+    volumes:
+      - clawmark-data:/data
+      - ./config.json:/app/config.json:ro
+    environment:
+      - CLAWMARK_PORT=3458
+      - CLAWMARK_DATA_DIR=/data
+    restart: unless-stopped
+
+volumes:
+  clawmark-data:
+```
+
+### Option 2: Node.js
 
 ```bash
 git clone https://github.com/coco-xyz/clawmark.git
