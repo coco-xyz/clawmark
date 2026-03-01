@@ -92,6 +92,8 @@ const { WebhookAdapter } = require('./adapters/webhook');
 const { LarkAdapter } = require('./adapters/lark');
 const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
+const { SlackAdapter } = require('./adapters/slack');
+const { EmailAdapter } = require('./adapters/email');
 const { resolveTarget } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations } = require('./ai');
@@ -102,6 +104,8 @@ registry.registerType('webhook', WebhookAdapter);
 registry.registerType('lark', LarkAdapter);
 registry.registerType('telegram', TelegramAdapter);
 registry.registerType('github-issue', GitHubIssueAdapter);
+registry.registerType('slack', SlackAdapter);
+registry.registerType('email', EmailAdapter);
 
 // Load distribution config
 if (config.distribution) {
@@ -869,6 +873,7 @@ app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
         if (typeof rule.target_config === 'string') {
             try { rule.target_config = JSON.parse(rule.target_config); } catch {}
         }
+        rule.target_config = redactConfig(rule.target_config);
         return rule;
     };
     if (user) {
@@ -1155,10 +1160,37 @@ app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
 // CRUD for user delivery endpoints. Authenticated via V2 auth.
 // =================================================================
 
+/** Redact sensitive fields from an adapter config object. */
+function redactConfig(config) {
+    if (!config || typeof config !== 'object') return config;
+    const redacted = { ...config };
+    const sensitiveKeys = ['api_key', 'bot_token', 'token', 'secret'];
+    for (const key of sensitiveKeys) {
+        if (redacted[key]) {
+            const val = String(redacted[key]);
+            redacted[key] = val.length > 8 ? val.slice(0, 4) + '***' + val.slice(-4) : '***';
+        }
+    }
+    // Redact webhook URLs that embed tokens (Slack, Lark)
+    if (redacted.webhook_url) {
+        try {
+            const u = new URL(redacted.webhook_url);
+            if (u.hostname.endsWith('slack.com') || u.hostname.includes('larksuite.com') || u.hostname.includes('feishu.cn')) {
+                const parts = u.pathname.split('/');
+                if (parts.length > 3) {
+                    redacted.webhook_url = `${u.origin}/${parts.slice(1, 3).join('/')}/***`;
+                }
+            }
+        } catch {}
+    }
+    return redacted;
+}
+
 const parseEndpointConfig = (ep) => {
     if (typeof ep.config === 'string') {
         try { ep.config = JSON.parse(ep.config); } catch {}
     }
+    ep.config = redactConfig(ep.config);
     return ep;
 };
 
@@ -1178,7 +1210,7 @@ app.post('/api/v2/endpoints', apiWriteLimiter, v2Auth, (req, res) => {
     if (!name || !name.trim()) return res.status(400).json({ error: 'Missing endpoint name' });
     if (!type) return res.status(400).json({ error: 'Missing endpoint type' });
 
-    const validTypes = ['github-issue', 'lark', 'telegram', 'webhook'];
+    const validTypes = ['github-issue', 'lark', 'telegram', 'webhook', 'slack', 'email'];
     if (!validTypes.includes(type)) {
         return res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(', ')}` });
     }
@@ -1197,6 +1229,16 @@ app.post('/api/v2/endpoints', apiWriteLimiter, v2Auth, (req, res) => {
             break;
         case 'telegram':
             if (!cfg.chat_id) return res.status(400).json({ error: 'Telegram endpoint requires "chat_id" in config' });
+            break;
+        case 'slack':
+            if (!cfg.webhook_url) return res.status(400).json({ error: 'Slack endpoint requires "webhook_url" in config' });
+            break;
+        case 'email':
+            if (!cfg.api_key) return res.status(400).json({ error: 'Email endpoint requires "api_key" in config' });
+            if (!cfg.from) return res.status(400).json({ error: 'Email endpoint requires "from" in config' });
+            // Normalize to to array
+            if (cfg.to && !Array.isArray(cfg.to)) cfg.to = [cfg.to];
+            if (!cfg.to || cfg.to.length === 0) return res.status(400).json({ error: 'Email endpoint requires "to" in config' });
             break;
     }
 
@@ -1230,7 +1272,7 @@ app.put('/api/v2/endpoints/:id', apiWriteLimiter, v2Auth, (req, res) => {
 
     // Validate type if provided
     if (type) {
-        const validTypes = ['github-issue', 'lark', 'telegram', 'webhook'];
+        const validTypes = ['github-issue', 'lark', 'telegram', 'webhook', 'slack', 'email'];
         if (!validTypes.includes(type)) {
             return res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(', ')}` });
         }
@@ -1252,6 +1294,15 @@ app.put('/api/v2/endpoints/:id', apiWriteLimiter, v2Auth, (req, res) => {
                 break;
             case 'telegram':
                 if (!cfg.chat_id) return res.status(400).json({ error: 'Telegram endpoint requires "chat_id" in config' });
+                break;
+            case 'slack':
+                if (!cfg.webhook_url) return res.status(400).json({ error: 'Slack endpoint requires "webhook_url" in config' });
+                break;
+            case 'email':
+                if (!cfg.api_key) return res.status(400).json({ error: 'Email endpoint requires "api_key" in config' });
+                if (!cfg.from) return res.status(400).json({ error: 'Email endpoint requires "from" in config' });
+                if (cfg.to && !Array.isArray(cfg.to)) cfg.to = [cfg.to];
+                if (!cfg.to || cfg.to.length === 0) return res.status(400).json({ error: 'Email endpoint requires "to" in config' });
                 break;
         }
     }

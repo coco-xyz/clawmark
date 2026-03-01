@@ -20,6 +20,8 @@ const { TelegramAdapter } = require('../server/adapters/telegram');
 const { GitHubIssueAdapter } = require('../server/adapters/github-issue');
 const { WebhookAdapter } = require('../server/adapters/webhook');
 const { LarkAdapter } = require('../server/adapters/lark');
+const { SlackAdapter } = require('../server/adapters/slack');
+const { EmailAdapter } = require('../server/adapters/email');
 
 // ------------------------------------------------------------------ helpers
 
@@ -546,5 +548,586 @@ describe('WebhookAdapter — validation', () => {
     it('accepts valid URL', () => {
         const adapter = new WebhookAdapter({ url: 'https://hooks.example.com/notify' });
         assert.equal(adapter.validate().ok, true);
+    });
+});
+
+// ================================================================= Slack Adapter
+
+describe('SlackAdapter — validation', () => {
+    it('requires webhook_url', () => {
+        const adapter = new SlackAdapter({});
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('rejects non-Slack URLs', () => {
+        const adapter = new SlackAdapter({ webhook_url: 'https://example.com/hook' });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('rejects invalid URLs', () => {
+        const adapter = new SlackAdapter({ webhook_url: 'not-a-url' });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('accepts valid Slack webhook URL', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T123/B456/xxx',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+});
+
+describe('SlackAdapter — Block Kit formatting', () => {
+    it('builds full payload with all fields', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+            channel: '#test',
+            template: 'full',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Login broken',
+            type: 'bug',
+            priority: 'high',
+            created_by: 'Alice',
+            source_url: 'https://app.example.com/login',
+            source_title: 'Login Page',
+            tags: ['auth', 'critical'],
+            quote: 'Error: invalid credentials',
+        });
+
+        assert.equal(payload.channel, '#test');
+        assert.ok(payload.text.includes('ClawMark'));
+        assert.ok(payload.text.includes('Login broken'));
+        assert.ok(Array.isArray(payload.blocks));
+        assert.ok(payload.blocks.length >= 2);
+
+        // Header block
+        assert.equal(payload.blocks[0].type, 'header');
+        assert.ok(payload.blocks[0].text.text.includes('New Item'));
+    });
+
+    it('builds compact payload', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+            template: 'compact',
+        });
+
+        const payload = adapter._buildPayload('item.resolved', {
+            title: 'Fixed issue',
+            priority: 'normal',
+        });
+
+        assert.ok(payload.blocks.length <= 2);
+        assert.equal(payload.blocks[0].type, 'section');
+    });
+
+    it('handles missing optional fields', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const payload = adapter._buildPayload('item.created', {});
+        assert.ok(payload.text.includes('ClawMark'));
+        assert.ok(Array.isArray(payload.blocks));
+    });
+
+    it('escapes special mrkdwn characters', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const escaped = adapter._esc('<script>alert("xss")</script>');
+        assert.ok(!escaped.includes('<script>'));
+        assert.ok(escaped.includes('&lt;script&gt;'));
+    });
+
+    it('includes assignee for assigned events', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const payload = adapter._buildPayload('item.assigned', {
+            title: 'Task',
+            assignee: 'Bob',
+            priority: 'normal',
+        });
+
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const hasAssignee = contextBlocks.some(b =>
+            b.elements.some(e => e.text.includes('Bob'))
+        );
+        assert.ok(hasAssignee);
+    });
+
+    it('includes tags as context block', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            tags: ['ui', 'regression'],
+            priority: 'normal',
+        });
+
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const hasTags = contextBlocks.some(b =>
+            b.elements.some(e => e.text.includes('ui') && e.text.includes('regression'))
+        );
+        assert.ok(hasTags);
+    });
+
+    it('includes thread_ts when configured', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+            thread_ts: '1234567890.123456',
+        });
+
+        const payload = adapter._buildPayload('item.created', { title: 'Thread reply' });
+        assert.equal(payload.thread_ts, '1234567890.123456');
+    });
+
+    it('truncates long content', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const longContent = 'x'.repeat(600);
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            quote: longContent,
+            priority: 'normal',
+        });
+
+        // Content section should exist and be truncated
+        const sectionBlocks = payload.blocks.filter(b => b.type === 'section' && b.text);
+        const hasContent = sectionBlocks.some(b => b.text.text.includes('...'));
+        assert.ok(hasContent);
+    });
+});
+
+// ================================================================= Email Adapter
+
+describe('EmailAdapter — validation', () => {
+    it('requires api_key', () => {
+        const adapter = new EmailAdapter({ from: 'a@b.com', to: ['c@d.com'] });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('requires from', () => {
+        const adapter = new EmailAdapter({ api_key: 're_xxx', to: ['c@d.com'] });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('requires to', () => {
+        const adapter = new EmailAdapter({ api_key: 're_xxx', from: 'a@b.com' });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('requires non-empty to array', () => {
+        const adapter = new EmailAdapter({ api_key: 're_xxx', from: 'a@b.com', to: [] });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('rejects invalid provider', () => {
+        const adapter = new EmailAdapter({
+            api_key: 'xxx', from: 'a@b.com', to: ['c@d.com'], provider: 'mailgun',
+        });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('accepts valid resend config', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'ClawMark <noreply@example.com>',
+            to: ['team@example.com'],
+            provider: 'resend',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+
+    it('accepts valid sendgrid config', () => {
+        const adapter = new EmailAdapter({
+            api_key: 'SG.xxx',
+            from: 'noreply@example.com',
+            to: ['team@example.com'],
+            provider: 'sendgrid',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+
+    it('defaults provider to resend', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+        assert.equal(adapter.provider, 'resend');
+        assert.equal(adapter.validate().ok, true);
+    });
+
+    it('normalizes to field to array', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: 'single@example.com',
+        });
+        assert.deepEqual(adapter.to, ['single@example.com']);
+    });
+});
+
+describe('EmailAdapter — HTML formatting', () => {
+    it('builds complete HTML email', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            title: 'Login broken',
+            type: 'bug',
+            priority: 'high',
+            created_by: 'Alice',
+            source_url: 'https://app.example.com/login',
+            source_title: 'Login Page',
+            tags: ['auth', 'critical'],
+            quote: 'Error: invalid credentials',
+            screenshots: ['https://img.example.com/1.png'],
+        });
+
+        assert.ok(html.includes('<!DOCTYPE html>'));
+        assert.ok(html.includes('ClawMark'));
+        assert.ok(html.includes('Login broken'));
+        assert.ok(html.includes('Alice'));
+        assert.ok(html.includes('auth'));
+        assert.ok(html.includes('critical'));
+        assert.ok(html.includes('https://app.example.com/login'));
+        assert.ok(html.includes('1.png'));
+    });
+
+    it('escapes HTML in content', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            title: '<script>alert("xss")</script>',
+            priority: 'normal',
+        });
+
+        assert.ok(!html.includes('<script>alert'));
+        assert.ok(html.includes('&lt;script&gt;'));
+    });
+
+    it('handles missing optional fields', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {});
+        assert.ok(html.includes('<!DOCTYPE html>'));
+        assert.ok(html.includes('ClawMark'));
+    });
+
+    it('uses priority-based color', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const critical = adapter._buildHtml('item.created', { priority: 'critical' });
+        assert.ok(critical.includes('#ef4444'));
+
+        const normal = adapter._buildHtml('item.created', { priority: 'normal' });
+        assert.ok(normal.includes('#3b82f6'));
+    });
+
+    it('truncates long content', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const longContent = 'x'.repeat(1500);
+        const html = adapter._buildHtml('item.created', {
+            quote: longContent,
+            priority: 'normal',
+        });
+
+        assert.ok(html.includes('...'));
+        assert.ok(!html.includes('x'.repeat(1500)));
+    });
+});
+
+describe('EmailAdapter — subject building', () => {
+    it('builds subject with prefix and event label', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+            subject_prefix: '[Test]',
+        });
+
+        const subject = adapter._buildSubject('item.created', { title: 'Bug report' });
+        assert.equal(subject, '[Test] New Item: Bug report');
+    });
+
+    it('falls back to quote when no title', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const subject = adapter._buildSubject('item.resolved', { quote: 'Some quoted text here' });
+        assert.ok(subject.includes('[ClawMark]'));
+        assert.ok(subject.includes('Resolved'));
+        assert.ok(subject.includes('Some quoted text'));
+    });
+
+    it('uses default prefix', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const subject = adapter._buildSubject('item.created', { title: 'Test' });
+        assert.ok(subject.startsWith('[ClawMark]'));
+    });
+});
+
+describe('EmailAdapter — provider handling', () => {
+    it('handles string tags in HTML', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            tags: '["tag1", "tag2"]',
+            priority: 'normal',
+        });
+
+        assert.ok(html.includes('tag1'));
+        assert.ok(html.includes('tag2'));
+    });
+
+    it('handles string screenshots in HTML', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            priority: 'normal',
+            screenshots: '["https://img.example.com/shot.png"]',
+        });
+
+        assert.ok(html.includes('shot.png'));
+    });
+});
+
+// ================================================================= Security: URL protocol validation
+
+describe('EmailAdapter — URL protocol safety (H2)', () => {
+    it('rejects javascript: source_url', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            priority: 'normal',
+            source_url: 'javascript:alert(1)',
+            source_title: 'Evil Link',
+        });
+
+        assert.ok(!html.includes('javascript:'));
+        assert.ok(!html.includes('Evil Link'));
+    });
+
+    it('rejects javascript: screenshot URLs', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            priority: 'normal',
+            screenshots: ['javascript:alert(1)', 'https://safe.example.com/img.png'],
+        });
+
+        assert.ok(!html.includes('javascript:'));
+        assert.ok(html.includes('safe.example.com'));
+    });
+
+    it('caps screenshots at 5 (L1)', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const screenshots = Array.from({ length: 10 }, (_, i) => `https://img.example.com/${i}.png`);
+        const html = adapter._buildHtml('item.created', {
+            priority: 'normal',
+            screenshots,
+        });
+
+        // Should have exactly 5 img tags
+        const imgCount = (html.match(/<img /g) || []).length;
+        assert.equal(imgCount, 5);
+    });
+
+    it('allows https: URLs', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            priority: 'normal',
+            source_url: 'https://safe.example.com/page',
+            screenshots: ['https://img.example.com/1.png'],
+        });
+
+        assert.ok(html.includes('https://safe.example.com/page'));
+        assert.ok(html.includes('https://img.example.com/1.png'));
+    });
+});
+
+describe('SlackAdapter — URL protocol safety (M1)', () => {
+    it('rejects javascript: source_url in full template', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            source_url: 'javascript:alert(1)',
+            priority: 'normal',
+        });
+
+        // Should not have any context block with javascript:
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const hasJsUrl = contextBlocks.some(b =>
+            b.elements.some(e => e.text.includes('javascript:'))
+        );
+        assert.ok(!hasJsUrl);
+    });
+
+    it('rejects javascript: source_url in compact template', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+            template: 'compact',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            source_url: 'javascript:alert(1)',
+            priority: 'normal',
+        });
+
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const hasJsUrl = contextBlocks.some(b =>
+            b.elements.some(e => e.text.includes('javascript:'))
+        );
+        assert.ok(!hasJsUrl);
+    });
+
+    it('escapes URLs in mrkdwn links', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            source_url: 'https://example.com/path?a=1&b=2',
+            priority: 'normal',
+        });
+
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const linkBlock = contextBlocks.find(b =>
+            b.elements.some(e => e.text.includes('example.com'))
+        );
+        assert.ok(linkBlock);
+    });
+});
+
+describe('SlackAdapter — backtick in tags (M4)', () => {
+    it('replaces backticks in tag values', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            tags: ['tag`with`backticks', 'normal-tag'],
+            priority: 'normal',
+        });
+
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const tagBlock = contextBlocks.find(b =>
+            b.elements.some(e => e.text.includes(':label:'))
+        );
+        assert.ok(tagBlock);
+        // Backticks should be replaced with single quotes
+        const text = tagBlock.elements[0].text;
+        assert.ok(!text.includes('tag`with`backticks'));
+        assert.ok(text.includes("tag'with'backticks"));
+    });
+});
+
+// ================================================================= Email — SendGrid from parsing (M2)
+
+describe('EmailAdapter — SendGrid from parsing (M2)', () => {
+    it('parses "Display Name <email>" format', () => {
+        const adapter = new EmailAdapter({
+            api_key: 'SG.xxx',
+            from: 'ClawMark <noreply@example.com>',
+            to: ['c@d.com'],
+            provider: 'sendgrid',
+        });
+
+        const result = adapter._parseSendGridFrom('ClawMark <noreply@example.com>');
+        assert.deepEqual(result, { name: 'ClawMark', email: 'noreply@example.com' });
+    });
+
+    it('handles plain email address', () => {
+        const adapter = new EmailAdapter({
+            api_key: 'SG.xxx',
+            from: 'noreply@example.com',
+            to: ['c@d.com'],
+            provider: 'sendgrid',
+        });
+
+        const result = adapter._parseSendGridFrom('noreply@example.com');
+        assert.deepEqual(result, { email: 'noreply@example.com' });
+    });
+
+    it('handles display name with spaces', () => {
+        const adapter = new EmailAdapter({
+            api_key: 'SG.xxx',
+            from: 'My Company Bot <bot@company.com>',
+            to: ['c@d.com'],
+            provider: 'sendgrid',
+        });
+
+        const result = adapter._parseSendGridFrom('My Company Bot <bot@company.com>');
+        assert.deepEqual(result, { name: 'My Company Bot', email: 'bot@company.com' });
     });
 });
