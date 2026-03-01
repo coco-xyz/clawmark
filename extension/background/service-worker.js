@@ -474,13 +474,13 @@ async function checkTargetInjection(url) {
         }
 
         const result = declaration === false ? false : true;
-        _declarationCache.set(cacheKey, { value: result, ts: Date.now(), negative: declaration === null });
 
-        // Evict old entries
-        if (_declarationCache.size > 500) {
+        // Evict oldest entry before inserting to stay within limit
+        if (_declarationCache.size >= 500) {
             const oldest = _declarationCache.keys().next().value;
             _declarationCache.delete(oldest);
         }
+        _declarationCache.set(cacheKey, { value: result, ts: Date.now(), negative: declaration === null });
 
         return { js_injection: result };
     } catch {
