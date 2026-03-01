@@ -93,7 +93,7 @@ const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 const { resolveTarget } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
-const { recommendRoute } = require('./ai');
+const { recommendRoute, generateTags } = require('./ai');
 
 const registry = new AdapterRegistry();
 registry.setDb(itemsDb);
@@ -951,6 +951,48 @@ app.post('/api/v2/routing/recommend', aiLimiter, v2Auth, async (req, res) => {
     } catch (err) {
         console.error('[AI] Recommendation failed:', err.message);
         res.status(500).json({ error: 'AI recommendation failed' });
+    }
+});
+
+// -- POST /api/v2/items/:id/generate-tags — AI-powered tag generation
+app.post('/api/v2/items/:id/generate-tags', aiLimiter, v2Auth, async (req, res) => {
+    const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
+    if (!aiApiKey) {
+        return res.status(503).json({ error: 'AI tagging not configured (missing API key)' });
+    }
+
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) {
+        return res.status(404).json({ error: 'Item not found' });
+    }
+
+    const existingTags = (() => {
+        try { return JSON.parse(item.tags || '[]'); } catch { return []; }
+    })();
+
+    try {
+        const firstMessage = item.messages?.[0]?.content;
+        const result = await generateTags({
+            source_url: item.source_url,
+            source_title: item.source_title,
+            content: firstMessage || item.title,
+            quote: item.quote,
+            type: item.type,
+            existingTags,
+            apiKey: aiApiKey,
+        });
+
+        if (result.tags.length > 0) {
+            const { merge } = req.body || {};
+            const finalTags = merge !== false ? [...existingTags, ...result.tags] : result.tags;
+            itemsDb.updateItemTags(item.id, finalTags);
+            res.json({ tags: finalTags, generated: result.tags, reasoning: result.reasoning, source: 'ai' });
+        } else {
+            res.json({ tags: existingTags, generated: [], reasoning: result.reasoning, source: 'ai' });
+        }
+    } catch (err) {
+        console.error('[AI] Tag generation failed:', err.message);
+        res.status(500).json({ error: 'AI tag generation failed' });
     }
 });
 
