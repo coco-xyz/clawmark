@@ -95,6 +95,9 @@ const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 const { SlackAdapter } = require('./adapters/slack');
 const { EmailAdapter } = require('./adapters/email');
+const { LinearAdapter } = require('./adapters/linear');
+const { JiraAdapter } = require('./adapters/jira');
+const { HxaConnectAdapter } = require('./adapters/hxa-connect');
 const { resolveTarget, resolveTargets } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations } = require('./ai');
@@ -107,6 +110,9 @@ registry.registerType('telegram', TelegramAdapter);
 registry.registerType('github-issue', GitHubIssueAdapter);
 registry.registerType('slack', SlackAdapter);
 registry.registerType('email', EmailAdapter);
+registry.registerType('linear', LinearAdapter);
+registry.registerType('jira', JiraAdapter);
+registry.registerType('hxa-connect', HxaConnectAdapter);
 
 // Load distribution config
 if (config.distribution) {
