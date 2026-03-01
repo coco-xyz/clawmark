@@ -180,6 +180,9 @@ function initDb(dataDir) {
         ['source_title', 'TEXT'],
         ['tags',         "TEXT DEFAULT '[]'"],
         ['screenshots',  "TEXT DEFAULT '[]'"],
+        ['classification', 'TEXT'],
+        ['classification_confidence', 'REAL'],
+        ['classified_at', 'TEXT'],
     ];
     for (const [col, typedef] of v2Columns) {
         if (!existingCols.includes(col)) {
@@ -190,6 +193,7 @@ function initDb(dataDir) {
 
     // V2 indexes (safe to run after migration)
     db.exec(`CREATE INDEX IF NOT EXISTS idx_items_source_url ON items(source_url)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_items_classification ON items(classification)`);
 
     // ----------------------------------------- schema migration: org_id columns
     // Add org_id column to apps and user_rules for existing databases.
@@ -468,6 +472,26 @@ function initDb(dataDir) {
              GROUP BY source_url
              ORDER BY MAX(created_at) DESC`
         ).all(app_id);
+    }
+
+    function updateItemClassification(item_id, classification, confidence) {
+        const now = new Date().toISOString();
+        return db.prepare(
+            'UPDATE items SET classification = ?, classification_confidence = ?, classified_at = ?, updated_at = ? WHERE id = ?'
+        ).run(classification, confidence, now, now, item_id);
+    }
+
+    function updateItemClassificationIfNull(item_id, classification, confidence) {
+        const now = new Date().toISOString();
+        return db.prepare(
+            'UPDATE items SET classification = ?, classification_confidence = ?, classified_at = ?, updated_at = ? WHERE id = ? AND classification IS NULL'
+        ).run(classification, confidence, now, now, item_id);
+    }
+
+    function getItemsByClassification({ app_id = 'default', classification, limit = 500 }) {
+        return db.prepare(
+            'SELECT * FROM items WHERE app_id = ? AND classification = ? ORDER BY created_at DESC LIMIT ?'
+        ).all(app_id, classification, limit);
     }
 
     function updateItemTags(item_id, tags) {
@@ -943,8 +967,11 @@ function initDb(dataDir) {
         // V2
         getItemsByUrl,
         getItemsByTag,
+        getItemsByClassification,
         getDistinctUrls,
         updateItemTags,
+        updateItemClassification,
+        updateItemClassificationIfNull,
         createApiKey,
         validateApiKey,
         revokeApiKey,
