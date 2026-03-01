@@ -379,7 +379,10 @@ async function handleMessage(message, sender) {
                 updates.jsInjectionEnabled = message.jsInjectionEnabled;
             }
             if (Array.isArray(message.disabledSites)) {
-                updates.disabledSites = message.disabledSites;
+                // M-5: validate entries are strings; M-3: cap at 100 sites
+                updates.disabledSites = message.disabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
             }
             await chrome.storage.sync.set(updates);
             return { success: true };
@@ -402,101 +405,51 @@ async function handleMessage(message, sender) {
 }
 
 // ------------------------------------------------------------------ target declaration check (#86)
+//
+// Delegates to server-side /api/v2/routing/resolve which has full SSRF
+// protection, proper YAML parsing, and correct cache granularity.
 
 const _declarationCache = new Map();
 const DECLARATION_CACHE_TTL = 5 * 60 * 1000;
 const DECLARATION_NEGATIVE_TTL = 2 * 60 * 1000;
+const DECLARATION_CACHE_MAX = 500;
 
 /**
- * Extract GitHub owner/repo from a URL.
- * Supports github.com/owner/repo paths.
- */
-function extractGitHub(url) {
-    try {
-        const parsed = new URL(url);
-        if (parsed.hostname !== 'github.com') return null;
-        const parts = parsed.pathname.split('/').filter(Boolean);
-        if (parts.length >= 2) return { owner: parts[0], repo: parts[1] };
-    } catch {}
-    return null;
-}
-
-/**
- * Check target declaration for js_injection field.
- * Fetches .well-known/clawmark.json (websites) or .clawmark.yml (GitHub).
- * Returns { js_injection: bool } or null.
+ * Check target declaration for js_injection field via server API.
+ * Returns { js_injection: bool }.
  */
 async function checkTargetInjection(url) {
     if (!url) return { js_injection: true };
 
     try {
         const parsed = new URL(url);
-        // Skip non-http(s) URLs
         if (!parsed.protocol.startsWith('http')) return { js_injection: true };
 
-        const cacheKey = parsed.origin;
+        // Cache key: full origin + pathname for proper per-repo granularity
+        const cacheKey = parsed.origin + parsed.pathname;
         const cached = _declarationCache.get(cacheKey);
         if (cached && Date.now() - cached.ts < (cached.negative ? DECLARATION_NEGATIVE_TTL : DECLARATION_CACHE_TTL)) {
             return { js_injection: cached.value };
         }
 
-        let declaration = null;
-
-        const gh = extractGitHub(url);
-        if (gh) {
-            // GitHub: try .clawmark.yml from raw.githubusercontent.com
-            for (const branch of ['main', 'master']) {
-                try {
-                    const res = await fetch(
-                        `https://raw.githubusercontent.com/${gh.owner}/${gh.repo}/${branch}/.clawmark.yml`
-                    );
-                    if (res.ok) {
-                        const text = await res.text();
-                        // Simple YAML parse: look for js_injection field
-                        declaration = parseJsInjectionFromYaml(text);
-                        break;
-                    }
-                } catch {}
-            }
-        } else if (parsed.protocol === 'https:') {
-            // Non-GitHub HTTPS: try /.well-known/clawmark.json
-            try {
-                const res = await fetch(`${parsed.origin}/.well-known/clawmark.json`, {
-                    signal: AbortSignal.timeout(5000),
-                });
-                if (res.ok) {
-                    const json = await res.json();
-                    if (json && typeof json === 'object') {
-                        declaration = json.js_injection === false ? false : true;
-                    }
-                }
-            } catch {}
+        // Call server API — it handles SSRF protection, YAML parsing, declaration fetching
+        let jsInjection = true;
+        try {
+            const result = await apiRequest('POST', '/api/v2/routing/resolve', { source_url: url });
+            if (result && result.js_injection === false) jsInjection = false;
+        } catch {
+            // Server unreachable — default to allowed
         }
 
-        const result = declaration === false ? false : true;
-
-        // Evict oldest entry before inserting to stay within limit
-        if (_declarationCache.size >= 500) {
+        // Evict oldest before insert to respect limit
+        if (_declarationCache.size >= DECLARATION_CACHE_MAX) {
             const oldest = _declarationCache.keys().next().value;
             _declarationCache.delete(oldest);
         }
-        _declarationCache.set(cacheKey, { value: result, ts: Date.now(), negative: declaration === null });
+        _declarationCache.set(cacheKey, { value: jsInjection, ts: Date.now(), negative: jsInjection === true });
 
-        return { js_injection: result };
+        return { js_injection: jsInjection };
     } catch {
         return { js_injection: true };
     }
-}
-
-/**
- * Parse js_injection field from YAML text without a full YAML parser.
- * Returns false if js_injection: false, true otherwise.
- */
-function parseJsInjectionFromYaml(text) {
-    const match = text.match(/^js_injection:\s*(false|true|no|yes)/mi);
-    if (match) {
-        const val = match[1].toLowerCase();
-        return val === 'false' || val === 'no' ? false : true;
-    }
-    return true; // default: allowed
 }

@@ -61,10 +61,15 @@
     }
 
     // Listen for user setting changes to enable/disable dynamically
+    // Generation counter prevents race conditions from rapid toggles (M-1)
+    let toggleGeneration = 0;
+
     chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'sync') return;
         if (changes.jsInjectionEnabled || changes.disabledSites) {
+            const gen = ++toggleGeneration;
             checkInjectionEnabled().then(enabled => {
+                if (gen !== toggleGeneration) return; // stale — newer toggle supersedes
                 if (enabled && !injectionActive) {
                     injectionActive = true;
                     initOverlay();
