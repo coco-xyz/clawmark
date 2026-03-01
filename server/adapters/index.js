@@ -183,6 +183,146 @@ class AdapterRegistry {
     }
 
     /**
+     * Dispatch an event to multiple targets in parallel (multi-target #93).
+     * Creates dispatch_log entries for tracking and retries.
+     *
+     * @param {string} event        e.g. 'item.created'
+     * @param {object} item         The item data
+     * @param {Array}  targets      Array of { target_type, target_config, method }
+     * @param {object} context      Additional context
+     * @returns {Array} Array of { dispatch_id, target_type, status, error? }
+     */
+    async dispatchToTargets(event, item, targets, context = {}) {
+        if (!this.db) {
+            console.error('[adapters] Cannot track multi-target dispatch: no DB set');
+            return [];
+        }
+
+        // Create dispatch_log entries for each target
+        const entries = targets.map(t => ({
+            dispatch_id: this.db.createDispatchEntry({
+                item_id: item.id,
+                target_type: t.target_type,
+                target_config: t.target_config,
+                method: t.method,
+            }),
+            ...t,
+        }));
+
+        // Dispatch all targets in parallel
+        const results = await Promise.allSettled(
+            entries.map(async (entry) => {
+                try {
+                    const result = await this._dispatchSingleTarget(event, item, entry.target_type, entry.target_config, context);
+                    this.db.updateDispatchEntry(entry.dispatch_id, {
+                        status: 'sent',
+                        retries: 0,
+                        external_id: result?.external_id || null,
+                        external_url: result?.external_url || null,
+                    });
+                    console.log(`[adapters] ${event} → ${entry.target_type} ✓ (dispatch ${entry.dispatch_id})`);
+                    return { dispatch_id: entry.dispatch_id, target_type: entry.target_type, status: 'sent' };
+                } catch (err) {
+                    this.db.updateDispatchEntry(entry.dispatch_id, {
+                        status: 'failed',
+                        retries: 1,
+                        last_error: err.message,
+                    });
+                    console.error(`[adapters] ${event} → ${entry.target_type} failed (dispatch ${entry.dispatch_id}):`, err.message);
+                    return { dispatch_id: entry.dispatch_id, target_type: entry.target_type, status: 'failed', error: err.message };
+                }
+            })
+        );
+
+        return results.map(r => r.status === 'fulfilled' ? r.value : r.reason);
+    }
+
+    /**
+     * Internal: dispatch to a single target and return result metadata.
+     * Unlike dispatchToTarget(), this returns external_id/url from the adapter.
+     */
+    async _dispatchSingleTarget(event, item, target_type, target_config, context = {}) {
+        const AdapterClass = this.adapterTypes.get(target_type);
+        if (!AdapterClass) {
+            throw new Error(`Unknown adapter type "${target_type}"`);
+        }
+
+        // Inherit token from default channel for github-issue
+        if (target_type === 'github-issue' && !target_config.token) {
+            for (const [, adapter] of this.channels) {
+                if (adapter.type === 'github-issue' && adapter.token) {
+                    target_config.token = adapter.token;
+                    break;
+                }
+            }
+        }
+
+        const channelName = `dynamic-${target_type}-${Date.now()}`;
+        const instance = new AdapterClass({ ...target_config, channelName, db: this.db || null });
+        const validation = instance.validate ? instance.validate() : { ok: true };
+        if (!validation.ok) {
+            throw new Error(`Validation failed: ${validation.error}`);
+        }
+        const result = await instance.send(event, item, context);
+        return result || {};
+    }
+
+    /**
+     * Retry failed dispatches (called periodically).
+     * Exponential backoff: retry_delay = 2^retries * 5 seconds.
+     * Max 3 retries per entry.
+     */
+    async retryFailed() {
+        if (!this.db) return 0;
+
+        const pending = this.db.getPendingDispatches();
+        if (pending.length === 0) return 0;
+
+        let retried = 0;
+        for (const entry of pending) {
+            // Exponential backoff check
+            const backoffMs = Math.pow(2, entry.retries) * 5000;
+            const lastUpdate = new Date(entry.updated_at).getTime();
+            if (Date.now() - lastUpdate < backoffMs) continue;
+
+            let item;
+            try {
+                item = this.db.getItem(entry.item_id);
+            } catch (_) { /* ignore */ }
+            if (!item) {
+                this.db.updateDispatchEntry(entry.id, {
+                    status: 'cancelled', retries: entry.retries,
+                    last_error: 'Item not found',
+                });
+                continue;
+            }
+
+            const config = JSON.parse(entry.target_config);
+            try {
+                const result = await this._dispatchSingleTarget('item.created', item, entry.target_type, config, {});
+                this.db.updateDispatchEntry(entry.id, {
+                    status: 'sent',
+                    retries: entry.retries + 1,
+                    external_id: result?.external_id || null,
+                    external_url: result?.external_url || null,
+                });
+                console.log(`[adapters] Retry #${entry.retries + 1} → ${entry.target_type} ✓ (dispatch ${entry.id})`);
+                retried++;
+            } catch (err) {
+                const newRetries = entry.retries + 1;
+                this.db.updateDispatchEntry(entry.id, {
+                    status: newRetries >= 3 ? 'exhausted' : 'failed',
+                    retries: newRetries,
+                    last_error: err.message,
+                });
+                console.error(`[adapters] Retry #${newRetries} → ${entry.target_type} failed (dispatch ${entry.id}):`, err.message);
+            }
+        }
+
+        return retried;
+    }
+
+    /**
      * Get status of all registered channels.
      */
     getStatus() {

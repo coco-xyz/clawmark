@@ -176,4 +176,95 @@ function resolveTarget({ source_url, user_name, type, priority, tags, db, defaul
     };
 }
 
-module.exports = { resolveTarget, extractGitHubRepo, matchUrlPattern };
+/**
+ * Resolve ALL matching routing targets for an item (multi-target dispatch #93).
+ *
+ * Unlike resolveTarget() which returns only the first (highest priority) match,
+ * this collects targets from multiple resolution methods and deduplicates by
+ * target_type + key config (e.g. repo for github-issue, webhook_url for others).
+ *
+ * @param {object} params  Same as resolveTarget()
+ * @returns {Array<{ target_type: string, target_config: object, matched_rule: object|null, method: string }>}
+ */
+function resolveTargets(params) {
+    const { source_url, user_name, type, priority, tags, db, defaultTarget, declaration } = params;
+
+    const targets = [];
+    const seen = new Set();
+
+    function dedup(target) {
+        const key = `${target.target_type}:${target.target_config.repo || target.target_config.webhook_url || target.target_config.chat_id || JSON.stringify(target.target_config)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    }
+
+    // Step 0: Target declaration
+    if (declaration && declaration.target_type && declaration.target_config) {
+        const t = {
+            target_type: declaration.target_type,
+            target_config: declaration.target_config,
+            matched_rule: null,
+            method: 'target_declaration',
+        };
+        if (dedup(t)) targets.push(t);
+    }
+
+    // Step 1: ALL matching user rules (not just first)
+    const userRules = (db && user_name) ? db.getUserRules(user_name) : [];
+    for (const rule of userRules) {
+        if (!rule.enabled) continue;
+        if (rule.rule_type === 'default') continue; // default handled separately below
+
+        let matched = false;
+        if (rule.rule_type === 'url_pattern' && rule.pattern) {
+            matched = matchUrlPattern(source_url, rule.pattern);
+        } else if (rule.rule_type === 'content_type' && rule.pattern) {
+            matched = type && rule.pattern === type;
+        } else if (rule.rule_type === 'tag_match' && rule.pattern) {
+            matched = tags && Array.isArray(tags) && tags.includes(rule.pattern);
+        }
+
+        if (matched) {
+            const config = JSON.parse(rule.target_config);
+            const t = { target_type: rule.target_type, target_config: config, matched_rule: rule, method: 'user_rule' };
+            if (dedup(t)) targets.push(t);
+        }
+    }
+
+    // Step 2: GitHub URL auto-detect
+    const ghRepo = extractGitHubRepo(source_url);
+    if (ghRepo) {
+        const t = {
+            target_type: 'github-issue',
+            target_config: { repo: `${ghRepo.owner}/${ghRepo.repo}`, labels: ['clawmark'], assignees: [] },
+            matched_rule: null,
+            method: 'github_auto',
+        };
+        if (dedup(t)) targets.push(t);
+    }
+
+    // Step 3: User default rule (only if no other targets matched)
+    if (targets.length === 0) {
+        const defaultRule = userRules.find(r => r.rule_type === 'default' && r.enabled);
+        if (defaultRule) {
+            const config = JSON.parse(defaultRule.target_config);
+            const t = { target_type: defaultRule.target_type, target_config: config, matched_rule: defaultRule, method: 'user_default' };
+            if (dedup(t)) targets.push(t);
+        }
+    }
+
+    // Step 4: System default if still empty
+    if (targets.length === 0) {
+        targets.push({
+            target_type: 'github-issue',
+            target_config: defaultTarget || { repo: 'coco-xyz/clawmark', labels: ['clawmark'], assignees: [] },
+            matched_rule: null,
+            method: 'system_default',
+        });
+    }
+
+    return targets;
+}
+
+module.exports = { resolveTarget, resolveTargets, extractGitHubRepo, matchUrlPattern };

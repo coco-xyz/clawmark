@@ -672,3 +672,119 @@ describe('DB — genId', () => {
         assert.ok(dbApi.genId('foo').startsWith('foo-'));
     });
 });
+
+// ================================================ Dispatch Log (#93)
+
+describe('DB — dispatch log', () => {
+    beforeEach(setup);
+    afterEach(teardown);
+
+    function createTestItem() {
+        return dbApi.createItem({
+            doc: 'https://example.com', type: 'issue', title: 'Test',
+            created_by: 'testuser', message: 'test message',
+        });
+    }
+
+    it('creates and retrieves dispatch entries', () => {
+        const item = createTestItem();
+        const id = dbApi.createDispatchEntry({
+            item_id: item.id, target_type: 'github-issue',
+            target_config: { repo: 'coco-xyz/test' }, method: 'user_rule',
+        });
+
+        assert.ok(id.startsWith('dsp-'));
+        const log = dbApi.getDispatchLog(item.id);
+        assert.equal(log.length, 1);
+        assert.equal(log[0].item_id, item.id);
+        assert.equal(log[0].target_type, 'github-issue');
+        assert.equal(log[0].status, 'pending');
+        assert.equal(log[0].retries, 0);
+        assert.equal(log[0].method, 'user_rule');
+    });
+
+    it('updates dispatch status to sent', () => {
+        const item = createTestItem();
+        const id = dbApi.createDispatchEntry({
+            item_id: item.id, target_type: 'lark',
+            target_config: { webhook_url: 'https://hook.example.com' },
+        });
+
+        dbApi.updateDispatchEntry(id, {
+            status: 'sent', retries: 0,
+            external_id: '123', external_url: 'https://lark.example.com/123',
+        });
+
+        const entry = dbApi.getDispatchEntry(id);
+        assert.equal(entry.status, 'sent');
+        assert.equal(entry.external_id, '123');
+        assert.equal(entry.external_url, 'https://lark.example.com/123');
+    });
+
+    it('updates dispatch status to failed with error', () => {
+        const item = createTestItem();
+        const id = dbApi.createDispatchEntry({
+            item_id: item.id, target_type: 'slack',
+            target_config: { webhook_url: 'https://hooks.slack.com/test' },
+        });
+
+        dbApi.updateDispatchEntry(id, {
+            status: 'failed', retries: 1, last_error: 'Connection timeout',
+        });
+
+        const entry = dbApi.getDispatchEntry(id);
+        assert.equal(entry.status, 'failed');
+        assert.equal(entry.retries, 1);
+        assert.equal(entry.last_error, 'Connection timeout');
+    });
+
+    it('tracks multiple targets per item', () => {
+        const item = createTestItem();
+        dbApi.createDispatchEntry({ item_id: item.id, target_type: 'github-issue', target_config: { repo: 'a/b' } });
+        dbApi.createDispatchEntry({ item_id: item.id, target_type: 'slack', target_config: { webhook_url: 'x' } });
+        dbApi.createDispatchEntry({ item_id: item.id, target_type: 'lark', target_config: { webhook_url: 'y' } });
+
+        const log = dbApi.getDispatchLog(item.id);
+        assert.equal(log.length, 3);
+        assert.deepStrictEqual(log.map(e => e.target_type), ['github-issue', 'slack', 'lark']);
+    });
+
+    it('getPendingDispatches returns failed entries with retries < 3', () => {
+        const item = createTestItem();
+        const id1 = dbApi.createDispatchEntry({ item_id: item.id, target_type: 'slack', target_config: {} });
+        const id2 = dbApi.createDispatchEntry({ item_id: item.id, target_type: 'lark', target_config: {} });
+        const id3 = dbApi.createDispatchEntry({ item_id: item.id, target_type: 'email', target_config: {} });
+
+        // id1: still pending (retries=0) — should appear
+        // id2: failed with retries=2 — should appear
+        dbApi.updateDispatchEntry(id2, { status: 'failed', retries: 2, last_error: 'err' });
+        // id3: exhausted with retries=3 — should NOT appear
+        dbApi.updateDispatchEntry(id3, { status: 'failed', retries: 3, last_error: 'err' });
+
+        const pending = dbApi.getPendingDispatches();
+        const pendingIds = pending.map(e => e.id);
+        assert.ok(pendingIds.includes(id1));
+        assert.ok(pendingIds.includes(id2));
+        assert.ok(!pendingIds.includes(id3));
+    });
+
+    it('returns empty log for unknown item', () => {
+        const log = dbApi.getDispatchLog('nonexistent');
+        assert.equal(log.length, 0);
+    });
+
+    it('getDispatchEntry returns null for unknown id', () => {
+        assert.equal(dbApi.getDispatchEntry('nonexistent'), null);
+    });
+
+    it('stores target_config as JSON string', () => {
+        const item = createTestItem();
+        const config = { repo: 'test/repo', labels: ['bug'] };
+        const id = dbApi.createDispatchEntry({
+            item_id: item.id, target_type: 'github-issue', target_config: config,
+        });
+        const entry = dbApi.getDispatchEntry(id);
+        assert.equal(typeof entry.target_config, 'string');
+        assert.deepStrictEqual(JSON.parse(entry.target_config), config);
+    });
+});
