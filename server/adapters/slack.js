@@ -20,6 +20,17 @@
 
 const https = require('https');
 
+/** Return url only if it uses http(s) protocol; empty string otherwise. */
+function safeUrl(url) {
+    if (!url) return '';
+    try {
+        const u = new URL(String(url));
+        return (u.protocol === 'http:' || u.protocol === 'https:') ? url : '';
+    } catch {
+        return '';
+    }
+}
+
 class SlackAdapter {
     constructor(config) {
         this.type = 'slack';
@@ -131,20 +142,22 @@ class SlackAdapter {
             });
         }
 
-        // Tags
+        // Tags (backtick-wrapped; tags containing backticks may break inline code formatting,
+        // but this is a cosmetic edge case — Slack mrkdwn only requires &<> escaping)
         const tags = typeof item.tags === 'string' ? JSON.parse(item.tags || '[]') : (item.tags || []);
         if (tags.length > 0) {
             blocks.push({
                 type: 'context',
-                elements: [{ type: 'mrkdwn', text: `:label: ${tags.map(t => `\`${this._esc(t)}\``).join(' ')}` }],
+                elements: [{ type: 'mrkdwn', text: `:label: ${tags.map(t => `\`${this._esc(t).replace(/`/g, "'")}\``).join(' ')}` }],
             });
         }
 
-        // Source link
-        if (item.source_url) {
+        // Source link (http/https only, URL escaped for mrkdwn)
+        const safeSource = safeUrl(item.source_url);
+        if (safeSource) {
             blocks.push({
                 type: 'context',
-                elements: [{ type: 'mrkdwn', text: `:link: <${item.source_url}|${this._esc(item.source_title || 'Source')}>` }],
+                elements: [{ type: 'mrkdwn', text: `:link: <${this._esc(safeSource)}|${this._esc(item.source_title || 'Source')}>` }],
             });
         }
 
@@ -170,10 +183,11 @@ class SlackAdapter {
             { type: 'section', text: { type: 'mrkdwn', text } },
         ];
 
-        if (item.source_url) {
+        const safeCompactSource = safeUrl(item.source_url);
+        if (safeCompactSource) {
             blocks.push({
                 type: 'context',
-                elements: [{ type: 'mrkdwn', text: `<${item.source_url}|View source>` }],
+                elements: [{ type: 'mrkdwn', text: `<${this._esc(safeCompactSource)}|View source>` }],
             });
         }
 

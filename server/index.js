@@ -872,6 +872,7 @@ app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
         if (typeof rule.target_config === 'string') {
             try { rule.target_config = JSON.parse(rule.target_config); } catch {}
         }
+        rule.target_config = redactConfig(rule.target_config);
         return rule;
     };
     if (user) {
@@ -1158,10 +1159,37 @@ app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
 // CRUD for user delivery endpoints. Authenticated via V2 auth.
 // =================================================================
 
+/** Redact sensitive fields from an adapter config object. */
+function redactConfig(config) {
+    if (!config || typeof config !== 'object') return config;
+    const redacted = { ...config };
+    const sensitiveKeys = ['api_key', 'bot_token', 'token', 'secret'];
+    for (const key of sensitiveKeys) {
+        if (redacted[key]) {
+            const val = String(redacted[key]);
+            redacted[key] = val.length > 8 ? val.slice(0, 4) + '***' + val.slice(-4) : '***';
+        }
+    }
+    // Redact webhook URLs that embed tokens (Slack, Lark)
+    if (redacted.webhook_url) {
+        try {
+            const u = new URL(redacted.webhook_url);
+            if (u.hostname.endsWith('slack.com') || u.hostname.includes('larksuite.com') || u.hostname.includes('feishu.cn')) {
+                const parts = u.pathname.split('/');
+                if (parts.length > 3) {
+                    redacted.webhook_url = `${u.origin}/${parts.slice(1, 3).join('/')}/***`;
+                }
+            }
+        } catch {}
+    }
+    return redacted;
+}
+
 const parseEndpointConfig = (ep) => {
     if (typeof ep.config === 'string') {
         try { ep.config = JSON.parse(ep.config); } catch {}
     }
+    ep.config = redactConfig(ep.config);
     return ep;
 };
 
@@ -1207,7 +1235,9 @@ app.post('/api/v2/endpoints', apiWriteLimiter, v2Auth, (req, res) => {
         case 'email':
             if (!cfg.api_key) return res.status(400).json({ error: 'Email endpoint requires "api_key" in config' });
             if (!cfg.from) return res.status(400).json({ error: 'Email endpoint requires "from" in config' });
-            if (!cfg.to || (Array.isArray(cfg.to) && cfg.to.length === 0)) return res.status(400).json({ error: 'Email endpoint requires "to" in config' });
+            // Normalize to to array
+            if (cfg.to && !Array.isArray(cfg.to)) cfg.to = [cfg.to];
+            if (!cfg.to || cfg.to.length === 0) return res.status(400).json({ error: 'Email endpoint requires "to" in config' });
             break;
     }
 

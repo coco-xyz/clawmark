@@ -937,3 +937,197 @@ describe('EmailAdapter — provider handling', () => {
         assert.ok(html.includes('shot.png'));
     });
 });
+
+// ================================================================= Security: URL protocol validation
+
+describe('EmailAdapter — URL protocol safety (H2)', () => {
+    it('rejects javascript: source_url', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            priority: 'normal',
+            source_url: 'javascript:alert(1)',
+            source_title: 'Evil Link',
+        });
+
+        assert.ok(!html.includes('javascript:'));
+        assert.ok(!html.includes('Evil Link'));
+    });
+
+    it('rejects javascript: screenshot URLs', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            priority: 'normal',
+            screenshots: ['javascript:alert(1)', 'https://safe.example.com/img.png'],
+        });
+
+        assert.ok(!html.includes('javascript:'));
+        assert.ok(html.includes('safe.example.com'));
+    });
+
+    it('caps screenshots at 5 (L1)', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const screenshots = Array.from({ length: 10 }, (_, i) => `https://img.example.com/${i}.png`);
+        const html = adapter._buildHtml('item.created', {
+            priority: 'normal',
+            screenshots,
+        });
+
+        // Should have exactly 5 img tags
+        const imgCount = (html.match(/<img /g) || []).length;
+        assert.equal(imgCount, 5);
+    });
+
+    it('allows https: URLs', () => {
+        const adapter = new EmailAdapter({
+            api_key: 're_xxx',
+            from: 'a@b.com',
+            to: ['c@d.com'],
+        });
+
+        const html = adapter._buildHtml('item.created', {
+            priority: 'normal',
+            source_url: 'https://safe.example.com/page',
+            screenshots: ['https://img.example.com/1.png'],
+        });
+
+        assert.ok(html.includes('https://safe.example.com/page'));
+        assert.ok(html.includes('https://img.example.com/1.png'));
+    });
+});
+
+describe('SlackAdapter — URL protocol safety (M1)', () => {
+    it('rejects javascript: source_url in full template', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            source_url: 'javascript:alert(1)',
+            priority: 'normal',
+        });
+
+        // Should not have any context block with javascript:
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const hasJsUrl = contextBlocks.some(b =>
+            b.elements.some(e => e.text.includes('javascript:'))
+        );
+        assert.ok(!hasJsUrl);
+    });
+
+    it('rejects javascript: source_url in compact template', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+            template: 'compact',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            source_url: 'javascript:alert(1)',
+            priority: 'normal',
+        });
+
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const hasJsUrl = contextBlocks.some(b =>
+            b.elements.some(e => e.text.includes('javascript:'))
+        );
+        assert.ok(!hasJsUrl);
+    });
+
+    it('escapes URLs in mrkdwn links', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            source_url: 'https://example.com/path?a=1&b=2',
+            priority: 'normal',
+        });
+
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const linkBlock = contextBlocks.find(b =>
+            b.elements.some(e => e.text.includes('example.com'))
+        );
+        assert.ok(linkBlock);
+    });
+});
+
+describe('SlackAdapter — backtick in tags (M4)', () => {
+    it('replaces backticks in tag values', () => {
+        const adapter = new SlackAdapter({
+            webhook_url: 'https://hooks.slack.com/services/T/B/x',
+        });
+
+        const payload = adapter._buildPayload('item.created', {
+            title: 'Test',
+            tags: ['tag`with`backticks', 'normal-tag'],
+            priority: 'normal',
+        });
+
+        const contextBlocks = payload.blocks.filter(b => b.type === 'context');
+        const tagBlock = contextBlocks.find(b =>
+            b.elements.some(e => e.text.includes(':label:'))
+        );
+        assert.ok(tagBlock);
+        // Backticks should be replaced with single quotes
+        const text = tagBlock.elements[0].text;
+        assert.ok(!text.includes('tag`with`backticks'));
+        assert.ok(text.includes("tag'with'backticks"));
+    });
+});
+
+// ================================================================= Email — SendGrid from parsing (M2)
+
+describe('EmailAdapter — SendGrid from parsing (M2)', () => {
+    it('parses "Display Name <email>" format', () => {
+        const adapter = new EmailAdapter({
+            api_key: 'SG.xxx',
+            from: 'ClawMark <noreply@example.com>',
+            to: ['c@d.com'],
+            provider: 'sendgrid',
+        });
+
+        const result = adapter._parseSendGridFrom('ClawMark <noreply@example.com>');
+        assert.deepEqual(result, { name: 'ClawMark', email: 'noreply@example.com' });
+    });
+
+    it('handles plain email address', () => {
+        const adapter = new EmailAdapter({
+            api_key: 'SG.xxx',
+            from: 'noreply@example.com',
+            to: ['c@d.com'],
+            provider: 'sendgrid',
+        });
+
+        const result = adapter._parseSendGridFrom('noreply@example.com');
+        assert.deepEqual(result, { email: 'noreply@example.com' });
+    });
+
+    it('handles display name with spaces', () => {
+        const adapter = new EmailAdapter({
+            api_key: 'SG.xxx',
+            from: 'My Company Bot <bot@company.com>',
+            to: ['c@d.com'],
+            provider: 'sendgrid',
+        });
+
+        const result = adapter._parseSendGridFrom('My Company Bot <bot@company.com>');
+        assert.deepEqual(result, { name: 'My Company Bot', email: 'bot@company.com' });
+    });
+});

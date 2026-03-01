@@ -21,6 +21,17 @@
 
 const https = require('https');
 
+/** Return url only if it uses http(s) protocol; empty string otherwise. */
+function safeUrl(url) {
+    if (!url) return '';
+    try {
+        const u = new URL(String(url));
+        return (u.protocol === 'http:' || u.protocol === 'https:') ? url : '';
+    } catch {
+        return '';
+    }
+}
+
 class EmailAdapter {
     constructor(config) {
         this.type = 'email';
@@ -123,17 +134,19 @@ class EmailAdapter {
             lines.push(`<p style="margin:0 0 12px;">${tagHtml}</p>`);
         }
 
-        // Source link
-        if (item.source_url) {
-            lines.push(`<p style="margin:0 0 8px;font-size:13px;"><a href="${esc(item.source_url)}" style="color:#3b82f6;">${esc(item.source_title || item.source_url)}</a></p>`);
+        // Source link (http/https only)
+        const safeSource = safeUrl(item.source_url);
+        if (safeSource) {
+            lines.push(`<p style="margin:0 0 8px;font-size:13px;"><a href="${esc(safeSource)}" style="color:#3b82f6;">${esc(item.source_title || safeSource)}</a></p>`);
         }
 
-        // Screenshots
+        // Screenshots (http/https only, max 5)
         const screenshots = typeof item.screenshots === 'string'
             ? JSON.parse(item.screenshots || '[]') : (item.screenshots || []);
-        if (screenshots.length > 0) {
+        const safeScreenshots = screenshots.map(safeUrl).filter(Boolean).slice(0, 5);
+        if (safeScreenshots.length > 0) {
             lines.push('<div style="margin:12px 0;">');
-            for (const url of screenshots) {
+            for (const url of safeScreenshots) {
                 lines.push(`<img src="${esc(url)}" alt="screenshot" style="max-width:100%;border-radius:4px;margin-bottom:8px;">`);
             }
             lines.push('</div>');
@@ -162,10 +175,17 @@ class EmailAdapter {
         });
     }
 
+    /** Parse "Display Name <email>" into { email, name } for SendGrid. */
+    _parseSendGridFrom(from) {
+        const match = from.match(/^(.+?)\s*<(.+)>$/);
+        if (match) return { name: match[1].trim(), email: match[2].trim() };
+        return { email: from.trim() };
+    }
+
     _sendViaSendGrid(subject, html) {
         const body = JSON.stringify({
             personalizations: [{ to: this.to.map(email => ({ email })) }],
-            from: { email: this.from.replace(/^.*<(.+)>$/, '$1') || this.from },
+            from: this._parseSendGridFrom(this.from),
             subject,
             content: [{ type: 'text/html', value: html }],
         });
