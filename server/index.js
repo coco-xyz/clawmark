@@ -699,8 +699,8 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
     const { type, app_id, source_url, source_title, quote, quote_position,
             screenshots, title, content, priority, tags, userName, version } = req.body;
 
-    const user = userName || req.v2Auth?.user;
-    const resolvedAppId = app_id || req.v2Auth?.app_id || 'default';
+    const user = req.v2Auth?.user || userName;
+    const resolvedAppId = req.v2Auth?.app_id || app_id || 'default';
     const doc = source_url || req.body.doc || '/';
 
     if (!user) return res.status(400).json({ error: 'Missing userName' });
@@ -806,7 +806,7 @@ app.post('/api/v2/items/:id/messages', apiWriteLimiter, v2Auth, (req, res) => {
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
 
-    const user = userName || req.v2Auth?.user;
+    const user = req.v2Auth?.user || userName;
     const result = itemsDb.addMessage({
         item_id: req.params.id,
         role: role || 'user',
@@ -935,7 +935,9 @@ app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
 // -- POST /api/v2/routing/rules — create a routing rule
 app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
     const { rule_type, pattern, target_type, target_config, priority, userName } = req.body;
-    const user = userName || req.v2Auth?.user;
+    // Use authenticated identity first to match GET /rules which resolves user from auth.
+    // Prevents mismatch where rules are stored under popup userName but queried by auth user.
+    const user = req.v2Auth?.user || userName;
 
     if (!user) return res.status(400).json({ error: 'Missing userName' });
     if (!rule_type) return res.status(400).json({ error: 'Missing rule_type' });
@@ -983,7 +985,7 @@ app.delete('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
 // -- POST /api/v2/routing/resolve — test routing resolution (dry run)
 app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => {
     const { source_url, userName, type, priority, tags } = req.body;
-    const user = userName || req.v2Auth?.user;
+    const user = req.v2Auth?.user || userName;
 
     // Fetch target declaration
     let declaration = null;
