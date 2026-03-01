@@ -13,6 +13,8 @@
 
 'use strict';
 
+const pkg = require('../package.json');
+
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -20,7 +22,6 @@ const http = require('http');
 const https = require('https');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
-const pkg = require('../package.json');
 
 // ---------------------------------------------------------------------- config
 
@@ -94,7 +95,7 @@ const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 const { SlackAdapter } = require('./adapters/slack');
 const { EmailAdapter } = require('./adapters/email');
-const { resolveTarget } = require('./routing');
+const { resolveTarget, resolveTargets } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations } = require('./ai');
 
@@ -221,8 +222,8 @@ async function sendWebhook(event, payload) {
             console.error(`[declaration] Failed to fetch for ${payload.source_url}:`, err.message);
         }
 
-        // Use routing resolver to find the right target (5-level priority)
-        const routing = resolveTarget({
+        // Resolve ALL matching targets (#93 multi-target dispatch)
+        const targets = resolveTargets({
             source_url: payload.source_url,
             user_name: payload.created_by,
             type: payload.type,
@@ -233,22 +234,20 @@ async function sendWebhook(event, payload) {
             declaration,
         });
 
-        console.log(`[routing] ${event}: ${routing.method} → ${routing.target_type} (${routing.target_config.repo || 'custom'})`);
+        console.log(`[routing] ${event}: ${targets.length} target(s) — ${targets.map(t => `${t.method}→${t.target_type}`).join(', ')}`);
 
         // Store routing decision on the item for debugging/auditing
-        payload._routing = { method: routing.method, target_type: routing.target_type, repo: routing.target_config.repo };
+        payload._routing = targets.map(t => ({ method: t.method, target_type: t.target_type, repo: t.target_config.repo }));
 
-        if (routing.method !== 'system_default') {
-            // Dynamic dispatch to the resolved target
-            registry.dispatchToTarget(event, payload, routing.target_type, { ...routing.target_config }, {}).catch(err => {
-                console.error(`[dispatch] Routed dispatch failed for ${event}, falling back to default:`, err.message);
-                // Fallback to static dispatch on error
-                registry.dispatch(event, payload).catch(e => {
-                    console.error(`[dispatch] Fallback also failed:`, e.message);
-                });
+        // Multi-target dispatch with tracking
+        registry.dispatchToTargets(event, payload, targets, {}).catch(err => {
+            console.error(`[dispatch] Multi-target dispatch failed for ${event}:`, err.message);
+            // Fallback to static dispatch on error
+            registry.dispatch(event, payload).catch(e => {
+                console.error(`[dispatch] Fallback also failed:`, e.message);
             });
-            return;
-        }
+        });
+        return;
     }
 
     // Default static dispatch (for non-routed events or system_default routing)
@@ -761,6 +760,14 @@ app.get('/api/v2/items/:id', apiReadLimiter, v2Auth, (req, res) => {
     // Parse JSON fields for client convenience
     if (typeof item.tags === 'string') item.tags = JSON.parse(item.tags || '[]');
     if (typeof item.screenshots === 'string') item.screenshots = JSON.parse(item.screenshots || '[]');
+    // Include dispatch status if dispatches exist
+    const dispatches = itemsDb.getDispatchLog(item.id);
+    if (dispatches.length > 0) {
+        item.dispatches = dispatches.map(d => ({
+            id: d.id, target_type: d.target_type, status: d.status,
+            external_url: d.external_url, method: d.method,
+        }));
+    }
     res.json(item);
 });
 
@@ -859,6 +866,41 @@ app.post('/api/v2/auth/apikey-legacy', apiWriteLimiter, (req, res) => {
 // -- GET /api/v2/adapters — list adapter channels and their status
 app.get('/api/v2/adapters', (req, res) => {
     res.json({ channels: registry.getStatus(), rules: registry.rules.length });
+});
+
+// ================================================================= Distribution Log API (#93)
+//
+// Query dispatch status for items. Authenticated via V2 auth.
+// =================================================================
+
+// -- GET /api/v2/distributions/:item_id — get dispatch log for an item
+app.get('/api/v2/distributions/:item_id', apiReadLimiter, v2Auth, (req, res) => {
+    const log = itemsDb.getDispatchLog(req.params.item_id);
+    const parsed = log.map(entry => {
+        try { entry.target_config = redactConfig(JSON.parse(entry.target_config)); } catch {
+            entry.target_config = {};
+        }
+        return entry;
+    });
+    res.json({ item_id: req.params.item_id, dispatches: parsed });
+});
+
+// -- POST /api/v2/distributions/:item_id/retry — retry failed dispatches for an item
+app.post('/api/v2/distributions/:item_id/retry', apiWriteLimiter, v2Auth, async (req, res) => {
+    const log = itemsDb.getDispatchLog(req.params.item_id);
+    const failed = log.filter(e => e.status === 'failed' || e.status === 'exhausted');
+    if (failed.length === 0) {
+        return res.json({ message: 'No failed dispatches to retry', retried: 0 });
+    }
+
+    // Reset failed entries to pending with retries=0
+    for (const entry of failed) {
+        itemsDb.updateDispatchEntry(entry.id, {
+            status: 'pending', retries: 0, last_error: null,
+        });
+    }
+
+    res.json({ message: `Reset ${failed.length} dispatch(es) for retry`, retried: failed.length });
 });
 
 // ================================================================= Routing Rules API
@@ -1681,4 +1723,16 @@ app.listen(PORT, () => {
     console.log(`    adapters  : ${Object.keys(registry.getStatus()).length} channel(s)`);
     console.log(`    auth      : ${Object.keys(VALID_CODES).length} invite code(s)`);
     console.log(`    api v2    : /api/v2/*`);
+
+    // Start dispatch retry worker (every 30s, exponential backoff per entry)
+    let retryBusy = false;
+    setInterval(() => {
+        if (retryBusy) return;
+        retryBusy = true;
+        registry.retryFailed().then(n => {
+            if (n > 0) console.log(`[dispatch] Retried ${n} failed dispatch(es)`);
+        }).catch(err => {
+            console.error('[dispatch] Retry worker error:', err.message);
+        }).finally(() => { retryBusy = false; });
+    }, 30000);
 });

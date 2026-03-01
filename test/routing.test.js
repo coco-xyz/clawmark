@@ -12,7 +12,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveTarget, extractGitHubRepo, matchUrlPattern } = require('../server/routing');
+const { resolveTarget, resolveTargets, extractGitHubRepo, matchUrlPattern } = require('../server/routing');
 
 // ==================================================================
 // 1. GitHub URL extraction
@@ -312,5 +312,164 @@ describe('resolveTarget', () => {
 
         // Kevin's rule should NOT match for Jessie
         assert.strictEqual(result.method, 'system_default');
+    });
+});
+
+// ==================================================================
+// 6. resolveTargets — multi-target dispatch (#93)
+// ==================================================================
+
+describe('resolveTargets — multi-target', () => {
+    it('returns all matching user rules (not just first)', () => {
+        const mockDb = {
+            getUserRules: () => [
+                { rule_type: 'url_pattern', pattern: '*github.com*', target_type: 'github-issue', target_config: '{"repo":"a/b"}', enabled: true, priority: 10 },
+                { rule_type: 'url_pattern', pattern: '*github.com*', target_type: 'slack', target_config: '{"webhook_url":"https://slack.test"}', enabled: true, priority: 5 },
+            ]
+        };
+
+        const targets = resolveTargets({
+            source_url: 'https://github.com/coco-xyz/test',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: { repo: 'fallback/repo' },
+        });
+
+        // Should get both user rules + github auto-detect (but github-issue deduped)
+        assert.ok(targets.length >= 2);
+        const types = targets.map(t => t.target_type);
+        assert.ok(types.includes('github-issue'));
+        assert.ok(types.includes('slack'));
+    });
+
+    it('deduplicates same target_type + repo', () => {
+        const mockDb = {
+            getUserRules: () => [
+                { rule_type: 'url_pattern', pattern: '*github.com/coco-xyz/test*', target_type: 'github-issue', target_config: '{"repo":"coco-xyz/test"}', enabled: true, priority: 10 },
+            ]
+        };
+
+        const targets = resolveTargets({
+            source_url: 'https://github.com/coco-xyz/test/issues/1',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: { repo: 'fallback/repo' },
+        });
+
+        // user_rule says coco-xyz/test, github_auto also says coco-xyz/test — should dedup
+        const ghTargets = targets.filter(t => t.target_type === 'github-issue');
+        assert.equal(ghTargets.length, 1);
+    });
+
+    it('includes GitHub auto-detect alongside user rules', () => {
+        const mockDb = {
+            getUserRules: () => [
+                { rule_type: 'url_pattern', pattern: '*github.com*', target_type: 'lark', target_config: '{"webhook_url":"https://lark.test"}', enabled: true, priority: 10 },
+            ]
+        };
+
+        const targets = resolveTargets({
+            source_url: 'https://github.com/coco-xyz/test',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: { repo: 'fallback/repo' },
+        });
+
+        const types = targets.map(t => t.target_type);
+        assert.ok(types.includes('lark'), 'should include user rule lark target');
+        assert.ok(types.includes('github-issue'), 'should include github auto-detect');
+    });
+
+    it('falls back to user default when no rules match', () => {
+        const mockDb = {
+            getUserRules: () => [
+                { rule_type: 'default', target_type: 'webhook', target_config: '{"url":"https://hook.test"}', enabled: true, priority: 0 },
+            ]
+        };
+
+        const targets = resolveTargets({
+            source_url: 'https://docs.example.com/page',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: { repo: 'fallback/repo' },
+        });
+
+        assert.equal(targets.length, 1);
+        assert.equal(targets[0].method, 'user_default');
+    });
+
+    it('falls back to system default when nothing matches', () => {
+        const mockDb = { getUserRules: () => [] };
+
+        const targets = resolveTargets({
+            source_url: 'https://docs.example.com/page',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: { repo: 'fallback/repo' },
+        });
+
+        assert.equal(targets.length, 1);
+        assert.equal(targets[0].method, 'system_default');
+    });
+
+    it('declaration takes priority and coexists with user rules', () => {
+        const mockDb = {
+            getUserRules: () => [
+                { rule_type: 'url_pattern', pattern: '*example.com*', target_type: 'slack', target_config: '{"webhook_url":"https://slack.test"}', enabled: true, priority: 10 },
+            ]
+        };
+
+        const targets = resolveTargets({
+            source_url: 'https://example.com/page',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: { repo: 'fallback/repo' },
+            declaration: { target_type: 'github-issue', target_config: { repo: 'declared/repo' } },
+        });
+
+        assert.ok(targets.length >= 2);
+        assert.equal(targets[0].method, 'target_declaration');
+        assert.ok(targets.some(t => t.target_type === 'slack'));
+    });
+
+    it('skips disabled rules', () => {
+        const mockDb = {
+            getUserRules: () => [
+                { rule_type: 'url_pattern', pattern: '*example.com*', target_type: 'slack', target_config: '{"webhook_url":"x"}', enabled: false, priority: 10 },
+            ]
+        };
+
+        const targets = resolveTargets({
+            source_url: 'https://example.com/page',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: { repo: 'fallback/repo' },
+        });
+
+        // Disabled rule skipped, falls to system default
+        assert.equal(targets.length, 1);
+        assert.equal(targets[0].method, 'system_default');
+    });
+
+    it('matches tag rules alongside url rules', () => {
+        const mockDb = {
+            getUserRules: () => [
+                { rule_type: 'url_pattern', pattern: '*example.com*', target_type: 'github-issue', target_config: '{"repo":"a/b"}', enabled: true, priority: 10 },
+                { rule_type: 'tag_match', pattern: 'urgent', target_type: 'telegram', target_config: '{"chat_id":"123"}', enabled: true, priority: 5 },
+            ]
+        };
+
+        const targets = resolveTargets({
+            source_url: 'https://example.com/page',
+            user_name: 'testuser',
+            tags: ['urgent', 'bug'],
+            db: mockDb,
+            defaultTarget: { repo: 'fallback/repo' },
+        });
+
+        assert.equal(targets.length, 2);
+        const types = targets.map(t => t.target_type);
+        assert.ok(types.includes('github-issue'));
+        assert.ok(types.includes('telegram'));
     });
 });

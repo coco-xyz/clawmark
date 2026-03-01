@@ -213,6 +213,33 @@ function initDb(dataDir) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_apps_org ON apps(org_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_user_rules_org ON user_rules(org_id)`);
 
+    // ----------------------------------------- schema: dispatch_log (v0.6.0 #93)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS dispatch_log (
+            id              TEXT PRIMARY KEY,
+            item_id         TEXT NOT NULL,
+            target_type     TEXT NOT NULL,
+            target_config   TEXT NOT NULL DEFAULT '{}',
+            event           TEXT NOT NULL DEFAULT 'item.created',
+            status          TEXT NOT NULL DEFAULT 'pending',
+            retries         INTEGER NOT NULL DEFAULT 0,
+            last_error      TEXT,
+            external_id     TEXT,
+            external_url    TEXT,
+            method          TEXT,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_dispatch_log_item ON dispatch_log(item_id);
+        CREATE INDEX IF NOT EXISTS idx_dispatch_log_status ON dispatch_log(status);
+    `);
+
+    // ----------------------------------------- schema migration: dispatch_log event column
+    const dlCols = db.pragma('table_info(dispatch_log)').map(c => c.name);
+    if (!dlCols.includes('event')) {
+        db.exec(`ALTER TABLE dispatch_log ADD COLUMN event TEXT NOT NULL DEFAULT 'item.created'`);
+    }
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -828,6 +855,64 @@ function initDb(dataDir) {
         return row ? row.role : null;
     }
 
+    // ------------------------------------------------- dispatch log methods (#93)
+
+    const dispatchStmts = {
+        insert: db.prepare(`
+            INSERT INTO dispatch_log (id, item_id, target_type, target_config, event, status, retries, method, created_at, updated_at)
+            VALUES (@id, @item_id, @target_type, @target_config, @event, @status, @retries, @method, @created_at, @updated_at)
+        `),
+        updateStatus: db.prepare(`
+            UPDATE dispatch_log
+            SET status = @status, retries = @retries, last_error = @last_error,
+                external_id = @external_id, external_url = @external_url, updated_at = @updated_at
+            WHERE id = @id
+        `),
+        getByItem: db.prepare(
+            'SELECT * FROM dispatch_log WHERE item_id = ? ORDER BY created_at ASC'
+        ),
+        getPending: db.prepare(
+            `SELECT * FROM dispatch_log WHERE status IN ('pending', 'failed') AND retries < 3 ORDER BY created_at ASC`
+        ),
+        getById: db.prepare('SELECT * FROM dispatch_log WHERE id = ?'),
+    };
+
+    function createDispatchEntry({ item_id, target_type, target_config, event, method }) {
+        const now = new Date().toISOString();
+        const id = genId('dsp');
+        dispatchStmts.insert.run({
+            id, item_id, target_type,
+            target_config: typeof target_config === 'string' ? target_config : JSON.stringify(target_config),
+            event: event || 'item.created',
+            status: 'pending', retries: 0, method: method || null,
+            created_at: now, updated_at: now,
+        });
+        return id;
+    }
+
+    function updateDispatchEntry(id, { status, retries, last_error, external_id, external_url }) {
+        const now = new Date().toISOString();
+        dispatchStmts.updateStatus.run({
+            id, status, retries: retries ?? 0,
+            last_error: last_error || null,
+            external_id: external_id || null,
+            external_url: external_url || null,
+            updated_at: now,
+        });
+    }
+
+    function getDispatchLog(item_id) {
+        return dispatchStmts.getByItem.all(item_id);
+    }
+
+    function getPendingDispatches() {
+        return dispatchStmts.getPending.all();
+    }
+
+    function getDispatchEntry(id) {
+        return dispatchStmts.getById.get(id) || null;
+    }
+
     // ------------------------------------------------- adapter mapping methods
 
     function setAdapterMapping({ item_id, adapter, channel = '', external_id, external_url }) {
@@ -1114,6 +1199,12 @@ function initDb(dataDir) {
         setAdapterMapping,
         getAdapterMapping,
         getAdapterMappingByExternalId,
+        // Dispatch log (#93)
+        createDispatchEntry,
+        updateDispatchEntry,
+        getDispatchLog,
+        getPendingDispatches,
+        getDispatchEntry,
         // User routing rules
         createUserRule,
         getUserRules,
