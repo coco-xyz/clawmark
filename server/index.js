@@ -756,20 +756,24 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
 
         // Auto-analyze screenshots if present (#117)
         if (Array.isArray(screenshots) && screenshots.length > 0) {
-            const filename = screenshots[0].replace(/^\/images\//, '');
-            const imagePath = path.join(UPLOAD_DIR, filename);
-            analyzeScreenshot({
-                imagePath,
-                source_url: source_url || null,
-                source_title: source_title || null,
-                content: content || title,
-                quote,
-                apiKey: v2AiKey,
-            }).then((analysis) => {
-                itemsDb.updateItemScreenshotAnalysis(item.id, analysis);
-            }).catch(err => {
-                console.error(`[AI] Auto-analyze screenshot failed for ${item.id}:`, err.message);
-            });
+            const filename = path.basename(screenshots[0].replace(/^\/images\//, ''));
+            const imagePath = path.resolve(UPLOAD_DIR, filename);
+            if (!imagePath.startsWith(path.resolve(UPLOAD_DIR) + path.sep)) {
+                console.error('[AI] Screenshot path traversal blocked:', screenshots[0]);
+            } else {
+                analyzeScreenshot({
+                    imagePath,
+                    source_url: source_url || null,
+                    source_title: source_title || null,
+                    content: content || title,
+                    quote,
+                    apiKey: v2AiKey,
+                }).then((analysis) => {
+                    itemsDb.updateItemScreenshotAnalysis(item.id, analysis);
+                }).catch(err => {
+                    console.error(`[AI] Auto-analyze screenshot failed for ${item.id}:`, err.message);
+                });
+            }
         }
     }
 
@@ -1287,8 +1291,11 @@ app.post('/api/v2/items/:id/analyze', aiLimiter, v2Auth, async (req, res) => {
     try {
         // Analyze the first screenshot (primary annotation)
         const screenshotUrl = screenshots[0];
-        const filename = screenshotUrl.replace(/^\/images\//, '');
-        const imagePath = path.join(UPLOAD_DIR, filename);
+        const filename = path.basename(screenshotUrl.replace(/^\/images\//, ''));
+        const imagePath = path.resolve(UPLOAD_DIR, filename);
+        if (!imagePath.startsWith(path.resolve(UPLOAD_DIR) + path.sep)) {
+            return res.status(400).json({ error: 'Invalid screenshot path' });
+        }
 
         const analysis = await analyzeScreenshot({
             imagePath,
@@ -1305,7 +1312,7 @@ app.post('/api/v2/items/:id/analyze', aiLimiter, v2Auth, async (req, res) => {
         res.json({ success: true, analysis });
     } catch (err) {
         console.error('[AI] Screenshot analysis error:', err.message);
-        res.status(500).json({ error: 'Screenshot analysis failed: ' + err.message });
+        res.status(500).json({ error: 'Screenshot analysis failed' });
     }
 });
 

@@ -583,6 +583,17 @@ describe('analyzeScreenshot', () => {
         assert.equal(result.intent, 'general');
         assert.equal(result.severity, 'info');
     });
+
+    it('throws on invalid JSON from callAI override', async () => {
+        await assert.rejects(
+            () => analyzeScreenshot({
+                imagePath: TEST_IMAGE,
+                apiKey: 'test',
+                callAI: async () => 'not-valid-json{{{',
+            }),
+            { message: 'AI returned invalid JSON' }
+        );
+    });
 });
 
 describe('validateScreenshotAnalysis', () => {

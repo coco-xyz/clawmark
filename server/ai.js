@@ -667,11 +667,13 @@ async function analyzeScreenshot(params) {
     }
 
     // Read image file
-    if (!fs.existsSync(imagePath)) {
+    const { promises: fsp } = fs;
+    let imageBuffer;
+    try {
+        imageBuffer = await fsp.readFile(imagePath);
+    } catch {
         throw new Error('Screenshot file not found');
     }
-
-    const imageBuffer = fs.readFileSync(imagePath);
     if (imageBuffer.length > MAX_IMAGE_BYTES) {
         throw new Error('Screenshot file too large (max 4MB)');
     }
@@ -679,7 +681,10 @@ async function analyzeScreenshot(params) {
     // Detect MIME type from extension
     const ext = path.extname(imagePath).toLowerCase();
     const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp' };
-    const mimeType = mimeMap[ext] || 'image/png';
+    const mimeType = mimeMap[ext];
+    if (!mimeType) {
+        throw new Error('Unsupported image format');
+    }
 
     // Build context prompt
     const parts = ['Analyze this annotated screenshot.'];
@@ -692,7 +697,13 @@ async function analyzeScreenshot(params) {
     if (callAI) {
         // Test override — pass image buffer info for verification
         const responseText = await callAI(apiKey, SCREENSHOT_ANALYSIS_PROMPT, textPrompt, imageBuffer, mimeType);
-        return validateScreenshotAnalysis(JSON.parse(responseText));
+        let parsed;
+        try {
+            parsed = JSON.parse(responseText);
+        } catch {
+            throw new Error('AI returned invalid JSON');
+        }
+        return validateScreenshotAnalysis(parsed);
     }
 
     const responseText = await callGeminiVision(apiKey, SCREENSHOT_ANALYSIS_PROMPT, textPrompt, imageBuffer, mimeType);
