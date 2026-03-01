@@ -96,7 +96,7 @@ saveBtn.addEventListener('click', async () => {
     checkConnection();
 });
 
-const DEFAULT_SERVER_URL = 'https://clawmark.coco.xyz';
+const DEFAULT_SERVER_URL = 'https://api.coco.xyz/clawmark';
 
 // ------------------------------------------------------------------ Google sign-in
 

@@ -3,6 +3,7 @@
   "name": "ClawMark",
   "version": "0.5.0",
   "description": "Annotate, comment, and track issues on any webpage — your feedback collection tool",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApkQ68vPnMba+IXLSgvs/91voPszurmDMdFQx6pEqi8bcSsGZr05NJ1VvFpVMu3X/lml6ZBLPfxdeJef803Hw3LH1g50FsvRS7OyooYkyzU7W3BXd4yBsaUUG7jdk4eVnaxTtINVXL0Z6YHAlA2YAV/e3tW7lY1MDYT+Fhpw2V4pOM5wNPD8NxPzSQxKiCZBN75aTHaHHz0LvXegSit3v8MXnmcWlBQNbCaK2aOAJbyVTv2jn+NR4VXKXNvK1cgLHJmGuXtdojBZwclyLSJ4jdDtM5uKQg509o8qljcrAGNU6fuO5ryLqS0EB3s/uN600LfuFqWGVJF1Wv/FpTgAyQwIDAQAB",
   "permissions": [
     "activeTab",
     "storage",
