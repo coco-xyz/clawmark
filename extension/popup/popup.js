@@ -399,6 +399,39 @@ function updateTargetFields(targetType, existingConfig) {
                 <label>To (comma-separated)</label>
                 <input type="text" id="tc-email-to" placeholder="team@example.com, lead@example.com" value="${escHtml((cfg.to || []).join(', '))}">`;
             break;
+        case 'linear':
+            html = `
+                <label>API Key</label>
+                <input type="password" id="tc-linear-apikey" placeholder="lin_api_..." value="${escHtml(cfg.api_key || '')}">
+                <label>Team ID</label>
+                <input type="text" id="tc-linear-team" placeholder="team UUID" value="${escHtml(cfg.team_id || '')}">
+                <label>Assignee ID (optional)</label>
+                <input type="text" id="tc-linear-assignee" placeholder="user UUID" value="${escHtml(cfg.assignee_id || '')}">`;
+            break;
+        case 'jira':
+            html = `
+                <label>Domain</label>
+                <input type="text" id="tc-jira-domain" placeholder="myteam (→ myteam.atlassian.net)" value="${escHtml(cfg.domain || '')}">
+                <label>Email</label>
+                <input type="text" id="tc-jira-email" placeholder="user@example.com" value="${escHtml(cfg.email || '')}">
+                <label>API Token</label>
+                <input type="password" id="tc-jira-token" placeholder="ATATT3..." value="${escHtml(cfg.api_token || '')}">
+                <label>Project Key</label>
+                <input type="text" id="tc-jira-project" placeholder="PROJ" value="${escHtml(cfg.project_key || '')}">
+                <label>Issue Type (optional)</label>
+                <input type="text" id="tc-jira-issuetype" placeholder="Task, Bug, Story..." value="${escHtml(cfg.issue_type || '')}">`;
+            break;
+        case 'hxa-connect':
+            html = `
+                <label>Hub URL</label>
+                <input type="text" id="tc-hxa-hub" placeholder="https://hub.example.com" value="${escHtml(cfg.hub_url || '')}">
+                <label>Agent ID</label>
+                <input type="text" id="tc-hxa-agent" placeholder="agent UUID" value="${escHtml(cfg.agent_id || '')}">
+                <label>API Key (optional)</label>
+                <input type="password" id="tc-hxa-apikey" placeholder="Bearer token" value="${escHtml(cfg.api_key || '')}">
+                <label>Thread ID (optional)</label>
+                <input type="text" id="tc-hxa-thread" placeholder="custom-thread-id" value="${escHtml(cfg.thread_id || '')}">`;
+            break;
     }
     targetFieldsEl.innerHTML = html;
 }
@@ -440,6 +473,34 @@ function getTargetConfig() {
             const toRaw = (document.getElementById('tc-email-to')?.value || '').trim();
             const to = toRaw ? toRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
             return { provider, api_key: apiKey, from, to };
+        }
+        case 'linear': {
+            const apiKey = (document.getElementById('tc-linear-apikey')?.value || '').trim();
+            const teamId = (document.getElementById('tc-linear-team')?.value || '').trim();
+            const assigneeId = (document.getElementById('tc-linear-assignee')?.value || '').trim();
+            const cfg = { api_key: apiKey, team_id: teamId };
+            if (assigneeId) cfg.assignee_id = assigneeId;
+            return cfg;
+        }
+        case 'jira': {
+            const domain = (document.getElementById('tc-jira-domain')?.value || '').trim();
+            const email = (document.getElementById('tc-jira-email')?.value || '').trim();
+            const apiToken = (document.getElementById('tc-jira-token')?.value || '').trim();
+            const projectKey = (document.getElementById('tc-jira-project')?.value || '').trim();
+            const issueType = (document.getElementById('tc-jira-issuetype')?.value || '').trim();
+            const cfg = { domain, email, api_token: apiToken, project_key: projectKey };
+            if (issueType) cfg.issue_type = issueType;
+            return cfg;
+        }
+        case 'hxa-connect': {
+            const hubUrl = (document.getElementById('tc-hxa-hub')?.value || '').trim();
+            const agentId = (document.getElementById('tc-hxa-agent')?.value || '').trim();
+            const apiKey = (document.getElementById('tc-hxa-apikey')?.value || '').trim();
+            const threadId = (document.getElementById('tc-hxa-thread')?.value || '').trim();
+            const cfg = { hub_url: hubUrl, agent_id: agentId };
+            if (apiKey) cfg.api_key = apiKey;
+            if (threadId) cfg.thread_id = threadId;
+            return cfg;
         }
         default:
             return {};

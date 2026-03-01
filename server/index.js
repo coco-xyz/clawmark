@@ -1212,7 +1212,7 @@ app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
 function redactConfig(config) {
     if (!config || typeof config !== 'object') return config;
     const redacted = { ...config };
-    const sensitiveKeys = ['api_key', 'bot_token', 'token', 'secret'];
+    const sensitiveKeys = ['api_key', 'bot_token', 'token', 'secret', 'api_token'];
     for (const key of sensitiveKeys) {
         if (redacted[key]) {
             const val = String(redacted[key]);

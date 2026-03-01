@@ -43,6 +43,9 @@ class JiraAdapter {
 
     validate() {
         if (!this.domain) return { ok: false, error: 'Missing domain' };
+        if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(this.domain)) {
+            return { ok: false, error: 'domain must be alphanumeric with optional hyphens (e.g. "myteam")' };
+        }
         if (!this.email) return { ok: false, error: 'Missing email' };
         if (!this.apiToken) return { ok: false, error: 'Missing api_token' };
         if (!this.projectKey) return { ok: false, error: 'Missing project_key' };

@@ -145,13 +145,13 @@ class LinearAdapter {
         }
 
         // Get workflow states for the team to find the target state
-        const stateQuery = `query {
-            workflowStates(filter: { team: { id: { eq: "${this.teamId}" } } }) {
+        const stateQuery = `query WorkflowStates($teamId: String!) {
+            workflowStates(filter: { team: { id: { eq: $teamId } } }) {
                 nodes { id name type }
             }
         }`;
 
-        const statesResult = await this._graphql(stateQuery);
+        const statesResult = await this._graphql(stateQuery, { teamId: this.teamId });
         const states = statesResult.data?.workflowStates?.nodes || [];
 
         // Match by type (done → "completed" type, cancelled → "cancelled" type)

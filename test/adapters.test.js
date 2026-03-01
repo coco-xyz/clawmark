@@ -1370,6 +1370,47 @@ describe('JiraAdapter — validation', () => {
         });
         assert.equal(adapter.validate().ok, true);
     });
+
+    it('rejects domain with dots', () => {
+        const adapter = new JiraAdapter({
+            domain: 'evil.com/path',
+            email: 'a@b.com',
+            api_token: 'xxx',
+            project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('alphanumeric'));
+    });
+
+    it('rejects domain with slashes', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam/../../etc',
+            email: 'a@b.com',
+            api_token: 'xxx',
+            project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('accepts domain with hyphens', () => {
+        const adapter = new JiraAdapter({
+            domain: 'my-team-123',
+            email: 'a@b.com',
+            api_token: 'xxx',
+            project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+
+    it('rejects domain starting with hyphen', () => {
+        const adapter = new JiraAdapter({
+            domain: '-myteam',
+            email: 'a@b.com',
+            api_token: 'xxx',
+            project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, false);
+    });
 });
 
 describe('JiraAdapter — summary building', () => {
