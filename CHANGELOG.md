@@ -2,6 +2,44 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号采用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] — 2026-03-01
+
+### 新增
+
+- AI 路由推荐（#89）
+  - `POST /api/v2/routing/recommend` — 当无规则/声明匹配时，Gemini 分析标注上下文推荐路由目标
+  - 返回分类（bug/feature/question/praise/general）、目标、置信度、推理过程
+  - 可选自动创建路由规则建议
+  - 零新 npm 依赖 — 使用 Node 原生 `https` 调用 Gemini API
+- 标注自动分类（#90）
+  - 创建标注时自动分类：bug, feature_request, question, praise, general
+  - 异步执行，不阻塞创建响应
+  - `POST /api/v2/items/:id/classify` — 手动分类/纠正
+  - `GET /api/v2/items/by-classification/:classification` — 按分类筛选
+  - 数据库自动迁移：`classification`, `classification_confidence`, `classified_at` 字段
+- 智能标签生成（#91）
+  - `POST /api/v2/items/:id/generate-tags` — AI 生成 2-5 个相关标签
+  - 标签规范化：小写、去特殊字符、与已有标签去重
+  - 合并模式：默认追加，`merge: false` 替换
+- 聚合分析与趋势（#92）
+  - `GET /api/v2/analytics/summary` — 仪表板概览（总量、状态/类型/分类分布、Top URL/标签、7 日活跃）
+  - `GET /api/v2/analytics/trends` — 时间序列趋势（day/week/month 周期，可按 classification/type/status 分组）
+  - `GET /api/v2/analytics/hot-topics` — 热点检测（时间窗口 + 阈值）
+  - `GET /api/v2/analytics/clusters` — AI 聚类（Gemini 驱动，含集群验证）
+  - 前三个端点纯 SQL 聚合（无 AI 成本），仅 clusters 调用 Gemini
+
+### 安全
+
+- AI 端点专用限流器 `aiLimiter`（15 次/分钟）
+- 所有用户输入使用 `<USER_INPUT>` 分隔符防 prompt injection
+- 输入长度限制 + 标签单条截断（50 字符）
+- AI 响应校验：类型检查、置信度范围、集群结构验证
+- 错误详情仅服务端日志，不泄露给客户端
+
+### 测试
+
+- 377 个测试（新增 81 个：AI 推荐 20 + 分类 10 + 标签 10 + 分析 33 + review fixes 8）
+
 ## [0.4.0] — 2026-03-01
 
 ### 新增
@@ -82,5 +120,8 @@
 - JSON body 大小限制（512KB）
 - 不存在 item 的状态操作返回 404
 
+[0.5.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.5.0
+[0.4.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.4.0
+[0.3.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.3.0
 [0.2.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.2.0
 [0.1.0]: https://github.com/coco-xyz/clawmark/commits/0c02d6b
