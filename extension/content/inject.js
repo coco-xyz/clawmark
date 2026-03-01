@@ -6,6 +6,7 @@
  * - Comment/Issue input overlay
  * - Screenshot capture + annotation (#69)
  * - Image paste + drag-drop (#70)
+ * - JS injection toggle (#86) — global, per-site, and target declaration
  * - Message relay to background service worker
  */
 
@@ -16,17 +17,103 @@
     if (window.__clawmarkInjected) return;
     window.__clawmarkInjected = true;
 
+    // ----------------------------------------------------------- injection check (#86)
+
+    let injectionActive = false;
+    let targetDisabled = false; // true if target declaration says js_injection: false
+
+    /**
+     * Check if JS injection is allowed.
+     * Priority: target declaration disabled > user per-site > user global.
+     */
+    async function checkInjectionEnabled() {
+        // Target declaration override — not changeable by user toggle
+        if (targetDisabled) return false;
+
+        try {
+            const { jsInjectionEnabled = true, disabledSites = [] } =
+                await chrome.storage.sync.get({ jsInjectionEnabled: true, disabledSites: [] });
+            if (!jsInjectionEnabled) return false;
+            if (disabledSites.includes(location.hostname)) return false;
+            return true;
+        } catch {
+            return true;
+        }
+    }
+
+    /**
+     * Check target declaration for js_injection field via service worker.
+     */
+    async function checkTargetDeclaration() {
+        try {
+            const result = await chrome.runtime.sendMessage({
+                type: 'CHECK_TARGET_INJECTION',
+                url: location.href,
+            });
+            if (result && result.js_injection === false) {
+                targetDisabled = true;
+                return false;
+            }
+            return true;
+        } catch {
+            return true; // default to allowed on error
+        }
+    }
+
+    // Listen for user setting changes to enable/disable dynamically
+    // Generation counter prevents race conditions from rapid toggles (M-1)
+    let toggleGeneration = 0;
+
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'sync') return;
+        if (changes.jsInjectionEnabled || changes.disabledSites) {
+            const gen = ++toggleGeneration;
+            checkInjectionEnabled().then(enabled => {
+                if (gen !== toggleGeneration) return; // stale — newer toggle supersedes
+                if (enabled && !injectionActive) {
+                    injectionActive = true;
+                    initOverlay();
+                } else if (!enabled && injectionActive) {
+                    injectionActive = false;
+                    teardownOverlay();
+                }
+            });
+        }
+    });
+
     // ----------------------------------------------------------- state
 
     let currentSelection = null; // { text, range, position }
     let pendingImages = [];      // { dataUrl, uploaded: bool, url: string }
 
+    // DOM references — initialized in initOverlay(), nulled in teardownOverlay()
+    let toolbar = null;
+    let inputOverlay = null;
+    let toast = null;
+
+    // ----------------------------------------------------------- init / teardown (#86)
+
+    function initOverlay() {
+        if (toolbar) return; // already initialized
+        toolbar = createToolbar();
+        inputOverlay = createInputOverlay();
+        toast = createToast();
+        attachSelectionListeners();
+    }
+
+    function teardownOverlay() {
+        if (toolbar) { toolbar.remove(); toolbar = null; }
+        if (inputOverlay) { inputOverlay.remove(); inputOverlay = null; }
+        if (toast) { toast.remove(); toast = null; }
+        detachSelectionListeners();
+    }
+
     // ----------------------------------------------------------- DOM
 
     function createToolbar() {
-        const toolbar = document.createElement('div');
-        toolbar.id = 'clawmark-toolbar';
-        toolbar.innerHTML = `
+        const el = document.createElement('div');
+        el.id = 'clawmark-toolbar';
+        el.innerHTML = `
             <button data-action="comment"><span class="icon">\u{1F4AC}</span> Comment</button>
             <div class="separator"></div>
             <button data-action="issue"><span class="icon">\u{1F41B}</span> Issue</button>
@@ -35,9 +122,9 @@
             <div class="separator"></div>
             <button data-action="sidepanel"><span class="icon">\u{1F4CB}</span> Panel</button>
         `;
-        document.body.appendChild(toolbar);
+        document.body.appendChild(el);
 
-        toolbar.addEventListener('click', (e) => {
+        el.addEventListener('click', (e) => {
             const btn = e.target.closest('button');
             if (!btn) return;
             const action = btn.dataset.action;
@@ -48,13 +135,13 @@
             hideToolbar();
         });
 
-        return toolbar;
+        return el;
     }
 
     function createInputOverlay() {
-        const overlay = document.createElement('div');
-        overlay.id = 'clawmark-input-overlay';
-        overlay.innerHTML = `
+        const el = document.createElement('div');
+        el.id = 'clawmark-input-overlay';
+        el.innerHTML = `
             <div class="cm-header">
                 <span class="cm-title">Comment</span>
                 <button class="cm-close">\u00D7</button>
@@ -72,67 +159,52 @@
                 <button class="cm-submit">Submit</button>
             </div>
         `;
-        document.body.appendChild(overlay);
+        document.body.appendChild(el);
 
-        // Close
-        overlay.querySelector('.cm-close').addEventListener('click', hideInputOverlay);
+        el.querySelector('.cm-close').addEventListener('click', hideInputOverlay);
 
-        // Tags toggle
-        overlay.querySelectorAll('.cm-tag').forEach(tag => {
+        el.querySelectorAll('.cm-tag').forEach(tag => {
             tag.addEventListener('click', () => tag.classList.toggle('active'));
         });
 
-        // Submit
-        overlay.querySelector('.cm-submit').addEventListener('click', handleSubmit);
+        el.querySelector('.cm-submit').addEventListener('click', handleSubmit);
 
-        // Keyboard shortcuts
-        const textarea = overlay.querySelector('textarea');
+        const textarea = el.querySelector('textarea');
         textarea.addEventListener('keydown', (e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                handleSubmit();
-            }
-            if (e.key === 'Escape') {
-                hideInputOverlay();
-            }
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleSubmit();
+            if (e.key === 'Escape') hideInputOverlay();
         });
 
-        // Paste image (#70)
         textarea.addEventListener('paste', handlePaste);
 
-        // Drag & drop image (#70)
-        overlay.addEventListener('dragover', (e) => {
+        el.addEventListener('dragover', (e) => {
             e.preventDefault();
-            overlay.classList.add('cm-dragover');
+            el.classList.add('cm-dragover');
         });
-        overlay.addEventListener('dragleave', () => {
-            overlay.classList.remove('cm-dragover');
-        });
-        overlay.addEventListener('drop', handleDrop);
+        el.addEventListener('dragleave', () => el.classList.remove('cm-dragover'));
+        el.addEventListener('drop', handleDrop);
 
-        return overlay;
+        return el;
     }
 
     function createToast() {
-        const toast = document.createElement('div');
-        toast.id = 'clawmark-toast';
-        document.body.appendChild(toast);
-        return toast;
+        const el = document.createElement('div');
+        el.id = 'clawmark-toast';
+        document.body.appendChild(el);
+        return el;
     }
-
-    const toolbar = createToolbar();
-    const inputOverlay = createInputOverlay();
-    const toast = createToast();
 
     // ----------------------------------------------------------- toolbar
 
     function showToolbar(x, y) {
+        if (!toolbar) return;
         toolbar.style.left = `${x}px`;
         toolbar.style.top = `${y}px`;
         toolbar.classList.add('visible');
     }
 
     function hideToolbar() {
-        toolbar.classList.remove('visible');
+        if (toolbar) toolbar.classList.remove('visible');
     }
 
     // ----------------------------------------------------------- screenshot (#69)
@@ -144,13 +216,9 @@
         }
 
         window.__clawmarkStartScreenshot(async (dataUrl) => {
-            if (!dataUrl) return; // cancelled
-
-            // Add to pending images
+            if (!dataUrl) return;
             addPendingImage(dataUrl);
-
-            // Show input overlay if not visible (screenshot can open it)
-            if (!inputOverlay.classList.contains('visible')) {
+            if (inputOverlay && !inputOverlay.classList.contains('visible')) {
                 showInputOverlay('comment');
             }
         });
@@ -159,8 +227,7 @@
     // ----------------------------------------------------------- image management
 
     function addPendingImage(dataUrl) {
-        const img = { dataUrl, uploaded: false, url: null };
-        pendingImages.push(img);
+        pendingImages.push({ dataUrl, uploaded: false, url: null });
         renderImagePreviews();
     }
 
@@ -170,6 +237,7 @@
     }
 
     function renderImagePreviews() {
+        if (!inputOverlay) return;
         const container = inputOverlay.querySelector('.cm-images');
         container.innerHTML = pendingImages.map((img, i) => `
             <div class="cm-image-preview">
@@ -189,14 +257,10 @@
     async function uploadPendingImages() {
         const urls = [];
         for (const img of pendingImages) {
-            if (img.uploaded && img.url) {
-                urls.push(img.url);
-                continue;
-            }
+            if (img.uploaded && img.url) { urls.push(img.url); continue; }
             try {
                 const result = await chrome.runtime.sendMessage({
-                    type: 'UPLOAD_IMAGE',
-                    dataUrl: img.dataUrl,
+                    type: 'UPLOAD_IMAGE', dataUrl: img.dataUrl,
                 });
                 if (result.error) throw new Error(result.error);
                 img.uploaded = true;
@@ -204,7 +268,6 @@
                 urls.push(result.url);
             } catch (err) {
                 console.error('[ClawMark] Image upload failed:', err);
-                // Skip failed uploads
             }
         }
         return urls;
@@ -215,7 +278,6 @@
     function handlePaste(e) {
         const items = e.clipboardData?.items;
         if (!items) return;
-
         for (const item of items) {
             if (item.type.startsWith('image/')) {
                 e.preventDefault();
@@ -228,15 +290,11 @@
 
     function handleDrop(e) {
         e.preventDefault();
-        inputOverlay.classList.remove('cm-dragover');
-
+        if (inputOverlay) inputOverlay.classList.remove('cm-dragover');
         const files = e.dataTransfer?.files;
         if (!files) return;
-
         for (const file of files) {
-            if (file.type.startsWith('image/')) {
-                blobToDataUrl(file).then(addPendingImage);
-            }
+            if (file.type.startsWith('image/')) blobToDataUrl(file).then(addPendingImage);
         }
     }
 
@@ -253,6 +311,7 @@
     let currentMode = 'comment';
 
     function showInputOverlay(mode) {
+        if (!inputOverlay) return;
         currentMode = mode;
         const title = inputOverlay.querySelector('.cm-title');
         const textarea = inputOverlay.querySelector('textarea');
@@ -263,7 +322,6 @@
         textarea.placeholder = mode === 'issue' ? 'Issue title and description...' : 'Write your comment...';
         submitBtn.textContent = mode === 'issue' ? 'Create Issue' : 'Submit';
 
-        // Show quote
         if (currentSelection?.text) {
             quoteEl.textContent = currentSelection.text.slice(0, 200);
             quoteEl.style.display = 'block';
@@ -271,13 +329,10 @@
             quoteEl.style.display = 'none';
         }
 
-        // Position near selection or center
         if (currentSelection?.position) {
             const { x, y } = currentSelection.position;
-            const left = Math.min(x, window.innerWidth - 340);
-            const top = Math.min(y + 10, window.innerHeight - 300);
-            inputOverlay.style.left = `${left}px`;
-            inputOverlay.style.top = `${top}px`;
+            inputOverlay.style.left = `${Math.min(x, window.innerWidth - 340)}px`;
+            inputOverlay.style.top = `${Math.min(y + 10, window.innerHeight - 300)}px`;
         } else {
             inputOverlay.style.left = `${(window.innerWidth - 320) / 2}px`;
             inputOverlay.style.top = `${window.innerHeight / 3}px`;
@@ -286,12 +341,11 @@
         inputOverlay.classList.add('visible');
         textarea.value = '';
         textarea.focus();
-
-        // Reset tags (but keep images if screenshot was just taken)
         inputOverlay.querySelectorAll('.cm-tag').forEach(t => t.classList.remove('active'));
     }
 
     function hideInputOverlay() {
+        if (!inputOverlay) return;
         inputOverlay.classList.remove('visible');
         pendingImages = [];
         renderImagePreviews();
@@ -300,6 +354,7 @@
     // ----------------------------------------------------------- submit
 
     async function handleSubmit() {
+        if (!inputOverlay) return;
         const textarea = inputOverlay.querySelector('textarea');
         const content = textarea.value.trim();
         if (!content && pendingImages.length === 0) return;
@@ -310,13 +365,9 @@
 
         const activeTags = [...inputOverlay.querySelectorAll('.cm-tag.active')].map(t => t.dataset.tag);
 
-        // Upload images first
         let screenshots = [];
-        if (pendingImages.length > 0) {
-            screenshots = await uploadPendingImages();
-        }
+        if (pendingImages.length > 0) screenshots = await uploadPendingImages();
 
-        // Build quote position from saved range
         let quote_position = null;
         if (currentSelection?.range) {
             try {
@@ -358,22 +409,19 @@
     // ----------------------------------------------------------- toast
 
     function showToast(message, type = 'success') {
+        if (!toast) return;
         toast.textContent = message;
         toast.className = `visible ${type}`;
         clearTimeout(toast._timer);
-        toast._timer = setTimeout(() => {
-            toast.classList.remove('visible');
-        }, 3000);
+        toast._timer = setTimeout(() => toast.classList.remove('visible'), 3000);
     }
 
     // ----------------------------------------------------------- selection detection
 
-    document.addEventListener('mouseup', (e) => {
-        // Ignore clicks on our own UI
+    function onMouseUp(e) {
         if (e.target.closest('#clawmark-toolbar') || e.target.closest('#clawmark-input-overlay')) return;
         if (e.target.closest('#clawmark-area-selector') || e.target.closest('#clawmark-annotation-editor')) return;
 
-        // Small delay to let selection finalize
         setTimeout(() => {
             const selection = window.getSelection();
             const text = selection?.toString().trim();
@@ -381,45 +429,52 @@
             if (text && text.length > 1) {
                 const range = selection.getRangeAt(0);
                 const rect = range.getBoundingClientRect();
-
                 currentSelection = {
                     text,
                     range: range.cloneRange(),
-                    position: {
-                        x: rect.left + window.scrollX,
-                        y: rect.bottom + window.scrollY,
-                    },
+                    position: { x: rect.left + window.scrollX, y: rect.bottom + window.scrollY },
                 };
-
-                showToolbar(
-                    rect.left + (rect.width / 2) - 120,
-                    rect.bottom + 8
-                );
+                showToolbar(rect.left + (rect.width / 2) - 120, rect.bottom + 8);
             } else {
                 currentSelection = null;
                 hideToolbar();
             }
         }, 10);
-    });
+    }
 
-    // Hide toolbar on scroll or click elsewhere
-    document.addEventListener('mousedown', (e) => {
+    function onMouseDown(e) {
         if (!e.target.closest('#clawmark-toolbar') && !e.target.closest('#clawmark-input-overlay')) {
             hideToolbar();
         }
-    });
+    }
 
-    document.addEventListener('keydown', (e) => {
+    function onKeyDown(e) {
         if (e.key === 'Escape') {
             hideToolbar();
             hideInputOverlay();
         }
-    });
+    }
+
+    function attachSelectionListeners() {
+        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('keydown', onKeyDown);
+    }
+
+    function detachSelectionListeners() {
+        document.removeEventListener('mouseup', onMouseUp);
+        document.removeEventListener('mousedown', onMouseDown);
+        document.removeEventListener('keydown', onKeyDown);
+    }
 
     // ----------------------------------------------------------- context menu handler
 
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message.type === 'CONTEXT_MENU_ACTION') {
+            if (!injectionActive) {
+                sendResponse({ ok: false, reason: 'injection_disabled' });
+                return;
+            }
             if (message.selectionText) {
                 currentSelection = {
                     text: message.selectionText,
@@ -456,4 +511,20 @@
         }
         return '/body/' + parts.join('/');
     }
+
+    // ----------------------------------------------------------- startup
+
+    async function startup() {
+        // Check target declaration first (immutable — target owner's choice)
+        await checkTargetDeclaration();
+
+        // Check user settings (global + per-site)
+        const enabled = await checkInjectionEnabled();
+        if (enabled) {
+            injectionActive = true;
+            initOverlay();
+        }
+    }
+
+    startup();
 })();

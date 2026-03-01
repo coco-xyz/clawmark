@@ -183,6 +183,91 @@ describe('validateDeclaration', () => {
 });
 
 // ==================================================================
+// 1b. js_injection field (#86)
+// ==================================================================
+
+describe('validateDeclaration js_injection field', () => {
+    it('defaults js_injection to true when not specified', () => {
+        const result = validateDeclaration({
+            adapter: 'github-issue',
+            target: 'owner/repo',
+        });
+        assert.ok(result);
+        assert.equal(result.js_injection, true);
+    });
+
+    it('sets js_injection to false when explicitly false', () => {
+        const result = validateDeclaration({
+            adapter: 'github-issue',
+            target: 'owner/repo',
+            js_injection: false,
+        });
+        assert.ok(result);
+        assert.equal(result.js_injection, false);
+    });
+
+    it('sets js_injection to false when string "false"', () => {
+        // YAML FAILSAFE_SCHEMA returns all scalars as strings
+        const result = validateDeclaration({
+            adapter: 'github-issue',
+            target: 'owner/repo',
+            js_injection: 'false',
+        });
+        assert.ok(result);
+        assert.equal(result.js_injection, false);
+    });
+
+    it('keeps js_injection true when explicitly true', () => {
+        const result = validateDeclaration({
+            adapter: 'github-issue',
+            target: 'owner/repo',
+            js_injection: true,
+        });
+        assert.ok(result);
+        assert.equal(result.js_injection, true);
+    });
+
+    it('keeps js_injection true for non-boolean values', () => {
+        const result = validateDeclaration({
+            adapter: 'github-issue',
+            target: 'owner/repo',
+            js_injection: 'yes',
+        });
+        assert.ok(result);
+        assert.equal(result.js_injection, true);
+    });
+
+    it('works with webhook adapter', () => {
+        const result = validateDeclaration({
+            adapter: 'webhook',
+            endpoint: 'https://example.com/hook',
+            js_injection: false,
+        });
+        assert.ok(result);
+        assert.equal(result.js_injection, false);
+        assert.equal(result.target_config.url, 'https://example.com/hook');
+    });
+
+    it('works with telegram adapter', () => {
+        const result = validateDeclaration({
+            adapter: 'telegram',
+            chat_id: '-100123',
+            js_injection: false,
+        });
+        assert.ok(result);
+        assert.equal(result.js_injection, false);
+    });
+
+    it('returns null for invalid declaration regardless of js_injection', () => {
+        const result = validateDeclaration({
+            js_injection: false,
+            // missing adapter
+        });
+        assert.equal(result, null);
+    });
+});
+
+// ==================================================================
 // 2. SSRF prevention
 // ==================================================================
 

@@ -364,6 +364,34 @@ async function handleMessage(message, sender) {
         case 'CHECK_AUTH':
             return checkAuth();
 
+        // JS injection toggle
+        case 'GET_INJECTION_SETTING': {
+            const { jsInjectionEnabled = true, disabledSites = [] } = await chrome.storage.sync.get({
+                jsInjectionEnabled: true,
+                disabledSites: [],
+            });
+            return { jsInjectionEnabled, disabledSites };
+        }
+
+        case 'SET_INJECTION_SETTING': {
+            const updates = {};
+            if (typeof message.jsInjectionEnabled === 'boolean') {
+                updates.jsInjectionEnabled = message.jsInjectionEnabled;
+            }
+            if (Array.isArray(message.disabledSites)) {
+                // M-5: validate entries are strings; M-3: cap at 100 sites
+                updates.disabledSites = message.disabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
+
+        // Target declaration check (#86) — checks if site disables JS injection
+        case 'CHECK_TARGET_INJECTION':
+            return checkTargetInjection(message.url);
+
         // Screenshot + upload messages
         case 'CAPTURE_TAB':
             return captureTab(sender.tab?.id);
@@ -373,5 +401,55 @@ async function handleMessage(message, sender) {
 
         default:
             return { error: `Unknown message type: ${message.type}` };
+    }
+}
+
+// ------------------------------------------------------------------ target declaration check (#86)
+//
+// Delegates to server-side /api/v2/routing/resolve which has full SSRF
+// protection, proper YAML parsing, and correct cache granularity.
+
+const _declarationCache = new Map();
+const DECLARATION_CACHE_TTL = 5 * 60 * 1000;
+const DECLARATION_NEGATIVE_TTL = 2 * 60 * 1000;
+const DECLARATION_CACHE_MAX = 500;
+
+/**
+ * Check target declaration for js_injection field via server API.
+ * Returns { js_injection: bool }.
+ */
+async function checkTargetInjection(url) {
+    if (!url) return { js_injection: true };
+
+    try {
+        const parsed = new URL(url);
+        if (!parsed.protocol.startsWith('http')) return { js_injection: true };
+
+        // Cache key: full origin + pathname for proper per-repo granularity
+        const cacheKey = parsed.origin + parsed.pathname;
+        const cached = _declarationCache.get(cacheKey);
+        if (cached && Date.now() - cached.ts < (cached.negative ? DECLARATION_NEGATIVE_TTL : DECLARATION_CACHE_TTL)) {
+            return { js_injection: cached.value };
+        }
+
+        // Call server API — it handles SSRF protection, YAML parsing, declaration fetching
+        let jsInjection = true;
+        try {
+            const result = await apiRequest('POST', '/api/v2/routing/resolve', { source_url: url });
+            if (result && result.js_injection === false) jsInjection = false;
+        } catch {
+            // Server unreachable — default to allowed
+        }
+
+        // Evict oldest before insert to respect limit
+        if (_declarationCache.size >= DECLARATION_CACHE_MAX) {
+            const oldest = _declarationCache.keys().next().value;
+            _declarationCache.delete(oldest);
+        }
+        _declarationCache.set(cacheKey, { value: jsInjection, ts: Date.now(), negative: jsInjection === true });
+
+        return { js_injection: jsInjection };
+    } catch {
+        return { js_injection: true };
     }
 }

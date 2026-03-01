@@ -179,8 +179,69 @@ function showMessage(text, type) {
     setTimeout(() => { messageEl.textContent = ''; }, 3000);
 }
 
+// ------------------------------------------------------------------ injection toggle
+
+const injectionToggle = document.getElementById('injection-toggle');
+const siteToggleEl = document.getElementById('site-toggle');
+const siteLabelEl = document.getElementById('site-label');
+const siteBtnEl = document.getElementById('site-btn');
+
+let currentHostname = '';
+let disabledSites = [];
+
+async function loadInjectionSetting() {
+    try {
+        const setting = await chrome.runtime.sendMessage({ type: 'GET_INJECTION_SETTING' });
+        injectionToggle.checked = setting.jsInjectionEnabled;
+        disabledSites = setting.disabledSites || [];
+
+        // Get current tab hostname for per-site toggle
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.url) {
+            try {
+                currentHostname = new URL(tab.url).hostname;
+                if (currentHostname && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+                    siteLabelEl.textContent = currentHostname;
+                    updateSiteButton();
+                    siteToggleEl.classList.add('visible');
+                }
+            } catch {}
+        }
+    } catch {}
+}
+
+function updateSiteButton() {
+    const isDisabled = disabledSites.includes(currentHostname);
+    siteBtnEl.textContent = isDisabled ? 'Disabled' : 'Enabled';
+    siteBtnEl.classList.toggle('disabled-site', isDisabled);
+}
+
+injectionToggle.addEventListener('change', async () => {
+    await chrome.runtime.sendMessage({
+        type: 'SET_INJECTION_SETTING',
+        jsInjectionEnabled: injectionToggle.checked,
+    });
+    showMessage(injectionToggle.checked ? 'Overlay enabled' : 'Overlay disabled', 'success');
+});
+
+siteBtnEl.addEventListener('click', async () => {
+    const isDisabled = disabledSites.includes(currentHostname);
+    if (isDisabled) {
+        disabledSites = disabledSites.filter(h => h !== currentHostname);
+    } else {
+        disabledSites.push(currentHostname);
+    }
+    await chrome.runtime.sendMessage({
+        type: 'SET_INJECTION_SETTING',
+        disabledSites,
+    });
+    updateSiteButton();
+    showMessage(isDisabled ? `Enabled for ${currentHostname}` : `Disabled for ${currentHostname}`, 'success');
+});
+
 // ------------------------------------------------------------------ init
 
 loadConfig();
 loadAuthState();
+loadInjectionSetting();
 checkConnection();

@@ -218,7 +218,10 @@ function validateDeclaration(raw) {
         config.types = raw.types.filter(t => typeof t === 'string').slice(0, 10);
     }
 
-    return { adapter, target_type: adapter, target_config: config };
+    // Optional: JS injection toggle (default: true — enabled)
+    const js_injection = raw.js_injection === false || raw.js_injection === 'false' ? false : true;
+
+    return { adapter, target_type: adapter, target_config: config, js_injection };
 }
 
 /**
