@@ -220,6 +220,7 @@ function initDb(dataDir) {
             item_id         TEXT NOT NULL,
             target_type     TEXT NOT NULL,
             target_config   TEXT NOT NULL DEFAULT '{}',
+            event           TEXT NOT NULL DEFAULT 'item.created',
             status          TEXT NOT NULL DEFAULT 'pending',
             retries         INTEGER NOT NULL DEFAULT 0,
             last_error      TEXT,
@@ -232,6 +233,12 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_dispatch_log_item ON dispatch_log(item_id);
         CREATE INDEX IF NOT EXISTS idx_dispatch_log_status ON dispatch_log(status);
     `);
+
+    // ----------------------------------------- schema migration: dispatch_log event column
+    const dlCols = db.pragma('table_info(dispatch_log)').map(c => c.name);
+    if (!dlCols.includes('event')) {
+        db.exec(`ALTER TABLE dispatch_log ADD COLUMN event TEXT NOT NULL DEFAULT 'item.created'`);
+    }
 
     // ---------------------------------------------------- prepared statements
     const stmts = {
@@ -852,8 +859,8 @@ function initDb(dataDir) {
 
     const dispatchStmts = {
         insert: db.prepare(`
-            INSERT INTO dispatch_log (id, item_id, target_type, target_config, status, retries, method, created_at, updated_at)
-            VALUES (@id, @item_id, @target_type, @target_config, @status, @retries, @method, @created_at, @updated_at)
+            INSERT INTO dispatch_log (id, item_id, target_type, target_config, event, status, retries, method, created_at, updated_at)
+            VALUES (@id, @item_id, @target_type, @target_config, @event, @status, @retries, @method, @created_at, @updated_at)
         `),
         updateStatus: db.prepare(`
             UPDATE dispatch_log
@@ -870,12 +877,13 @@ function initDb(dataDir) {
         getById: db.prepare('SELECT * FROM dispatch_log WHERE id = ?'),
     };
 
-    function createDispatchEntry({ item_id, target_type, target_config, method }) {
+    function createDispatchEntry({ item_id, target_type, target_config, event, method }) {
         const now = new Date().toISOString();
         const id = genId('dsp');
         dispatchStmts.insert.run({
             id, item_id, target_type,
             target_config: typeof target_config === 'string' ? target_config : JSON.stringify(target_config),
+            event: event || 'item.created',
             status: 'pending', retries: 0, method: method || null,
             created_at: now, updated_at: now,
         });

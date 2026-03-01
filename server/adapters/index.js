@@ -204,6 +204,7 @@ class AdapterRegistry {
                 item_id: item.id,
                 target_type: t.target_type,
                 target_config: t.target_config,
+                event,
                 method: t.method,
             }),
             ...t,
@@ -247,18 +248,21 @@ class AdapterRegistry {
             throw new Error(`Unknown adapter type "${target_type}"`);
         }
 
+        // Copy config to avoid mutating caller's object (M3)
+        const config = { ...target_config };
+
         // Inherit token from default channel for github-issue
-        if (target_type === 'github-issue' && !target_config.token) {
+        if (target_type === 'github-issue' && !config.token) {
             for (const [, adapter] of this.channels) {
                 if (adapter.type === 'github-issue' && adapter.token) {
-                    target_config.token = adapter.token;
+                    config.token = adapter.token;
                     break;
                 }
             }
         }
 
         const channelName = `dynamic-${target_type}-${Date.now()}`;
-        const instance = new AdapterClass({ ...target_config, channelName, db: this.db || null });
+        const instance = new AdapterClass({ ...config, channelName, db: this.db || null });
         const validation = instance.validate ? instance.validate() : { ok: true };
         if (!validation.ok) {
             throw new Error(`Validation failed: ${validation.error}`);
@@ -299,7 +303,7 @@ class AdapterRegistry {
 
             const config = JSON.parse(entry.target_config);
             try {
-                const result = await this._dispatchSingleTarget('item.created', item, entry.target_type, config, {});
+                const result = await this._dispatchSingleTarget(entry.event || 'item.created', item, entry.target_type, config, {});
                 this.db.updateDispatchEntry(entry.id, {
                     status: 'sent',
                     retries: entry.retries + 1,

@@ -13,6 +13,8 @@
 
 'use strict';
 
+const pkg = require('../package.json');
+
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -875,7 +877,9 @@ app.get('/api/v2/adapters', (req, res) => {
 app.get('/api/v2/distributions/:item_id', apiReadLimiter, v2Auth, (req, res) => {
     const log = itemsDb.getDispatchLog(req.params.item_id);
     const parsed = log.map(entry => {
-        try { entry.target_config = JSON.parse(entry.target_config); } catch {}
+        try { entry.target_config = redactConfig(JSON.parse(entry.target_config)); } catch {
+            entry.target_config = {};
+        }
         return entry;
     });
     res.json({ item_id: req.params.item_id, dispatches: parsed });
@@ -1704,7 +1708,7 @@ app.get('/health', (req, res) => {
     try { itemsDb.db.prepare('SELECT 1').get(); } catch { dbOk = false; }
     res.json({
         status: 'ok',
-        version: '0.3.0',
+        version: pkg.version,
         uptime: process.uptime(),
         db_ok: dbOk,
         adapters: Object.keys(registry.getStatus()).length,
@@ -1721,11 +1725,14 @@ app.listen(PORT, () => {
     console.log(`    api v2    : /api/v2/*`);
 
     // Start dispatch retry worker (every 30s, exponential backoff per entry)
+    let retryBusy = false;
     setInterval(() => {
+        if (retryBusy) return;
+        retryBusy = true;
         registry.retryFailed().then(n => {
             if (n > 0) console.log(`[dispatch] Retried ${n} failed dispatch(es)`);
         }).catch(err => {
             console.error('[dispatch] Retry worker error:', err.message);
-        });
+        }).finally(() => { retryBusy = false; });
     }, 30000);
 });

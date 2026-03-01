@@ -226,7 +226,11 @@ function resolveTargets(params) {
         }
 
         if (matched) {
-            const config = JSON.parse(rule.target_config);
+            let config;
+            try { config = JSON.parse(rule.target_config); } catch {
+                console.warn(`[routing] Skipping rule ${rule.id}: malformed target_config`);
+                continue;
+            }
             const t = { target_type: rule.target_type, target_config: config, matched_rule: rule, method: 'user_rule' };
             if (dedup(t)) targets.push(t);
         }
@@ -248,7 +252,8 @@ function resolveTargets(params) {
     if (targets.length === 0) {
         const defaultRule = userRules.find(r => r.rule_type === 'default' && r.enabled);
         if (defaultRule) {
-            const config = JSON.parse(defaultRule.target_config);
+            let config;
+            try { config = JSON.parse(defaultRule.target_config); } catch { config = {}; }
             const t = { target_type: defaultRule.target_type, target_config: config, matched_rule: defaultRule, method: 'user_default' };
             if (dedup(t)) targets.push(t);
         }
