@@ -93,7 +93,7 @@ const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 const { resolveTarget } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
-const { recommendRoute } = require('./ai');
+const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS } = require('./ai');
 
 const registry = new AdapterRegistry();
 registry.setDb(itemsDb);
@@ -516,6 +516,19 @@ function handleCreateItem(req, res) {
 
     sendWebhook('item.created', item);
 
+    // Async classification — fire-and-forget, doesn't block response
+    const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
+    if (aiApiKey) {
+        classifyAnnotation({
+            source_url, source_title, content: message || title, quote, type,
+            apiKey: aiApiKey,
+        }).then(({ classification, confidence }) => {
+            itemsDb.updateItemClassificationIfNull(item.id, classification, confidence);
+        }).catch(err => {
+            console.error(`[AI] Auto-classify failed for ${item.id}:`, err.message);
+        });
+    }
+
     res.json({ success: true, item });
 }
 
@@ -700,6 +713,21 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
     });
 
     sendWebhook('item.created', item);
+
+    // Async classification — fire-and-forget, doesn't block response (M2: only if not already classified)
+    const v2AiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
+    if (v2AiKey) {
+        classifyAnnotation({
+            source_url: source_url || null, source_title: source_title || null,
+            content: content || title, quote, type,
+            apiKey: v2AiKey,
+        }).then(({ classification, confidence }) => {
+            itemsDb.updateItemClassificationIfNull(item.id, classification, confidence);
+        }).catch(err => {
+            console.error(`[AI] Auto-classify failed for ${item.id}:`, err.message);
+        });
+    }
+
     res.json({ success: true, item });
 });
 
@@ -952,6 +980,65 @@ app.post('/api/v2/routing/recommend', aiLimiter, v2Auth, async (req, res) => {
         console.error('[AI] Recommendation failed:', err.message);
         res.status(500).json({ error: 'AI recommendation failed' });
     }
+});
+
+// -- POST /api/v2/items/:id/classify — AI-powered classification (manual trigger/correction)
+app.post('/api/v2/items/:id/classify', aiLimiter, v2Auth, async (req, res) => {
+    const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
+    if (!aiApiKey) {
+        return res.status(503).json({ error: 'AI classification not configured (missing API key)' });
+    }
+
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) {
+        return res.status(404).json({ error: 'Item not found' });
+    }
+
+    // H2: Ownership check — user can only classify items in their app scope
+    const userAppId = req.body.app_id || req.v2Auth?.app_id || 'default';
+    if (item.app_id !== userAppId) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
+
+    // Allow manual override via body
+    const { classification: manualClassification } = req.body;
+
+    if (manualClassification) {
+        if (!VALID_CLASSIFICATIONS.includes(manualClassification)) {
+            return res.status(400).json({ error: `Invalid classification. Must be one of: ${VALID_CLASSIFICATIONS.join(', ')}` });
+        }
+        itemsDb.updateItemClassification(item.id, manualClassification, 1.0);
+        return res.json({ classification: manualClassification, confidence: 1.0, reasoning: 'Manual override', source: 'manual' });
+    }
+
+    // AI classification
+    try {
+        const firstMessage = item.messages?.[0]?.content;
+        const result = await classifyAnnotation({
+            source_url: item.source_url,
+            source_title: item.source_title,
+            content: firstMessage || item.title,
+            quote: item.quote,
+            type: item.type,
+            apiKey: aiApiKey,
+        });
+        itemsDb.updateItemClassification(item.id, result.classification, result.confidence);
+        res.json({ ...result, source: 'ai' });
+    } catch (err) {
+        console.error('[AI] Classification failed:', err.message);
+        res.status(500).json({ error: 'AI classification failed' });
+    }
+});
+
+// -- GET /api/v2/items/by-classification/:classification — filter items by classification
+app.get('/api/v2/items/by-classification/:classification', apiReadLimiter, v2Auth, (req, res) => {
+    if (!VALID_CLASSIFICATIONS.includes(req.params.classification)) {
+        return res.status(400).json({ error: `Invalid classification. Must be one of: ${VALID_CLASSIFICATIONS.join(', ')}` });
+    }
+    // H3: app_id from query, not from route params
+    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const items = itemsDb.getItemsByClassification({ app_id, classification: req.params.classification });
+    res.json({ items });
 });
 
 // ================================================================= Endpoints API
