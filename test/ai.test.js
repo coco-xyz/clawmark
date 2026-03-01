@@ -594,6 +594,40 @@ describe('analyzeScreenshot', () => {
             { message: 'AI returned invalid JSON' }
         );
     });
+
+    it('blocks path traversal when baseDir is set', async () => {
+        await assert.rejects(
+            () => analyzeScreenshot({
+                imagePath: '/etc/passwd',
+                baseDir: path.join(__dirname, 'fixtures'),
+                apiKey: 'test',
+                callAI: mockVisionAI(VALID_ANALYSIS),
+            }),
+            { message: 'Screenshot path outside allowed directory' }
+        );
+    });
+
+    it('blocks relative path traversal with baseDir', async () => {
+        await assert.rejects(
+            () => analyzeScreenshot({
+                imagePath: path.join(__dirname, 'fixtures', '..', '..', 'server', 'index.js'),
+                baseDir: path.join(__dirname, 'fixtures'),
+                apiKey: 'test',
+                callAI: mockVisionAI(VALID_ANALYSIS),
+            }),
+            { message: 'Screenshot path outside allowed directory' }
+        );
+    });
+
+    it('allows valid path within baseDir', async () => {
+        const result = await analyzeScreenshot({
+            imagePath: TEST_IMAGE,
+            baseDir: path.join(__dirname, 'fixtures'),
+            apiKey: 'test',
+            callAI: mockVisionAI(VALID_ANALYSIS),
+        });
+        assert.equal(result.intent, 'bug_report');
+    });
 });
 
 describe('validateScreenshotAnalysis', () => {

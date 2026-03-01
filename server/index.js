@@ -758,22 +758,19 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
         if (Array.isArray(screenshots) && screenshots.length > 0) {
             const filename = path.basename(screenshots[0].replace(/^\/images\//, ''));
             const imagePath = path.resolve(UPLOAD_DIR, filename);
-            if (!imagePath.startsWith(path.resolve(UPLOAD_DIR) + path.sep)) {
-                console.error('[AI] Screenshot path traversal blocked:', screenshots[0]);
-            } else {
-                analyzeScreenshot({
-                    imagePath,
-                    source_url: source_url || null,
-                    source_title: source_title || null,
-                    content: content || title,
-                    quote,
-                    apiKey: v2AiKey,
-                }).then((analysis) => {
-                    itemsDb.updateItemScreenshotAnalysis(item.id, analysis);
-                }).catch(err => {
-                    console.error(`[AI] Auto-analyze screenshot failed for ${item.id}:`, err.message);
-                });
-            }
+            analyzeScreenshot({
+                imagePath,
+                baseDir: UPLOAD_DIR,
+                source_url: source_url || null,
+                source_title: source_title || null,
+                content: content || title,
+                quote,
+                apiKey: v2AiKey,
+            }).then((analysis) => {
+                itemsDb.updateItemScreenshotAnalysis(item.id, analysis);
+            }).catch(err => {
+                console.error(`[AI] Auto-analyze screenshot failed for ${item.id}:`, err.message);
+            });
         }
     }
 
@@ -1274,7 +1271,7 @@ app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
 app.post('/api/v2/items/:id/analyze', aiLimiter, v2Auth, async (req, res) => {
     const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
     if (!aiApiKey) {
-        return res.status(503).json({ error: 'AI analysis not configured (missing API key)' });
+        return res.status(503).json({ error: 'AI analysis not available' });
     }
 
     const item = itemsDb.getItem(req.params.id);
@@ -1293,12 +1290,10 @@ app.post('/api/v2/items/:id/analyze', aiLimiter, v2Auth, async (req, res) => {
         const screenshotUrl = screenshots[0];
         const filename = path.basename(screenshotUrl.replace(/^\/images\//, ''));
         const imagePath = path.resolve(UPLOAD_DIR, filename);
-        if (!imagePath.startsWith(path.resolve(UPLOAD_DIR) + path.sep)) {
-            return res.status(400).json({ error: 'Invalid screenshot path' });
-        }
 
         const analysis = await analyzeScreenshot({
             imagePath,
+            baseDir: UPLOAD_DIR,
             source_url: item.source_url,
             source_title: item.source_title,
             content: item.title || item.quote,

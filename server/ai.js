@@ -20,7 +20,8 @@ const path = require('path');
 const GEMINI_MODEL = 'gemini-2.0-flash';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const REQUEST_TIMEOUT = 15000; // 15s
-const MAX_RESPONSE_BYTES = 64 * 1024; // 64KB
+const MAX_RESPONSE_BYTES = 64 * 1024; // 64KB — text-only API calls
+const MAX_VISION_RESPONSE_BYTES = 256 * 1024; // 256KB — vision responses are larger (structured JSON)
 
 /**
  * Call Gemini API with a prompt.
@@ -141,7 +142,7 @@ async function callGeminiVision(apiKey, systemPrompt, textPrompt, imageBuffer, m
             let totalBytes = 0;
             res.on('data', (chunk) => {
                 totalBytes += chunk.length;
-                if (totalBytes > MAX_RESPONSE_BYTES) {
+                if (totalBytes > MAX_VISION_RESPONSE_BYTES) {
                     req.destroy();
                     fail(new Error('Response too large'));
                     return;
@@ -651,6 +652,7 @@ Rules:
  *
  * @param {object} params
  * @param {string} params.imagePath     Absolute path to the screenshot file
+ * @param {string} [params.baseDir]     Allowed base directory — if set, imagePath must resolve within it
  * @param {string} [params.source_url]  Page URL the screenshot was taken from
  * @param {string} [params.source_title] Page title
  * @param {string} [params.content]     User's annotation text/description
@@ -660,17 +662,26 @@ Rules:
  * @returns {Promise<object>}  Analysis result
  */
 async function analyzeScreenshot(params) {
-    const { imagePath, source_url, source_title, content, quote, apiKey, callAI } = params;
+    const { imagePath, baseDir, source_url, source_title, content, quote, apiKey, callAI } = params;
 
     if (!imagePath) {
         throw new Error('imagePath is required');
     }
 
-    // Read image file
+    // Path traversal guard — if baseDir is set, imagePath must resolve within it
+    const resolved = path.resolve(imagePath);
+    if (baseDir) {
+        const resolvedBase = path.resolve(baseDir) + path.sep;
+        if (!resolved.startsWith(resolvedBase)) {
+            throw new Error('Screenshot path outside allowed directory');
+        }
+    }
+
+    // Read image file (async to avoid blocking the event loop)
     const { promises: fsp } = fs;
     let imageBuffer;
     try {
-        imageBuffer = await fsp.readFile(imagePath);
+        imageBuffer = await fsp.readFile(resolved);
     } catch {
         throw new Error('Screenshot file not found');
     }
