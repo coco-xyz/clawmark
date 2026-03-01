@@ -494,6 +494,16 @@ app.post('/upload', uploadLimiter, v2Auth, upload.single('image'), (req, res) =>
 // Serve uploaded images
 app.use('/images', express.static(UPLOAD_DIR));
 
+// Validate that a screenshot URL matches the server-generated upload pattern.
+// Multer filenames: <timestamp>-<6char_random>.<ext> (e.g. "1709300000000-a1b2c3.png")
+// Rejects arbitrary filenames to prevent cross-user file access via crafted screenshots arrays.
+const UPLOAD_FILENAME_RE = /^\d+-[a-z0-9]{6}\.\w+$/;
+function sanitizeScreenshotUrl(url) {
+    if (typeof url !== 'string') return null;
+    const filename = path.basename(url.replace(/^\/images\//, ''));
+    return UPLOAD_FILENAME_RE.test(filename) ? filename : null;
+}
+
 // ----------------------------------------------------------------- V2 items API
 //
 // Items are the canonical data model: each item is a discussion thread or
@@ -756,21 +766,23 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
 
         // Auto-analyze screenshots if present (#117)
         if (Array.isArray(screenshots) && screenshots.length > 0) {
-            const filename = path.basename(screenshots[0].replace(/^\/images\//, ''));
-            const imagePath = path.resolve(UPLOAD_DIR, filename);
-            analyzeScreenshot({
-                imagePath,
-                baseDir: UPLOAD_DIR,
-                source_url: source_url || null,
-                source_title: source_title || null,
-                content: content || title,
-                quote,
-                apiKey: v2AiKey,
-            }).then((analysis) => {
-                itemsDb.updateItemScreenshotAnalysis(item.id, analysis);
-            }).catch(err => {
-                console.error(`[AI] Auto-analyze screenshot failed for ${item.id}:`, err.message);
-            });
+            const filename = sanitizeScreenshotUrl(screenshots[0]);
+            if (filename) {
+                const imagePath = path.resolve(UPLOAD_DIR, filename);
+                analyzeScreenshot({
+                    imagePath,
+                    baseDir: UPLOAD_DIR,
+                    source_url: source_url || null,
+                    source_title: source_title || null,
+                    content: content || title,
+                    quote,
+                    apiKey: v2AiKey,
+                }).then((analysis) => {
+                    itemsDb.updateItemScreenshotAnalysis(item.id, analysis);
+                }).catch(err => {
+                    console.error(`[AI] Auto-analyze screenshot failed for ${item.id}:`, err.message);
+                });
+            }
         }
     }
 
@@ -1287,8 +1299,10 @@ app.post('/api/v2/items/:id/analyze', aiLimiter, v2Auth, async (req, res) => {
 
     try {
         // Analyze the first screenshot (primary annotation)
-        const screenshotUrl = screenshots[0];
-        const filename = path.basename(screenshotUrl.replace(/^\/images\//, ''));
+        const filename = sanitizeScreenshotUrl(screenshots[0]);
+        if (!filename) {
+            return res.status(400).json({ error: 'Invalid screenshot reference' });
+        }
         const imagePath = path.resolve(UPLOAD_DIR, filename);
 
         const analysis = await analyzeScreenshot({
@@ -1296,7 +1310,7 @@ app.post('/api/v2/items/:id/analyze', aiLimiter, v2Auth, async (req, res) => {
             baseDir: UPLOAD_DIR,
             source_url: item.source_url,
             source_title: item.source_title,
-            content: item.title || item.quote,
+            content: item.messages?.[0]?.content || item.title || item.quote,
             quote: item.quote,
             apiKey: aiApiKey,
         });

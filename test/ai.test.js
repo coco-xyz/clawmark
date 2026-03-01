@@ -674,6 +674,19 @@ describe('validateScreenshotAnalysis', () => {
         assert.equal(result.annotations_found[0].annotation_type, 'highlight');
     });
 
+    it('returns safe defaults when raw is null', () => {
+        const result = validateScreenshotAnalysis(null);
+        assert.equal(result.intent, 'general');
+        assert.equal(result.severity, 'info');
+        assert.deepEqual(result.annotations_found, []);
+        assert.deepEqual(result.suggested_actions, []);
+    });
+
+    it('returns safe defaults when raw is a non-object', () => {
+        const result = validateScreenshotAnalysis('not an object');
+        assert.equal(result.intent, 'general');
+    });
+
     it('handles missing annotations_found gracefully', () => {
         const result = validateScreenshotAnalysis({ summary: 'test', intent: 'general', severity: 'info' });
         assert.deepEqual(result.annotations_found, []);

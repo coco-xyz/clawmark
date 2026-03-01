@@ -670,15 +670,25 @@ async function analyzeScreenshot(params) {
 
     // Path traversal guard — if baseDir is set, imagePath must resolve within it
     const resolved = path.resolve(imagePath);
+    const { promises: fsp } = fs;
     if (baseDir) {
         const resolvedBase = path.resolve(baseDir) + path.sep;
         if (!resolved.startsWith(resolvedBase)) {
             throw new Error('Screenshot path outside allowed directory');
         }
+        // Symlink guard — resolve the real path and re-check containment
+        let realPath;
+        try {
+            realPath = await fsp.realpath(resolved);
+        } catch {
+            throw new Error('Screenshot file not found');
+        }
+        if (!realPath.startsWith(resolvedBase)) {
+            throw new Error('Screenshot path outside allowed directory');
+        }
     }
 
     // Read image file (async to avoid blocking the event loop)
-    const { promises: fsp } = fs;
     let imageBuffer;
     try {
         imageBuffer = await fsp.readFile(resolved);
@@ -691,7 +701,7 @@ async function analyzeScreenshot(params) {
 
     // Detect MIME type from extension
     const ext = path.extname(imagePath).toLowerCase();
-    const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp' };
+    const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
     const mimeType = mimeMap[ext];
     if (!mimeType) {
         throw new Error('Unsupported image format');
@@ -734,6 +744,9 @@ const VALID_SEVERITIES = ['critical', 'major', 'minor', 'cosmetic', 'info'];
 const VALID_ANNOTATION_TYPES = ['rectangle', 'arrow', 'circle', 'text', 'number', 'drawing', 'highlight'];
 
 function validateScreenshotAnalysis(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return { summary: 'Screenshot with annotations', annotations_found: [], intent: 'general', severity: 'info', details: '', suggested_actions: [] };
+    }
     const summary = typeof raw.summary === 'string' ? raw.summary.slice(0, 500) : 'Screenshot with annotations';
 
     const annotations_found = Array.isArray(raw.annotations_found)
