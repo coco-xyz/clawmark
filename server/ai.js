@@ -402,4 +402,120 @@ async function generateTags(params) {
     return { tags: uniqueTags, reasoning };
 }
 
-module.exports = { recommendRoute, validateRecommendation, buildUserPrompt, validateTargetConfig, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags };
+// ================================================================= Clustering
+//
+// AI-powered grouping of similar annotations into thematic clusters.
+// =================================================================
+
+const CLUSTERING_PROMPT = `You are an annotation analyst. Given a list of recent web annotations, group them into thematic clusters based on similarity.
+
+Rules:
+- Each cluster should have a short descriptive label (2-5 words)
+- Group by topic/theme, not by classification type
+- Annotations can belong to at most one cluster
+- Unclustered annotations should be omitted
+- Maximum 10 clusters
+- Order clusters by size (largest first)
+
+Respond with valid JSON:
+{
+  "clusters": [
+    {
+      "label": string,
+      "description": string (1 sentence),
+      "item_ids": [string, ...],
+      "severity": "high" | "medium" | "low"
+    }
+  ],
+  "summary": string (1-2 sentences describing the overall picture)
+}`;
+
+const MAX_CLUSTER_ITEMS = 100;
+const MAX_CLUSTERS = 10;
+
+/**
+ * Cluster recent annotations using AI.
+ *
+ * @param {object} params
+ * @param {object[]} params.items         Items to cluster (from DB)
+ * @param {string} params.apiKey          Gemini API key
+ * @param {Function} [params.callAI]      Override AI call (for testing)
+ * @returns {Promise<{clusters: object[], summary: string}>}
+ */
+async function clusterAnnotations(params) {
+    const { items, apiKey, callAI } = params;
+
+    if (!items || items.length === 0) {
+        return { clusters: [], summary: 'No annotations to cluster' };
+    }
+
+    // Build item summaries for the prompt
+    const itemSummaries = items.slice(0, MAX_CLUSTER_ITEMS).map(item => {
+        const parts = [`ID: ${item.id}`];
+        if (item.source_url) parts.push(`URL: <USER_INPUT>${String(item.source_url).slice(0, 200)}</USER_INPUT>`);
+        if (item.source_title) parts.push(`Title: <USER_INPUT>${String(item.source_title).slice(0, 100)}</USER_INPUT>`);
+        if (item.title) parts.push(`Note: <USER_INPUT>${String(item.title).slice(0, 200)}</USER_INPUT>`);
+        if (item.quote) parts.push(`Quote: <USER_INPUT>${String(item.quote).slice(0, 200)}</USER_INPUT>`);
+        if (item.classification) parts.push(`Classification: ${item.classification}`);
+        if (item.tags) {
+            try {
+                const tags = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags;
+                if (Array.isArray(tags) && tags.length) parts.push(`Tags: ${tags.join(', ')}`);
+            } catch { /* skip */ }
+        }
+        return parts.join(' | ');
+    });
+
+    const userPrompt = `Analyze these ${itemSummaries.length} annotations and group similar ones:\n\n${itemSummaries.join('\n')}`;
+
+    const aiCall = callAI || callGemini;
+    const responseText = await aiCall(apiKey, CLUSTERING_PROMPT, userPrompt);
+
+    let result;
+    try {
+        result = JSON.parse(responseText);
+    } catch {
+        throw new Error('AI returned invalid JSON');
+    }
+
+    return validateClusters(result, items);
+}
+
+/**
+ * Validate and normalize cluster results.
+ */
+function validateClusters(raw, items) {
+    const validItemIds = new Set(items.map(i => i.id));
+    const validSeverities = ['high', 'medium', 'low'];
+
+    if (!Array.isArray(raw.clusters)) {
+        return { clusters: [], summary: 'AI returned no clusters' };
+    }
+
+    const clusters = raw.clusters
+        .slice(0, MAX_CLUSTERS)
+        .map(c => {
+            if (!c || typeof c !== 'object') return null;
+
+            const label = typeof c.label === 'string' ? c.label.slice(0, 100) : 'Unnamed cluster';
+            const description = typeof c.description === 'string' ? c.description.slice(0, 500) : '';
+            const severity = validSeverities.includes(c.severity) ? c.severity : 'medium';
+
+            // Only keep item_ids that exist in the input
+            const item_ids = Array.isArray(c.item_ids)
+                ? c.item_ids.filter(id => typeof id === 'string' && validItemIds.has(id)).slice(0, MAX_CLUSTER_ITEMS)
+                : [];
+
+            if (item_ids.length === 0) return null;
+
+            return { label, description, item_ids, count: item_ids.length, severity };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.count - a.count);
+
+    const summary = typeof raw.summary === 'string' ? raw.summary.slice(0, 500) : '';
+
+    return { clusters, summary };
+}
+
+module.exports = { recommendRoute, validateRecommendation, buildUserPrompt, validateTargetConfig, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, validateClusters };

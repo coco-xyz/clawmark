@@ -947,6 +947,141 @@ function initDb(dataDir) {
         return db.prepare('SELECT * FROM users WHERE email = ?').get(email) || null;
     }
 
+    // ------------------------------------------------- analytics methods
+
+    function getAnalyticsTrends({ app_id = 'default', period = 'day', days = 30, group_by = 'total' }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+        let dateFormat;
+        switch (period) {
+            case 'week':  dateFormat = "strftime('%Y-W%W', created_at)"; break;
+            case 'month': dateFormat = "strftime('%Y-%m', created_at)";  break;
+            default:      dateFormat = "strftime('%Y-%m-%d', created_at)"; break;
+        }
+
+        let groupCol = '';
+        let selectCol = '';
+        if (group_by === 'classification' && group_by !== 'total') {
+            groupCol = ', classification';
+            selectCol = ', classification AS group_value';
+        } else if (group_by === 'type') {
+            groupCol = ', type';
+            selectCol = ', type AS group_value';
+        } else if (group_by === 'status') {
+            groupCol = ', status';
+            selectCol = ', status AS group_value';
+        }
+
+        const query = `
+            SELECT ${dateFormat} AS period, COUNT(*) AS count${selectCol}
+            FROM items
+            WHERE app_id = ? AND created_at >= ?
+            GROUP BY ${dateFormat}${groupCol}
+            ORDER BY period ASC
+        `;
+        return db.prepare(query).all(app_id, cutoff);
+    }
+
+    function getAnalyticsSummary(app_id = 'default') {
+        const total = db.prepare(
+            'SELECT COUNT(*) AS count FROM items WHERE app_id = ?'
+        ).get(app_id).count;
+
+        const byStatus = db.prepare(
+            'SELECT status, COUNT(*) AS count FROM items WHERE app_id = ? GROUP BY status ORDER BY count DESC'
+        ).all(app_id);
+
+        const byType = db.prepare(
+            'SELECT type, COUNT(*) AS count FROM items WHERE app_id = ? GROUP BY type ORDER BY count DESC'
+        ).all(app_id);
+
+        const byClassification = db.prepare(
+            'SELECT classification, COUNT(*) AS count FROM items WHERE app_id = ? AND classification IS NOT NULL GROUP BY classification ORDER BY count DESC'
+        ).all(app_id);
+
+        const topUrls = db.prepare(
+            `SELECT source_url, source_title, COUNT(*) AS count
+             FROM items WHERE app_id = ? AND source_url IS NOT NULL
+             GROUP BY source_url ORDER BY count DESC LIMIT 10`
+        ).all(app_id);
+
+        const topTags = db.prepare(
+            `SELECT tags FROM items WHERE app_id = ? AND tags != '[]' AND tags IS NOT NULL`
+        ).all(app_id);
+
+        // Aggregate tag counts from JSON arrays
+        const tagCounts = {};
+        for (const row of topTags) {
+            try {
+                const tags = JSON.parse(row.tags);
+                for (const t of tags) {
+                    tagCounts[t] = (tagCounts[t] || 0) + 1;
+                }
+            } catch { /* skip malformed */ }
+        }
+        const tagList = Object.entries(tagCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 20)
+            .map(([tag, count]) => ({ tag, count }));
+
+        const recentActivity = db.prepare(
+            `SELECT strftime('%Y-%m-%d', created_at) AS day, COUNT(*) AS count
+             FROM items WHERE app_id = ? AND created_at >= datetime('now', '-7 days')
+             GROUP BY day ORDER BY day ASC`
+        ).all(app_id);
+
+        return { total, byStatus, byType, byClassification, topUrls, topTags: tagList, recentActivity };
+    }
+
+    function getHotTopics({ app_id = 'default', hours = 24, threshold = 2 }) {
+        const cutoff = new Date(Date.now() - hours * 3600000).toISOString();
+
+        // Hot by URL
+        const hotUrls = db.prepare(
+            `SELECT source_url, source_title, COUNT(*) AS count
+             FROM items WHERE app_id = ? AND created_at >= ? AND source_url IS NOT NULL
+             GROUP BY source_url HAVING count >= ?
+             ORDER BY count DESC LIMIT 20`
+        ).all(app_id, cutoff, threshold);
+
+        // Hot by classification
+        const hotClassifications = db.prepare(
+            `SELECT classification, COUNT(*) AS count
+             FROM items WHERE app_id = ? AND created_at >= ? AND classification IS NOT NULL
+             GROUP BY classification HAVING count >= ?
+             ORDER BY count DESC`
+        ).all(app_id, cutoff, threshold);
+
+        // Hot by tags
+        const recentTagged = db.prepare(
+            `SELECT tags FROM items WHERE app_id = ? AND created_at >= ? AND tags != '[]' AND tags IS NOT NULL`
+        ).all(app_id, cutoff);
+
+        const tagCounts = {};
+        for (const row of recentTagged) {
+            try {
+                const tags = JSON.parse(row.tags);
+                for (const t of tags) { tagCounts[t] = (tagCounts[t] || 0) + 1; }
+            } catch { /* skip */ }
+        }
+        const hotTags = Object.entries(tagCounts)
+            .filter(([, c]) => c >= threshold)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 20)
+            .map(([tag, count]) => ({ tag, count }));
+
+        return { hotUrls, hotClassifications, hotTags, window_hours: hours, threshold };
+    }
+
+    function getRecentItemsForClustering({ app_id = 'default', days = 7, limit = 100 }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        return db.prepare(
+            `SELECT id, source_url, source_title, title, quote, type, classification, tags, created_at
+             FROM items WHERE app_id = ? AND created_at >= ?
+             ORDER BY created_at DESC LIMIT ?`
+        ).all(app_id, cutoff, limit);
+    }
+
     return {
         db,
         genId,
@@ -1005,6 +1140,11 @@ function initDb(dataDir) {
         deleteApp,
         getAppKeys,
         rotateAppKey,
+        // Analytics
+        getAnalyticsTrends,
+        getAnalyticsSummary,
+        getHotTopics,
+        getRecentItemsForClustering,
         // Organizations
         createOrg,
         getOrg,
