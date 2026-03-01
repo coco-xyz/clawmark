@@ -93,7 +93,7 @@ const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 const { resolveTarget } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
-const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags } = require('./ai');
+const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations } = require('./ai');
 
 const registry = new AdapterRegistry();
 registry.setDb(itemsDb);
@@ -1090,6 +1090,64 @@ app.post('/api/v2/items/:id/generate-tags', aiLimiter, v2Auth, async (req, res) 
     }
 });
 
+
+// ================================================================= Analytics API
+//
+// Aggregation, trends, hot topics, and AI-powered clustering.
+// =================================================================
+
+// -- GET /api/v2/analytics/summary — dashboard overview stats
+app.get('/api/v2/analytics/summary', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const summary = itemsDb.getAnalyticsSummary(app_id);
+    res.json(summary);
+});
+
+// -- GET /api/v2/analytics/trends — time-series annotation volume
+app.get('/api/v2/analytics/trends', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const period = ['day', 'week', 'month'].includes(req.query.period) ? req.query.period : 'day';
+    const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
+    const group_by = ['classification', 'type', 'status', 'total'].includes(req.query.group_by) ? req.query.group_by : 'total';
+
+    const trends = itemsDb.getAnalyticsTrends({ app_id, period, days, group_by });
+    res.json({ trends, period, days, group_by });
+});
+
+// -- GET /api/v2/analytics/hot-topics — currently trending topics
+app.get('/api/v2/analytics/hot-topics', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const hours = Math.max(1, Math.min(720, parseInt(req.query.hours, 10) || 24));
+    const threshold = Math.max(1, Math.min(100, parseInt(req.query.threshold, 10) || 2));
+
+    const hotTopics = itemsDb.getHotTopics({ app_id, hours, threshold });
+    res.json(hotTopics);
+});
+
+// -- GET /api/v2/analytics/clusters — AI-powered annotation clustering
+app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
+    const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
+    if (!aiApiKey) {
+        return res.status(503).json({ error: 'AI clustering not configured (missing API key)' });
+    }
+
+    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 7));
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+
+    try {
+        const items = itemsDb.getRecentItemsForClustering({ app_id, days, limit });
+        if (items.length === 0) {
+            return res.json({ clusters: [], summary: 'No annotations found in the specified time range' });
+        }
+
+        const result = await clusterAnnotations({ items, apiKey: aiApiKey });
+        res.json(result);
+    } catch (err) {
+        console.error('[AI] Clustering failed:', err.message);
+        res.status(500).json({ error: 'AI clustering failed' });
+    }
+});
 
 // ================================================================= Endpoints API
 //
