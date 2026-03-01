@@ -239,6 +239,259 @@ siteBtnEl.addEventListener('click', async () => {
     showMessage(isDisabled ? `Enabled for ${currentHostname}` : `Disabled for ${currentHostname}`, 'success');
 });
 
+// ------------------------------------------------------------------ delivery settings
+
+const deliveryToggle = document.getElementById('delivery-toggle');
+const deliveryArrow = document.getElementById('delivery-arrow');
+const deliveryBody = document.getElementById('delivery-body');
+const rulesCountEl = document.getElementById('rules-count');
+const rulesListEl = document.getElementById('rules-list');
+const rulesLoadingEl = document.getElementById('rules-loading');
+const addRuleBtn = document.getElementById('add-rule-btn');
+const ruleFormEl = document.getElementById('rule-form');
+const rfType = document.getElementById('rf-type');
+const rfPattern = document.getElementById('rf-pattern');
+const rfPatternLabel = document.getElementById('rf-pattern-label');
+const rfTarget = document.getElementById('rf-target');
+const targetFieldsEl = document.getElementById('target-fields');
+const rfPriority = document.getElementById('rf-priority');
+const rfSave = document.getElementById('rf-save');
+const rfCancel = document.getElementById('rf-cancel');
+
+let routingRules = [];
+let editingRuleId = null;
+
+deliveryToggle.addEventListener('click', () => {
+    const isOpen = deliveryBody.classList.toggle('open');
+    deliveryArrow.classList.toggle('open', isOpen);
+    if (isOpen && routingRules.length === 0) loadRoutingRules();
+});
+
+async function loadRoutingRules() {
+    rulesLoadingEl.style.display = 'block';
+    try {
+        const result = await chrome.runtime.sendMessage({ type: 'GET_ROUTING_RULES' });
+        routingRules = result.rules || [];
+        renderRules();
+    } catch (err) {
+        rulesLoadingEl.textContent = 'Failed to load rules';
+    }
+}
+
+function renderRules() {
+    rulesLoadingEl.style.display = 'none';
+    // Remove old rule cards
+    rulesListEl.querySelectorAll('.rule-card, .rules-empty').forEach(el => el.remove());
+
+    rulesCountEl.textContent = `Rules (${routingRules.length})`;
+
+    if (routingRules.length === 0) {
+        rulesListEl.insertAdjacentHTML('beforeend',
+            '<div class="rules-empty">No routing rules yet</div>');
+        return;
+    }
+
+    for (const rule of routingRules) {
+        const card = document.createElement('div');
+        card.className = 'rule-card';
+
+        const patternText = rule.rule_type === 'default'
+            ? '(default fallback)'
+            : (rule.pattern || '—');
+
+        const targetText = formatTarget(rule.target_type, rule.target_config);
+
+        card.innerHTML = `
+            <div class="rule-pattern">
+                <span class="type-badge">${escHtml(rule.rule_type)}</span>
+                ${escHtml(patternText)}
+            </div>
+            <div class="rule-target">&rarr; ${escHtml(targetText)}</div>
+            <div class="rule-actions">
+                <button class="edit-btn" data-id="${escHtml(rule.id)}">Edit</button>
+                <button class="del-btn" data-id="${escHtml(rule.id)}">Delete</button>
+            </div>`;
+
+        card.querySelector('.edit-btn').addEventListener('click', () => editRule(rule));
+        card.querySelector('.del-btn').addEventListener('click', () => deleteRule(rule.id));
+
+        rulesListEl.appendChild(card);
+    }
+}
+
+function formatTarget(type, config) {
+    const cfg = typeof config === 'string' ? JSON.parse(config) : (config || {});
+    switch (type) {
+        case 'github-issue': return `GitHub: ${cfg.repo || '?'}`;
+        case 'lark': return `Lark: ${(cfg.webhook_url || '').substring(0, 30)}...`;
+        case 'telegram': return `Telegram: ${cfg.chat_id || '?'}`;
+        case 'webhook': return `Webhook: ${(cfg.url || '').substring(0, 30)}...`;
+        default: return type;
+    }
+}
+
+function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+// ---- target config fields
+
+function updateTargetFields(targetType, existingConfig) {
+    const cfg = existingConfig || {};
+    let html = '';
+
+    switch (targetType) {
+        case 'github-issue':
+            html = `
+                <label>Repository (owner/repo)</label>
+                <input type="text" id="tc-repo" placeholder="owner/repo" value="${escHtml(cfg.repo || '')}">
+                <label>Labels (comma-separated)</label>
+                <input type="text" id="tc-labels" placeholder="clawmark, bug" value="${escHtml((cfg.labels || []).join(', '))}">`;
+            break;
+        case 'lark':
+            html = `
+                <label>Webhook URL</label>
+                <input type="text" id="tc-webhook" placeholder="https://open.larksuite.com/..." value="${escHtml(cfg.webhook_url || '')}">`;
+            break;
+        case 'telegram':
+            html = `
+                <label>Bot Token</label>
+                <input type="password" id="tc-bot-token" placeholder="123456:ABC-DEF..." value="${escHtml(cfg.bot_token || '')}">
+                <label>Chat ID</label>
+                <input type="text" id="tc-chat-id" placeholder="-100123456789" value="${escHtml(cfg.chat_id || '')}">`;
+            break;
+        case 'webhook':
+            html = `
+                <label>Webhook URL</label>
+                <input type="text" id="tc-url" placeholder="https://your-endpoint.com/webhook" value="${escHtml(cfg.url || '')}">
+                <label>Secret (optional)</label>
+                <input type="password" id="tc-secret" placeholder="signing secret" value="${escHtml(cfg.secret || '')}">`;
+            break;
+    }
+    targetFieldsEl.innerHTML = html;
+}
+
+function getTargetConfig() {
+    const type = rfTarget.value;
+    switch (type) {
+        case 'github-issue': {
+            const repo = (document.getElementById('tc-repo')?.value || '').trim();
+            const labelsRaw = (document.getElementById('tc-labels')?.value || '').trim();
+            const labels = labelsRaw ? labelsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+            return { repo, labels, assignees: [] };
+        }
+        case 'lark':
+            return { webhook_url: (document.getElementById('tc-webhook')?.value || '').trim() };
+        case 'telegram':
+            return {
+                bot_token: (document.getElementById('tc-bot-token')?.value || '').trim(),
+                chat_id: (document.getElementById('tc-chat-id')?.value || '').trim(),
+            };
+        case 'webhook': {
+            const url = (document.getElementById('tc-url')?.value || '').trim();
+            const secret = (document.getElementById('tc-secret')?.value || '').trim();
+            const cfg = { url };
+            if (secret) cfg.secret = secret;
+            return cfg;
+        }
+        default:
+            return {};
+    }
+}
+
+rfType.addEventListener('change', () => {
+    const isDefault = rfType.value === 'default';
+    rfPatternLabel.style.display = isDefault ? 'none' : 'block';
+    rfPattern.style.display = isDefault ? 'none' : 'block';
+});
+
+rfTarget.addEventListener('change', () => {
+    updateTargetFields(rfTarget.value);
+});
+
+// ---- add / edit / delete
+
+addRuleBtn.addEventListener('click', () => {
+    editingRuleId = null;
+    rfType.value = 'url_pattern';
+    rfPattern.value = '';
+    rfTarget.value = 'github-issue';
+    rfPriority.value = '0';
+    rfPatternLabel.style.display = 'block';
+    rfPattern.style.display = 'block';
+    updateTargetFields('github-issue');
+    rfSave.textContent = 'Save Rule';
+    ruleFormEl.classList.add('open');
+});
+
+function editRule(rule) {
+    editingRuleId = rule.id;
+    rfType.value = rule.rule_type;
+    rfPattern.value = rule.pattern || '';
+    rfTarget.value = rule.target_type;
+    rfPriority.value = rule.priority || 0;
+
+    const isDefault = rule.rule_type === 'default';
+    rfPatternLabel.style.display = isDefault ? 'none' : 'block';
+    rfPattern.style.display = isDefault ? 'none' : 'block';
+
+    const cfg = typeof rule.target_config === 'string'
+        ? JSON.parse(rule.target_config) : (rule.target_config || {});
+    updateTargetFields(rule.target_type, cfg);
+
+    rfSave.textContent = 'Update Rule';
+    ruleFormEl.classList.add('open');
+}
+
+rfCancel.addEventListener('click', () => {
+    ruleFormEl.classList.remove('open');
+    editingRuleId = null;
+});
+
+rfSave.addEventListener('click', async () => {
+    const isEditing = !!editingRuleId;
+    rfSave.disabled = true;
+    rfSave.textContent = 'Saving...';
+
+    try {
+        const data = {
+            rule_type: rfType.value,
+            pattern: rfType.value === 'default' ? null : rfPattern.value.trim(),
+            target_type: rfTarget.value,
+            target_config: getTargetConfig(),
+            priority: parseInt(rfPriority.value, 10) || 0,
+        };
+
+        if (isEditing) {
+            await chrome.runtime.sendMessage({ type: 'UPDATE_ROUTING_RULE', id: editingRuleId, data });
+        } else {
+            await chrome.runtime.sendMessage({ type: 'CREATE_ROUTING_RULE', data });
+        }
+
+        ruleFormEl.classList.remove('open');
+        editingRuleId = null;
+        showMessage(isEditing ? 'Rule updated' : 'Rule created', 'success');
+        await loadRoutingRules();
+    } catch (err) {
+        showMessage(err.message, 'error');
+    } finally {
+        rfSave.disabled = false;
+        rfSave.textContent = 'Save Rule';
+    }
+});
+
+async function deleteRule(id) {
+    try {
+        await chrome.runtime.sendMessage({ type: 'DELETE_ROUTING_RULE', id });
+        showMessage('Rule deleted', 'success');
+        await loadRoutingRules();
+    } catch (err) {
+        showMessage(err.message, 'error');
+    }
+}
+
 // ------------------------------------------------------------------ init
 
 loadConfig();

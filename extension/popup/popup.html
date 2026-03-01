@@ -352,12 +352,212 @@
         .site-toggle .site-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
         .site-toggle .site-btn.disabled-site { background: rgba(239,68,68,0.15); color: #ef4444; }
         .site-toggle .site-btn.disabled-site:hover { background: rgba(239,68,68,0.25); }
+
+        /* ---- delivery settings ---- */
+
+        .delivery-section {
+            padding: 12px 16px;
+            border-top: 1px solid #2a2a3e;
+        }
+
+        .delivery-section .section-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #ccc;
+            cursor: pointer;
+            user-select: none;
+            font-weight: 500;
+        }
+
+        .delivery-section .section-toggle:hover { color: #fff; }
+
+        .delivery-section .section-toggle .arrow {
+            font-size: 9px;
+            transition: transform 0.15s;
+        }
+
+        .delivery-section .section-toggle .arrow.open { transform: rotate(90deg); }
+
+        .delivery-body { display: none; margin-top: 10px; }
+        .delivery-body.open { display: block; }
+
+        .rules-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .rules-header span {
+            font-size: 11px;
+            color: #888;
+        }
+
+        .rules-header .add-btn {
+            font-size: 11px;
+            padding: 3px 8px;
+            background: rgba(88,101,242,0.2);
+            color: #7c8af2;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .rules-header .add-btn:hover { background: rgba(88,101,242,0.35); color: #fff; }
+
+        .rules-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .rule-card {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid #2a2a3e;
+            border-radius: 6px;
+            padding: 8px 10px;
+            margin-bottom: 6px;
+        }
+
+        .rule-card .rule-pattern {
+            font-size: 12px;
+            color: #ccc;
+            word-break: break-all;
+        }
+
+        .rule-card .rule-pattern .type-badge {
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            background: rgba(88,101,242,0.2);
+            color: #7c8af2;
+            margin-right: 4px;
+        }
+
+        .rule-card .rule-target {
+            font-size: 11px;
+            color: #888;
+            margin-top: 3px;
+            word-break: break-all;
+        }
+
+        .rule-card .rule-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 6px;
+        }
+
+        .rule-card .rule-actions button {
+            font-size: 10px;
+            padding: 2px 7px;
+            background: rgba(255,255,255,0.06);
+            color: #888;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .rule-card .rule-actions button:hover { background: rgba(255,255,255,0.12); color: #ccc; }
+        .rule-card .rule-actions .del-btn:hover { background: rgba(239,68,68,0.2); color: #ef4444; }
+
+        .rules-empty {
+            font-size: 11px;
+            color: #555;
+            text-align: center;
+            padding: 12px 0;
+        }
+
+        .rules-loading {
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            padding: 8px 0;
+        }
+
+        /* rule form */
+
+        .rule-form {
+            display: none;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 10px;
+            margin-top: 8px;
+        }
+
+        .rule-form.open { display: block; }
+
+        .rule-form label {
+            display: block;
+            font-size: 10px;
+            color: #888;
+            margin-bottom: 3px;
+            margin-top: 6px;
+            font-weight: 500;
+        }
+
+        .rule-form label:first-child { margin-top: 0; }
+
+        .rule-form select,
+        .rule-form input {
+            width: 100%;
+            padding: 6px 8px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-size: 12px;
+            font-family: inherit;
+            outline: none;
+        }
+
+        .rule-form select:focus,
+        .rule-form input:focus { border-color: #5865f2; }
+
+        .rule-form select { cursor: pointer; }
+        .rule-form select option { background: #1a1a2e; }
+
+        .rule-form .target-fields { margin-top: 4px; }
+
+        .rule-form .form-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .rule-form .form-actions button {
+            flex: 1;
+            padding: 6px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .rule-form .form-save {
+            background: #5865f2;
+            color: #fff;
+        }
+
+        .rule-form .form-save:hover { background: #4752c4; }
+        .rule-form .form-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .rule-form .form-cancel {
+            background: rgba(255,255,255,0.08);
+            color: #aaa;
+        }
+
+        .rule-form .form-cancel:hover { background: rgba(255,255,255,0.14); color: #ccc; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>ClawMark</h1>
-        <span class="version">v0.3.0</span>
+        <span class="version">v0.5.0</span>
     </div>
 
     <div class="status" id="status">
@@ -431,6 +631,57 @@
 
         <button class="btn" id="save-btn">Save</button>
         <button class="btn secondary" id="panel-btn">Open Side Panel</button>
+    </div>
+
+    <!-- Delivery settings -->
+    <div class="delivery-section">
+        <div class="section-toggle" id="delivery-toggle">
+            <span class="arrow" id="delivery-arrow">&#9654;</span>
+            <span>Delivery Settings</span>
+        </div>
+        <div class="delivery-body" id="delivery-body">
+            <div class="rules-header">
+                <span id="rules-count">Rules</span>
+                <button class="add-btn" id="add-rule-btn">+ Add Rule</button>
+            </div>
+            <div class="rules-list" id="rules-list">
+                <div class="rules-loading" id="rules-loading">Loading...</div>
+            </div>
+
+            <!-- Add / Edit rule form -->
+            <div class="rule-form" id="rule-form">
+                <label>Rule Type</label>
+                <select id="rf-type">
+                    <option value="url_pattern">URL Pattern</option>
+                    <option value="content_type">Content Type</option>
+                    <option value="tag_match">Tag Match</option>
+                    <option value="default">Default</option>
+                </select>
+
+                <label id="rf-pattern-label">Pattern</label>
+                <input type="text" id="rf-pattern" placeholder="github.com/my-org/**">
+
+                <label>Target</label>
+                <select id="rf-target">
+                    <option value="github-issue">GitHub Issue</option>
+                    <option value="lark">Lark Webhook</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="webhook">Webhook</option>
+                </select>
+
+                <div class="target-fields" id="target-fields">
+                    <!-- Dynamically populated based on target type -->
+                </div>
+
+                <label>Priority</label>
+                <input type="number" id="rf-priority" value="0" min="0" max="100">
+
+                <div class="form-actions">
+                    <button class="form-save" id="rf-save">Save Rule</button>
+                    <button class="form-cancel" id="rf-cancel">Cancel</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="message" id="message"></div>
