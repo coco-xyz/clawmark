@@ -93,7 +93,7 @@ const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 const { resolveTarget } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
-const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS } = require('./ai');
+const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags } = require('./ai');
 
 const registry = new AdapterRegistry();
 registry.setDb(itemsDb);
@@ -994,7 +994,7 @@ app.post('/api/v2/items/:id/classify', aiLimiter, v2Auth, async (req, res) => {
         return res.status(404).json({ error: 'Item not found' });
     }
 
-    // H2: Ownership check — user can only classify items in their app scope
+    // Ownership check — user can only classify items in their app scope
     const userAppId = req.body.app_id || req.v2Auth?.app_id || 'default';
     if (item.app_id !== userAppId) {
         return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
@@ -1035,11 +1035,61 @@ app.get('/api/v2/items/by-classification/:classification', apiReadLimiter, v2Aut
     if (!VALID_CLASSIFICATIONS.includes(req.params.classification)) {
         return res.status(400).json({ error: `Invalid classification. Must be one of: ${VALID_CLASSIFICATIONS.join(', ')}` });
     }
-    // H3: app_id from query, not from route params
     const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
     const items = itemsDb.getItemsByClassification({ app_id, classification: req.params.classification });
     res.json({ items });
 });
+
+// -- POST /api/v2/items/:id/generate-tags — AI-powered tag generation
+app.post('/api/v2/items/:id/generate-tags', aiLimiter, v2Auth, async (req, res) => {
+    const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
+    if (!aiApiKey) {
+        return res.status(503).json({ error: 'AI tagging not configured (missing API key)' });
+    }
+
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) {
+        return res.status(404).json({ error: 'Item not found' });
+    }
+
+    // Ownership check — user can only tag items in their app scope
+    const userAppId = req.body?.app_id || req.v2Auth?.app_id || 'default';
+    if (item.app_id !== userAppId) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
+
+    const existingTags = (() => {
+        try { return JSON.parse(item.tags || '[]'); } catch { return []; }
+    })();
+
+    try {
+        const firstMessage = item.messages?.[0]?.content;
+        const result = await generateTags({
+            source_url: item.source_url,
+            source_title: item.source_title,
+            content: firstMessage || item.title,
+            quote: item.quote,
+            type: item.type,
+            existingTags,
+            apiKey: aiApiKey,
+        });
+
+        if (result.tags.length > 0) {
+            const { merge } = req.body || {};
+            const merged = merge !== false ? [...existingTags, ...result.tags] : result.tags;
+            // Cap total tags at 25 to prevent unbounded growth
+            const finalTags = [...new Set(merged.map(t => t.toLowerCase()))].slice(0, 25);
+            itemsDb.updateItemTags(item.id, finalTags);
+            res.json({ tags: finalTags, generated: result.tags, reasoning: result.reasoning, source: 'ai' });
+        } else {
+            res.json({ tags: existingTags, generated: [], reasoning: result.reasoning, source: 'ai' });
+        }
+    } catch (err) {
+        console.error('[AI] Tag generation failed:', err.message);
+        res.status(500).json({ error: 'AI tag generation failed' });
+    }
+});
+
 
 // ================================================================= Endpoints API
 //

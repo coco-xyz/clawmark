@@ -6,7 +6,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { recommendRoute, buildUserPrompt, validateRecommendation, validateTargetConfig, classifyAnnotation } = require('../server/ai');
+const { recommendRoute, buildUserPrompt, validateRecommendation, validateTargetConfig, classifyAnnotation, generateTags } = require('../server/ai');
 
 // Mock AI that returns a valid recommendation
 function mockAI(response) {
@@ -391,5 +391,108 @@ describe('classifyAnnotation', () => {
             }),
         });
         assert.equal(result.reasoning.length, 500);
+    });
+});
+
+// Mock AI for tag generation tests
+function mockTagAI(tags, reasoning = 'Test reasoning') {
+    return async () => JSON.stringify({ tags, reasoning });
+}
+
+describe('generateTags', () => {
+    it('generates tags from content', async () => {
+        const result = await generateTags({
+            source_url: 'https://example.com',
+            content: 'Login button does not work on mobile',
+            apiKey: 'test',
+            callAI: mockTagAI(['login', 'mobile', 'ui-bug']),
+        });
+        assert.deepEqual(result.tags, ['login', 'mobile', 'ui-bug']);
+        assert.ok(result.reasoning.length > 0);
+    });
+
+    it('returns empty tags when no context provided', async () => {
+        const result = await generateTags({ apiKey: 'test' });
+        assert.deepEqual(result.tags, []);
+    });
+
+    it('deduplicates against existing tags', async () => {
+        const result = await generateTags({
+            source_url: 'https://example.com',
+            content: 'Bug report',
+            existingTags: ['bug', 'urgent'],
+            apiKey: 'test',
+            callAI: mockTagAI(['bug', 'login', 'urgent', 'mobile']),
+        });
+        assert.ok(!result.tags.includes('bug'));
+        assert.ok(!result.tags.includes('urgent'));
+        assert.ok(result.tags.includes('login'));
+        assert.ok(result.tags.includes('mobile'));
+    });
+
+    it('deduplicates within generated tags', async () => {
+        const result = await generateTags({
+            source_url: 'https://example.com',
+            apiKey: 'test',
+            callAI: mockTagAI(['bug', 'bug', 'login']),
+        });
+        const bugCount = result.tags.filter(t => t === 'bug').length;
+        assert.equal(bugCount, 1);
+    });
+
+    it('limits to MAX_GENERATED_TAGS (5)', async () => {
+        const result = await generateTags({
+            source_url: 'https://example.com',
+            apiKey: 'test',
+            callAI: mockTagAI(['a', 'b', 'c', 'd', 'e', 'f', 'g']),
+        });
+        assert.ok(result.tags.length <= 5);
+    });
+
+    it('normalizes tags to lowercase', async () => {
+        const result = await generateTags({
+            source_url: 'https://example.com',
+            apiKey: 'test',
+            callAI: mockTagAI(['BUG', 'Login', 'UI-Issue']),
+        });
+        assert.deepEqual(result.tags, ['bug', 'login', 'ui-issue']);
+    });
+
+    it('strips invalid characters from tags', async () => {
+        const result = await generateTags({
+            source_url: 'https://example.com',
+            apiKey: 'test',
+            callAI: mockTagAI(['bug!', 'lo gin', 'ui_bug', 'good-tag']),
+        });
+        assert.deepEqual(result.tags, ['bug', 'login', 'uibug', 'good-tag']);
+    });
+
+    it('filters out empty/non-string tags', async () => {
+        const result = await generateTags({
+            source_url: 'https://example.com',
+            apiKey: 'test',
+            callAI: mockTagAI(['bug', '', null, 123, 'valid']),
+        });
+        assert.deepEqual(result.tags, ['bug', 'valid']);
+    });
+
+    it('throws when AI returns invalid JSON', async () => {
+        await assert.rejects(
+            () => generateTags({
+                source_url: 'https://example.com',
+                apiKey: 'test',
+                callAI: async () => 'not json',
+            }),
+            { message: 'AI returned invalid JSON' }
+        );
+    });
+
+    it('handles AI returning non-array tags gracefully', async () => {
+        const result = await generateTags({
+            source_url: 'https://example.com',
+            apiKey: 'test',
+            callAI: async () => JSON.stringify({ tags: 'not-an-array' }),
+        });
+        assert.deepEqual(result.tags, []);
     });
 });
