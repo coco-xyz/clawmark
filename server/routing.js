@@ -1,16 +1,19 @@
 /**
- * ClawMark — Routing Resolver (Phase 1)
+ * ClawMark — Routing Resolver (Phase 2)
  *
  * Determines where an annotation should be delivered based on:
- *   1. User-defined routing rules (URL pattern → target)
- *   2. GitHub URL auto-detection (extract org/repo from source_url)
- *   3. Fallback to default channel from config
+ *   1. Target declaration (.clawmark.yml / /.well-known/clawmark.json)
+ *   2. User-defined routing rules (URL pattern → target)
+ *   3. GitHub URL auto-detection (extract org/repo from source_url)
+ *   4. User's personal default rule
+ *   5. Fallback to default channel from config
  *
  * Resolution priority (highest first):
- *   1. Exact user rule match (highest priority value wins)
- *   2. GitHub URL auto-extract
- *   3. User's personal default rule (rule_type = 'default')
- *   4. System default (from config.distribution)
+ *   1. Target declaration (project owner's preference)
+ *   2. User rule match (highest priority value wins)
+ *   3. GitHub URL auto-extract
+ *   4. User's personal default rule (rule_type = 'default')
+ *   5. System default (from config.distribution)
  */
 
 'use strict';
@@ -79,13 +82,24 @@ function matchUrlPattern(url, pattern) {
  * @param {Array}  [params.tags]         Item tags
  * @param {object} params.db             ClawMark DB API (with getUserRules)
  * @param {object} params.defaultTarget  Default target from config { repo, token, labels }
+ * @param {object} [params.declaration]  Pre-fetched target declaration (from target-declaration.js)
  * @returns {{ target_type: string, target_config: object, matched_rule: object|null, method: string }}
  */
-function resolveTarget({ source_url, user_name, type, priority, tags, db, defaultTarget }) {
+function resolveTarget({ source_url, user_name, type, priority, tags, db, defaultTarget, declaration }) {
+    // Step 0: Target declaration (project owner's declared preference)
+    if (declaration && declaration.target_type && declaration.target_config) {
+        return {
+            target_type: declaration.target_type,
+            target_config: declaration.target_config,
+            matched_rule: null,
+            method: 'target_declaration',
+        };
+    }
+
     // Fetch user rules once (used in steps 1 and 3)
     const userRules = (db && user_name) ? db.getUserRules(user_name) : [];
 
-    // Step 1: Check user-defined rules (ordered by priority DESC)
+    // Step 1: User-defined rules (ordered by priority DESC)
     for (const rule of userRules) {
         if (!rule.enabled) continue;
 
@@ -126,7 +140,7 @@ function resolveTarget({ source_url, user_name, type, priority, tags, db, defaul
         }
     }
 
-    // Step 2: GitHub URL auto-detection
+    // Step 2: GitHub URL auto-detect
     const ghRepo = extractGitHubRepo(source_url);
     if (ghRepo) {
         return {
@@ -141,7 +155,7 @@ function resolveTarget({ source_url, user_name, type, priority, tags, db, defaul
         };
     }
 
-    // Step 3: User's personal default rule
+    // Step 3: User default rule
     const defaultRule = userRules.find(r => r.rule_type === 'default' && r.enabled);
     if (defaultRule) {
         const config = JSON.parse(defaultRule.target_config);
@@ -153,7 +167,7 @@ function resolveTarget({ source_url, user_name, type, priority, tags, db, defaul
         };
     }
 
-    // Step 4: System default
+    // Step 4: System default fallback
     return {
         target_type: 'github-issue',
         target_config: defaultTarget || { repo: 'coco-xyz/clawmark', labels: ['clawmark'], assignees: [] },

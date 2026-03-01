@@ -92,6 +92,7 @@ const { LarkAdapter } = require('./adapters/lark');
 const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 const { resolveTarget } = require('./routing');
+const { resolveDeclaration } = require('./target-declaration');
 
 const registry = new AdapterRegistry();
 registry.setDb(itemsDb);
@@ -196,9 +197,17 @@ const defaultGitHubTarget = config.distribution?.channels?.['github-clawmark']
  * @param {string} event   Event name, e.g. 'item.created'
  * @param {object} payload The item/data payload
  */
-function sendWebhook(event, payload) {
+async function sendWebhook(event, payload) {
     if (event === 'item.created') {
-        // Use routing resolver to find the right target
+        // Fetch target declaration (async — checks .clawmark.yml or /.well-known/clawmark.json)
+        let declaration = null;
+        try {
+            declaration = await resolveDeclaration(payload.source_url);
+        } catch (err) {
+            console.error(`[declaration] Failed to fetch for ${payload.source_url}:`, err.message);
+        }
+
+        // Use routing resolver to find the right target (5-level priority)
         const routing = resolveTarget({
             source_url: payload.source_url,
             user_name: payload.created_by,
@@ -207,6 +216,7 @@ function sendWebhook(event, payload) {
             tags: payload.tags,
             db: itemsDb,
             defaultTarget: defaultGitHubTarget,
+            declaration,
         });
 
         console.log(`[routing] ${event}: ${routing.method} → ${routing.target_type} (${routing.target_config.repo || 'custom'})`);
@@ -880,13 +890,20 @@ app.delete('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
 });
 
 // -- POST /api/v2/routing/resolve — test routing resolution (dry run)
-app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, (req, res) => {
+app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => {
     const { source_url, userName, type, priority, tags } = req.body;
     const user = userName || req.v2Auth?.user;
+
+    // Fetch target declaration
+    let declaration = null;
+    try {
+        declaration = await resolveDeclaration(source_url);
+    } catch { /* ignore */ }
 
     const result = resolveTarget({
         source_url, user_name: user, type, priority, tags,
         db: itemsDb, defaultTarget: defaultGitHubTarget,
+        declaration,
     });
 
     res.json({
