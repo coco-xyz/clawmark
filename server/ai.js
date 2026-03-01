@@ -229,9 +229,7 @@ function validateTargetConfig(config, targetType) {
 
 function validateRecommendation(raw) {
     const validTypes = ['github-issue', 'webhook', 'lark', 'telegram'];
-    const validClassifications = ['bug', 'feature_request', 'question', 'praise', 'general'];
-
-    const classification = validClassifications.includes(raw.classification) ? raw.classification : 'general';
+    const classification = VALID_CLASSIFICATIONS.includes(raw.classification) ? raw.classification : 'general';
     const target_type = validTypes.includes(raw.target_type) ? raw.target_type : 'github-issue';
     const confidence = typeof raw.confidence === 'number' ? Math.max(0, Math.min(1, raw.confidence)) : 0.5;
     const reasoning = typeof raw.reasoning === 'string' ? raw.reasoning.slice(0, 500) : '';
@@ -260,6 +258,8 @@ function validateRecommendation(raw) {
 // Classify an annotation into: bug, feature_request, question, praise, general.
 // Lightweight — only returns classification + confidence.
 // =================================================================
+
+const VALID_CLASSIFICATIONS = ['bug', 'feature_request', 'question', 'praise', 'general'];
 
 const CLASSIFICATION_PROMPT = `You are an annotation classifier. Given the context of a web annotation (page URL, title, selected text, user note), classify it into one of these categories:
 
@@ -313,12 +313,11 @@ async function classifyAnnotation(params) {
         throw new Error('AI returned invalid JSON');
     }
 
-    const validClassifications = ['bug', 'feature_request', 'question', 'praise', 'general'];
-    const classification = validClassifications.includes(result.classification) ? result.classification : 'general';
+    const classification = VALID_CLASSIFICATIONS.includes(result.classification) ? result.classification : 'general';
     const confidence = typeof result.confidence === 'number' ? Math.max(0, Math.min(1, result.confidence)) : 0.5;
     const reasoning = typeof result.reasoning === 'string' ? result.reasoning.slice(0, 500) : '';
 
     return { classification, confidence, reasoning };
 }
 
-module.exports = { recommendRoute, validateRecommendation, buildUserPrompt, validateTargetConfig, classifyAnnotation };
+module.exports = { recommendRoute, validateRecommendation, buildUserPrompt, validateTargetConfig, classifyAnnotation, VALID_CLASSIFICATIONS };

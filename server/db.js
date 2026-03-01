@@ -481,10 +481,17 @@ function initDb(dataDir) {
         ).run(classification, confidence, now, now, item_id);
     }
 
-    function getItemsByClassification({ app_id = 'default', classification }) {
+    function updateItemClassificationIfNull(item_id, classification, confidence) {
+        const now = new Date().toISOString();
         return db.prepare(
-            'SELECT * FROM items WHERE app_id = ? AND classification = ? ORDER BY created_at DESC'
-        ).all(app_id, classification);
+            'UPDATE items SET classification = ?, classification_confidence = ?, classified_at = ?, updated_at = ? WHERE id = ? AND classification IS NULL'
+        ).run(classification, confidence, now, now, item_id);
+    }
+
+    function getItemsByClassification({ app_id = 'default', classification, limit = 500 }) {
+        return db.prepare(
+            'SELECT * FROM items WHERE app_id = ? AND classification = ? ORDER BY created_at DESC LIMIT ?'
+        ).all(app_id, classification, limit);
     }
 
     function updateItemTags(item_id, tags) {
@@ -964,6 +971,7 @@ function initDb(dataDir) {
         getDistinctUrls,
         updateItemTags,
         updateItemClassification,
+        updateItemClassificationIfNull,
         createApiKey,
         validateApiKey,
         revokeApiKey,
