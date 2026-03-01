@@ -2,6 +2,36 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号采用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] — 2026-03-01
+
+### 新增
+
+- 目标声明发现系统（#84）
+  - `.clawmark.yml`（GitHub repo root）和 `/.well-known/clawmark.json`（任意网站）
+  - 声明验证：adapter 类型、target 格式、webhook endpoint 安全检查
+  - 24 小时缓存 + LRU 淘汰（上限 1000 条）
+- 5 级路由优先链（#85）
+  - 声明 > 用户规则 > GitHub 自动检测 > 用户默认 > 系统默认
+- JS 注入开关（#86）
+  - 全局开关：扩展 popup 中一键启用/禁用
+  - 站点级控制：按 hostname 启用/禁用（上限 100 站点）
+  - 目标声明覆盖：`js_injection: false` 禁止在目标站点注入
+  - 优先级：目标声明 > 用户站点设置 > 用户全局设置
+  - 无刷新动态切换（storage.onChanged + generation counter 防竞态）
+  - inject.js 重构：条件初始化、DOM 清理、事件监听器卸载
+
+### 安全
+
+- SSRF 完整防护：DNS 预检 + isPrivateIP + HTTPS only + redirect 深度限制（max 3）
+- webhook endpoint 验证：HTTPS only + localhost/private IP 黑名单
+- YAML 解析安全：FAILSAFE_SCHEMA（只允许 string/sequence/mapping）
+- Object.assign → 显式 safe fields 白名单（防 prototype pollution）
+- 响应大小限制（64KB）
+
+### 测试
+
+- 296 个测试（新增 51 个：声明验证、SSRF 防护、缓存行为、js_injection 字段、路由集成）
+
 ## [0.3.0] — 2026-03-01
 
 ### 新增
