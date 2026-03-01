@@ -1135,12 +1135,12 @@ app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
     const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 7));
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
 
-    const items = itemsDb.getRecentItemsForClustering({ app_id, days, limit });
-    if (items.length === 0) {
-        return res.json({ clusters: [], summary: 'No annotations found in the specified time range' });
-    }
-
     try {
+        const items = itemsDb.getRecentItemsForClustering({ app_id, days, limit });
+        if (items.length === 0) {
+            return res.json({ clusters: [], summary: 'No annotations found in the specified time range' });
+        }
+
         const result = await clusterAnnotations({ items, apiKey: aiApiKey });
         res.json(result);
     } catch (err) {

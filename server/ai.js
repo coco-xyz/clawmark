@@ -460,7 +460,7 @@ async function clusterAnnotations(params) {
         if (item.tags) {
             try {
                 const tags = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags;
-                if (Array.isArray(tags) && tags.length) parts.push(`Tags: ${tags.join(', ')}`);
+                if (Array.isArray(tags) && tags.length) parts.push(`Tags: <USER_INPUT>${tags.map(t => String(t).slice(0, 50)).join(', ')}</USER_INPUT>`);
             } catch { /* skip */ }
         }
         return parts.join(' | ');

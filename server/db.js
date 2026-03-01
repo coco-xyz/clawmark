@@ -961,7 +961,7 @@ function initDb(dataDir) {
 
         let groupCol = '';
         let selectCol = '';
-        if (group_by === 'classification' && group_by !== 'total') {
+        if (group_by === 'classification') {
             groupCol = ', classification';
             selectCol = ', classification AS group_value';
         } else if (group_by === 'type') {
