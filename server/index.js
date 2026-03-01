@@ -91,6 +91,8 @@ const { WebhookAdapter } = require('./adapters/webhook');
 const { LarkAdapter } = require('./adapters/lark');
 const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
+const { SlackAdapter } = require('./adapters/slack');
+const { EmailAdapter } = require('./adapters/email');
 const { resolveTarget } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations } = require('./ai');
@@ -101,6 +103,8 @@ registry.registerType('webhook', WebhookAdapter);
 registry.registerType('lark', LarkAdapter);
 registry.registerType('telegram', TelegramAdapter);
 registry.registerType('github-issue', GitHubIssueAdapter);
+registry.registerType('slack', SlackAdapter);
+registry.registerType('email', EmailAdapter);
 
 // Load distribution config
 if (config.distribution) {
@@ -1177,7 +1181,7 @@ app.post('/api/v2/endpoints', apiWriteLimiter, v2Auth, (req, res) => {
     if (!name || !name.trim()) return res.status(400).json({ error: 'Missing endpoint name' });
     if (!type) return res.status(400).json({ error: 'Missing endpoint type' });
 
-    const validTypes = ['github-issue', 'lark', 'telegram', 'webhook'];
+    const validTypes = ['github-issue', 'lark', 'telegram', 'webhook', 'slack', 'email'];
     if (!validTypes.includes(type)) {
         return res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(', ')}` });
     }
@@ -1196,6 +1200,14 @@ app.post('/api/v2/endpoints', apiWriteLimiter, v2Auth, (req, res) => {
             break;
         case 'telegram':
             if (!cfg.chat_id) return res.status(400).json({ error: 'Telegram endpoint requires "chat_id" in config' });
+            break;
+        case 'slack':
+            if (!cfg.webhook_url) return res.status(400).json({ error: 'Slack endpoint requires "webhook_url" in config' });
+            break;
+        case 'email':
+            if (!cfg.api_key) return res.status(400).json({ error: 'Email endpoint requires "api_key" in config' });
+            if (!cfg.from) return res.status(400).json({ error: 'Email endpoint requires "from" in config' });
+            if (!cfg.to || (Array.isArray(cfg.to) && cfg.to.length === 0)) return res.status(400).json({ error: 'Email endpoint requires "to" in config' });
             break;
     }
 
@@ -1229,7 +1241,7 @@ app.put('/api/v2/endpoints/:id', apiWriteLimiter, v2Auth, (req, res) => {
 
     // Validate type if provided
     if (type) {
-        const validTypes = ['github-issue', 'lark', 'telegram', 'webhook'];
+        const validTypes = ['github-issue', 'lark', 'telegram', 'webhook', 'slack', 'email'];
         if (!validTypes.includes(type)) {
             return res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(', ')}` });
         }

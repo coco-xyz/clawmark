@@ -333,6 +333,8 @@ function formatTarget(type, config) {
         case 'lark': return `Lark: ${(cfg.webhook_url || '').substring(0, 30)}...`;
         case 'telegram': return `Telegram: ${cfg.chat_id || '?'}`;
         case 'webhook': return `Webhook: ${(cfg.url || '').substring(0, 30)}...`;
+        case 'slack': return `Slack: ${cfg.channel || (cfg.webhook_url || '').substring(0, 30) + '...'}`;
+        case 'email': return `Email: ${(cfg.to || []).join(', ').substring(0, 30) || '?'}`;
         default: return type;
     }
 }
@@ -376,6 +378,27 @@ function updateTargetFields(targetType, existingConfig) {
                 <label>Secret (optional)</label>
                 <input type="password" id="tc-secret" placeholder="signing secret" value="${escHtml(cfg.secret || '')}">`;
             break;
+        case 'slack':
+            html = `
+                <label>Webhook URL</label>
+                <input type="text" id="tc-slack-webhook" placeholder="https://hooks.slack.com/services/T.../B.../xxx" value="${escHtml(cfg.webhook_url || '')}">
+                <label>Channel (optional)</label>
+                <input type="text" id="tc-slack-channel" placeholder="#channel-name" value="${escHtml(cfg.channel || '')}">`;
+            break;
+        case 'email':
+            html = `
+                <label>Provider</label>
+                <select id="tc-email-provider">
+                    <option value="resend"${(cfg.provider || 'resend') === 'resend' ? ' selected' : ''}>Resend</option>
+                    <option value="sendgrid"${cfg.provider === 'sendgrid' ? ' selected' : ''}>SendGrid</option>
+                </select>
+                <label>API Key</label>
+                <input type="password" id="tc-email-apikey" placeholder="re_xxx... or SG.xxx..." value="${escHtml(cfg.api_key || '')}">
+                <label>From</label>
+                <input type="text" id="tc-email-from" placeholder="ClawMark <noreply@example.com>" value="${escHtml(cfg.from || '')}">
+                <label>To (comma-separated)</label>
+                <input type="text" id="tc-email-to" placeholder="team@example.com, lead@example.com" value="${escHtml((cfg.to || []).join(', '))}">`;
+            break;
     }
     targetFieldsEl.innerHTML = html;
 }
@@ -402,6 +425,21 @@ function getTargetConfig() {
             const cfg = { url };
             if (secret) cfg.secret = secret;
             return cfg;
+        }
+        case 'slack': {
+            const webhookUrl = (document.getElementById('tc-slack-webhook')?.value || '').trim();
+            const channel = (document.getElementById('tc-slack-channel')?.value || '').trim();
+            const cfg = { webhook_url: webhookUrl };
+            if (channel) cfg.channel = channel;
+            return cfg;
+        }
+        case 'email': {
+            const provider = (document.getElementById('tc-email-provider')?.value || 'resend');
+            const apiKey = (document.getElementById('tc-email-apikey')?.value || '').trim();
+            const from = (document.getElementById('tc-email-from')?.value || '').trim();
+            const toRaw = (document.getElementById('tc-email-to')?.value || '').trim();
+            const to = toRaw ? toRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+            return { provider, api_key: apiKey, from, to };
         }
         default:
             return {};
@@ -464,6 +502,8 @@ function validateRuleForm() {
     if (target === 'lark' && !cfg.webhook_url) return 'Webhook URL is required';
     if (target === 'telegram' && (!cfg.bot_token || !cfg.chat_id)) return 'Bot Token and Chat ID are required';
     if (target === 'webhook' && !cfg.url) return 'Webhook URL is required';
+    if (target === 'slack' && !cfg.webhook_url) return 'Slack Webhook URL is required';
+    if (target === 'email' && (!cfg.api_key || !cfg.from || !cfg.to?.length)) return 'API Key, From, and To are required';
     return null;
 }
 
