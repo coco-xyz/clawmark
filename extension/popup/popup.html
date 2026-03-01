@@ -254,6 +254,104 @@
 
         .message.success { color: #22c55e; }
         .message.error { color: #ef4444; }
+
+        /* ---- injection toggle ---- */
+
+        .toggle-section {
+            padding: 10px 16px;
+            border-bottom: 1px solid #2a2a3e;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .toggle-label {
+            font-size: 12px;
+            color: #ccc;
+        }
+
+        .toggle-label .sub {
+            font-size: 10px;
+            color: #666;
+            display: block;
+            margin-top: 2px;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 36px;
+            height: 20px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #333;
+            border-radius: 20px;
+            transition: background 0.2s;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background: #888;
+            border-radius: 50%;
+            transition: transform 0.2s, background 0.2s;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background: #5865f2;
+        }
+
+        .toggle-switch input:checked + .toggle-slider::before {
+            transform: translateX(16px);
+            background: #fff;
+        }
+
+        .site-toggle {
+            padding: 4px 16px 10px;
+            border-bottom: 1px solid #2a2a3e;
+            display: none;
+        }
+
+        .site-toggle.visible { display: flex; align-items: center; justify-content: space-between; }
+
+        .site-toggle .site-label {
+            font-size: 11px;
+            color: #888;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 200px;
+        }
+
+        .site-toggle .site-btn {
+            font-size: 11px;
+            padding: 3px 8px;
+            background: rgba(255,255,255,0.08);
+            color: #aaa;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            flex-shrink: 0;
+        }
+
+        .site-toggle .site-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
+        .site-toggle .site-btn.disabled-site { background: rgba(239,68,68,0.15); color: #ef4444; }
+        .site-toggle .site-btn.disabled-site:hover { background: rgba(239,68,68,0.25); }
     </style>
 </head>
 <body>
@@ -265,6 +363,22 @@
     <div class="status" id="status">
         <div class="dot" id="status-dot"></div>
         <span class="text" id="status-text">Checking...</span>
+    </div>
+
+    <!-- Injection toggle -->
+    <div class="toggle-section">
+        <div class="toggle-label">
+            Annotation overlay
+            <span class="sub">Toolbar on text selection</span>
+        </div>
+        <label class="toggle-switch">
+            <input type="checkbox" id="injection-toggle" checked>
+            <span class="toggle-slider"></span>
+        </label>
+    </div>
+    <div class="site-toggle" id="site-toggle">
+        <span class="site-label" id="site-label"></span>
+        <button class="site-btn" id="site-btn"></button>
     </div>
 
     <!-- Auth section -->

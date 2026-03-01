@@ -911,6 +911,7 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
         target_config: result.target_config,
         method: result.method,
         matched_rule: result.matched_rule ? { id: result.matched_rule.id, pattern: result.matched_rule.pattern } : null,
+        js_injection: declaration?.js_injection ?? true,
     });
 });
 
