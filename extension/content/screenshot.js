@@ -26,6 +26,8 @@
     const HANDLE_SIZE = 8;        // selection handle size
     const MIN_SHAPE_SIZE = 5;     // minimum shape size to commit
     const NUMBER_RADIUS = 14;     // numbered marker circle radius
+    const TEXT_FONT = 'bold 20px sans-serif';
+    const NUMBER_FONT = 'bold 14px sans-serif';
 
     // ----------------------------------------------------------- state
 
@@ -194,6 +196,12 @@
                 // Update hint
                 const hint = selectorOverlay.querySelector('.cm-sel-hint');
                 if (hint) hint.textContent = 'Drag to move, handles to resize. Press Enter to confirm.';
+            } else {
+                // Too small — reset visible box
+                selBox.style.display = 'none';
+                const actionsEl = document.getElementById('cm-sel-actions');
+                if (actionsEl) actionsEl.style.display = 'none';
+                selRect = null;
             }
         }
         selDragType = null;
@@ -251,9 +259,15 @@
         if (handle.includes('s')) { h += dy; }
         if (handle.includes('w')) { x += dx; w -= dx; }
         if (handle.includes('e')) { w += dx; }
-        // Prevent negative sizes
-        if (w < 20) { w = 20; }
-        if (h < 20) { h = 20; }
+        // Prevent negative sizes; pin opposite edge when clamped
+        if (w < 20) {
+            if (handle.includes('w')) { x = r.x + r.w - 20; }
+            w = 20;
+        }
+        if (h < 20) {
+            if (handle.includes('n')) { y = r.y + r.h - 20; }
+            h = 20;
+        }
         return { x, y, w, h };
     }
 
@@ -376,9 +390,9 @@
                 return { x: minX - HIT_TOLERANCE, y: minY - HIT_TOLERANCE, w: maxX - minX + HIT_TOLERANCE * 2, h: maxY - minY + HIT_TOLERANCE * 2 };
             }
             case 'text': {
-                ctx.font = 'bold 20px sans-serif';
+                ctx.font = TEXT_FONT;
                 const metrics = ctx.measureText(ann.text);
-                return { x: ann.pos.x - 2, y: ann.pos.y - 20, w: metrics.width + 4, h: 26 };
+                return { x: ann.pos.x - 2, y: ann.pos.y - 22, w: metrics.width + 4, h: 28 };
             }
             case 'number': {
                 const r = NUMBER_RADIUS;
@@ -489,7 +503,7 @@
         } else if (tool === 'arrow' || tool === 'rect' || tool === 'circle') {
             // Live preview
             redraw();
-            drawShapeOnCtx(tool, startPos, pos, color, false);
+            drawShapeOnCtx(tool, startPos, pos, color);
         }
     }
 
@@ -535,18 +549,27 @@
         textInputEl.placeholder = 'Type text...';
 
         const commitText = () => {
+            if (!textInputEl) return; // guard against double-fire (Enter triggers blur)
             const text = textInputEl.value.trim();
+            textInputEl.removeEventListener('blur', commitText);
+            textInputEl.remove();
+            textInputEl = null;
             if (text) {
                 annotations.push({ type: 'text', color, pos: { ...pos }, text });
                 redraw();
             }
+        };
+
+        const cancelText = () => {
+            if (!textInputEl) return;
+            textInputEl.removeEventListener('blur', commitText);
             textInputEl.remove();
             textInputEl = null;
         };
 
         textInputEl.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { e.preventDefault(); commitText(); }
-            if (e.key === 'Escape') { textInputEl.remove(); textInputEl = null; }
+            if (e.key === 'Escape') { cancelText(); }
             e.stopPropagation();
         });
         textInputEl.addEventListener('blur', commitText);
@@ -593,18 +616,19 @@
     }
 
     function renderAnnotation(ann) {
+        ctx.save();
         switch (ann.type) {
             case 'pen':
                 drawPen(ann.points, ann.color);
                 break;
             case 'arrow':
-                drawShapeOnCtx('arrow', ann.from, ann.to, ann.color, false);
+                drawShapeOnCtx('arrow', ann.from, ann.to, ann.color);
                 break;
             case 'rect':
-                drawShapeOnCtx('rect', ann.from, ann.to, ann.color, false);
+                drawShapeOnCtx('rect', ann.from, ann.to, ann.color);
                 break;
             case 'circle':
-                drawShapeOnCtx('circle', ann.from, ann.to, ann.color, false);
+                drawShapeOnCtx('circle', ann.from, ann.to, ann.color);
                 break;
             case 'text':
                 drawText(ann.text, ann.pos, ann.color);
@@ -613,6 +637,7 @@
                 drawNumber(ann.num, ann.pos, ann.color);
                 break;
         }
+        ctx.restore();
     }
 
     function drawPen(points, c) {
@@ -629,7 +654,7 @@
         ctx.stroke();
     }
 
-    function drawShapeOnCtx(type, from, to, c, preview) {
+    function drawShapeOnCtx(type, from, to, c) {
         ctx.strokeStyle = c;
         ctx.lineWidth = LINE_WIDTH;
         ctx.lineCap = 'round';
@@ -663,27 +688,22 @@
     }
 
     function drawText(text, pos, c) {
-        ctx.font = 'bold 20px sans-serif';
+        ctx.font = TEXT_FONT;
         ctx.fillStyle = c;
         ctx.fillText(text, pos.x, pos.y);
     }
 
     function drawNumber(num, pos, c) {
         const r = NUMBER_RADIUS;
-        // Filled circle
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
         ctx.fillStyle = c;
         ctx.fill();
-        // Number text
-        ctx.font = 'bold 14px sans-serif';
+        ctx.font = NUMBER_FONT;
         ctx.fillStyle = '#fff';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(String(num), pos.x, pos.y);
-        // Reset alignment
-        ctx.textAlign = 'start';
-        ctx.textBaseline = 'alphabetic';
     }
 
     // ----------------------------------------------------------- toolbar
@@ -726,7 +746,8 @@
 
     function undoAction() {
         if (annotations.length > 0) {
-            annotations.pop();
+            const removed = annotations.pop();
+            if (removed.type === 'number') numberCounter--;
             selectedIdx = -1;
             redraw();
         }
@@ -734,15 +755,17 @@
 
     function deleteSelected() {
         if (selectedIdx >= 0 && selectedIdx < annotations.length) {
-            annotations.splice(selectedIdx, 1);
+            const removed = annotations.splice(selectedIdx, 1)[0];
+            if (removed.type === 'number') numberCounter--;
             selectedIdx = -1;
             redraw();
         }
     }
 
     function onEditorKey(e) {
-        // Don't capture when typing in text input
-        if (textInputEl && document.activeElement === textInputEl) return;
+        // Don't capture when focus is on an input/textarea
+        const tag = document.activeElement && document.activeElement.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
         if (e.key === 'Escape') {
             if (selectedIdx >= 0) {
