@@ -6,7 +6,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { recommendRoute, buildUserPrompt, validateRecommendation } = require('../server/ai');
+const { recommendRoute, buildUserPrompt, validateRecommendation, validateTargetConfig } = require('../server/ai');
 
 // Mock AI that returns a valid recommendation
 function mockAI(response) {
@@ -206,11 +206,11 @@ describe('buildUserPrompt', () => {
     it('truncates long content and quote', () => {
         const prompt = buildUserPrompt({
             source_url: 'https://example.com',
-            content: 'x'.repeat(2000),
+            content: 'x'.repeat(3000),
             quote: 'y'.repeat(1000),
         });
-        // content truncated to 1000, quote to 500
-        assert.ok(!prompt.includes('x'.repeat(1001)));
+        // content truncated to 2000, quote to 500
+        assert.ok(!prompt.includes('x'.repeat(2001)));
         assert.ok(!prompt.includes('y'.repeat(501)));
     });
 
@@ -222,5 +222,68 @@ describe('buildUserPrompt', () => {
         });
         assert.ok(!prompt.includes('Saved Endpoints'));
         assert.ok(!prompt.includes('Existing Rules'));
+    });
+
+    it('wraps user content in USER_INPUT delimiters', () => {
+        const prompt = buildUserPrompt({
+            source_url: 'https://example.com',
+            source_title: 'Test',
+            content: 'note',
+            quote: 'selected',
+        });
+        assert.ok(prompt.includes('<USER_INPUT>https://example.com</USER_INPUT>'));
+        assert.ok(prompt.includes('<USER_INPUT>Test</USER_INPUT>'));
+        assert.ok(prompt.includes('<USER_INPUT>note</USER_INPUT>'));
+        assert.ok(prompt.includes('<USER_INPUT>selected</USER_INPUT>'));
+    });
+
+    it('handles tags as string gracefully (converts to empty array)', () => {
+        const prompt = buildUserPrompt({
+            source_url: 'https://example.com',
+            tags: 'not-an-array',
+        });
+        assert.ok(!prompt.includes('Tags'));
+    });
+
+    it('limits number of tags', () => {
+        const manyTags = Array.from({ length: 30 }, (_, i) => `tag${i}`);
+        const prompt = buildUserPrompt({
+            source_url: 'https://example.com',
+            tags: manyTags,
+        });
+        assert.ok(prompt.includes('tag0'));
+        assert.ok(prompt.includes('tag19'));
+        assert.ok(!prompt.includes('tag20'));
+    });
+});
+
+describe('validateTargetConfig', () => {
+    it('validates github-issue config', () => {
+        const result = validateTargetConfig({ repo: 'coco-xyz/test', labels: ['bug'], assignees: ['user1'] }, 'github-issue');
+        assert.equal(result.repo, 'coco-xyz/test');
+        assert.deepEqual(result.labels, ['bug']);
+        assert.deepEqual(result.assignees, ['user1']);
+    });
+
+    it('validates webhook config — requires https', () => {
+        const result = validateTargetConfig({ url: 'http://evil.com', method: 'POST' }, 'webhook');
+        assert.equal(result.url, '');
+        const valid = validateTargetConfig({ url: 'https://hooks.slack.com/x', method: 'POST' }, 'webhook');
+        assert.equal(valid.url, 'https://hooks.slack.com/x');
+    });
+
+    it('validates telegram/lark config', () => {
+        const result = validateTargetConfig({ chat_id: '123456' }, 'telegram');
+        assert.equal(result.chat_id, '123456');
+    });
+
+    it('returns default config for null input', () => {
+        const result = validateTargetConfig(null, 'github-issue');
+        assert.equal(result.repo, 'unknown');
+    });
+
+    it('returns default for unknown target type', () => {
+        const result = validateTargetConfig({ foo: 'bar' }, 'unknown');
+        assert.equal(result.repo, 'unknown');
     });
 });

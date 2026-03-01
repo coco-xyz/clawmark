@@ -154,6 +154,14 @@ const apiWriteLimiter = rateLimit({
     message: { error: 'Rate limit exceeded, try again later' },
 });
 
+const aiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'AI rate limit exceeded, try again later' },
+});
+
 const uploadLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 10,
@@ -917,18 +925,18 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
 });
 
 // -- POST /api/v2/routing/recommend — AI-powered routing recommendation
-app.post('/api/v2/routing/recommend', apiReadLimiter, v2Auth, async (req, res) => {
+app.post('/api/v2/routing/recommend', aiLimiter, v2Auth, async (req, res) => {
     const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
     if (!aiApiKey) {
         return res.status(503).json({ error: 'AI routing not configured (missing API key)' });
     }
 
-    const { source_url, source_title, content, quote, type, priority, tags, userName } = req.body;
+    const { source_url, source_title, content, quote, type, priority, tags } = req.body;
     if (!source_url) {
         return res.status(400).json({ error: 'source_url is required' });
     }
 
-    const user = userName || req.v2Auth?.user;
+    const user = req.v2Auth?.user;
     const userRules = user ? itemsDb.getUserRules(user) : [];
     const userEndpoints = user ? itemsDb.getEndpoints(user) : [];
 
@@ -941,7 +949,8 @@ app.post('/api/v2/routing/recommend', apiReadLimiter, v2Auth, async (req, res) =
         });
         res.json({ recommendation });
     } catch (err) {
-        res.status(500).json({ error: 'AI recommendation failed', detail: err.message });
+        console.error('[AI] Recommendation failed:', err.message);
+        res.status(500).json({ error: 'AI recommendation failed' });
     }
 });
 

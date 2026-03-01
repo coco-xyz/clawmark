@@ -23,7 +23,7 @@ const MAX_RESPONSE_BYTES = 64 * 1024; // 64KB
  * @returns {Promise<string>}  Model response text
  */
 async function callGemini(apiKey, systemPrompt, userPrompt) {
-    const url = `${GEMINI_URL}?key=${apiKey}`;
+    const url = GEMINI_URL;
     const body = JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
@@ -35,39 +35,50 @@ async function callGemini(apiKey, systemPrompt, userPrompt) {
     });
 
     return new Promise((resolve, reject) => {
-        const req = https.request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res) => {
+        let settled = false;
+        const fail = (err) => { if (!settled) { settled = true; reject(err); } };
+        const succeed = (val) => { if (!settled) { settled = true; resolve(val); } };
+
+        const req = https.request(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey,
+            },
+        }, (res) => {
             const chunks = [];
             let totalBytes = 0;
             res.on('data', (chunk) => {
                 totalBytes += chunk.length;
                 if (totalBytes > MAX_RESPONSE_BYTES) {
                     req.destroy();
-                    reject(new Error('Response too large'));
+                    fail(new Error('Response too large'));
                     return;
                 }
                 chunks.push(chunk);
             });
             res.on('end', () => {
+                if (settled) return;
                 const text = Buffer.concat(chunks).toString();
                 if (res.statusCode !== 200) {
-                    reject(new Error(`Gemini API error ${res.statusCode}: ${text.slice(0, 200)}`));
+                    fail(new Error(`Gemini API error ${res.statusCode}`));
                     return;
                 }
                 try {
                     const data = JSON.parse(text);
                     const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
                     if (!content) {
-                        reject(new Error('Empty response from Gemini'));
+                        fail(new Error('Empty response from Gemini'));
                         return;
                     }
-                    resolve(content);
+                    succeed(content);
                 } catch (e) {
-                    reject(new Error(`Failed to parse Gemini response: ${e.message}`));
+                    fail(new Error('Failed to parse Gemini response'));
                 }
             });
         });
-        req.on('error', reject);
-        req.setTimeout(REQUEST_TIMEOUT, () => { req.destroy(); reject(new Error('Gemini API timeout')); });
+        req.on('error', (err) => fail(err));
+        req.setTimeout(REQUEST_TIMEOUT, () => { req.destroy(); fail(new Error('Gemini API timeout')); });
         req.write(body);
         req.end();
     });
@@ -153,15 +164,25 @@ async function recommendRoute(params) {
 /**
  * Build the user prompt with all available context.
  */
-function buildUserPrompt({ source_url, source_title, content, quote, type, priority, tags, userRules, userEndpoints }) {
-    const parts = [`**Page URL:** ${source_url}`];
+const MAX_URL_LEN = 2048;
+const MAX_TITLE_LEN = 500;
+const MAX_CONTENT_LEN = 2000;
+const MAX_QUOTE_LEN = 500;
+const MAX_TAG_LEN = 100;
+const MAX_TAGS = 20;
 
-    if (source_title) parts.push(`**Page Title:** ${source_title}`);
-    if (quote) parts.push(`**Selected Text:** ${quote.slice(0, 500)}`);
-    if (content) parts.push(`**User Note:** ${content.slice(0, 1000)}`);
-    if (type) parts.push(`**Type:** ${type}`);
-    if (priority) parts.push(`**Priority:** ${priority}`);
-    if (tags?.length) parts.push(`**Tags:** ${tags.join(', ')}`);
+function buildUserPrompt({ source_url, source_title, content, quote, type, priority, tags, userRules, userEndpoints }) {
+    const safeUrl = String(source_url).slice(0, MAX_URL_LEN);
+    const parts = [`**Page URL:** <USER_INPUT>${safeUrl}</USER_INPUT>`];
+
+    if (source_title) parts.push(`**Page Title:** <USER_INPUT>${String(source_title).slice(0, MAX_TITLE_LEN)}</USER_INPUT>`);
+    if (quote) parts.push(`**Selected Text:** <USER_INPUT>${String(quote).slice(0, MAX_QUOTE_LEN)}</USER_INPUT>`);
+    if (content) parts.push(`**User Note:** <USER_INPUT>${String(content).slice(0, MAX_CONTENT_LEN)}</USER_INPUT>`);
+    if (type) parts.push(`**Type:** ${String(type).slice(0, 50)}`);
+    if (priority) parts.push(`**Priority:** ${String(priority).slice(0, 50)}`);
+
+    const safeTags = Array.isArray(tags) ? tags.slice(0, MAX_TAGS).map(t => String(t).slice(0, MAX_TAG_LEN)) : [];
+    if (safeTags.length) parts.push(`**Tags:** ${safeTags.join(', ')}`);
 
     if (userEndpoints?.length > 0) {
         const epSummary = userEndpoints.map(ep => `- ${ep.name} (${ep.type})`).join('\n');
@@ -181,6 +202,31 @@ function buildUserPrompt({ source_url, source_title, content, quote, type, prior
 /**
  * Validate and normalize the AI recommendation.
  */
+function validateTargetConfig(config, targetType) {
+    if (!config || typeof config !== 'object') {
+        return { repo: 'unknown', labels: ['clawmark'] };
+    }
+    const sanitized = {};
+    switch (targetType) {
+        case 'github-issue':
+            sanitized.repo = typeof config.repo === 'string' ? config.repo.slice(0, 200) : 'unknown';
+            sanitized.labels = Array.isArray(config.labels) ? config.labels.slice(0, 10).map(l => String(l).slice(0, 50)) : ['clawmark'];
+            sanitized.assignees = Array.isArray(config.assignees) ? config.assignees.slice(0, 5).map(a => String(a).slice(0, 50)) : [];
+            break;
+        case 'webhook':
+            sanitized.url = typeof config.url === 'string' && /^https:\/\//.test(config.url) ? config.url.slice(0, 2048) : '';
+            sanitized.method = config.method === 'GET' ? 'GET' : 'POST';
+            break;
+        case 'lark':
+        case 'telegram':
+            sanitized.chat_id = typeof config.chat_id === 'string' ? config.chat_id.slice(0, 100) : '';
+            break;
+        default:
+            return { repo: 'unknown', labels: ['clawmark'] };
+    }
+    return sanitized;
+}
+
 function validateRecommendation(raw) {
     const validTypes = ['github-issue', 'webhook', 'lark', 'telegram'];
     const validClassifications = ['bug', 'feature_request', 'question', 'praise', 'general'];
@@ -190,9 +236,7 @@ function validateRecommendation(raw) {
     const confidence = typeof raw.confidence === 'number' ? Math.max(0, Math.min(1, raw.confidence)) : 0.5;
     const reasoning = typeof raw.reasoning === 'string' ? raw.reasoning.slice(0, 500) : '';
 
-    const target_config = (raw.target_config && typeof raw.target_config === 'object')
-        ? raw.target_config
-        : { repo: 'unknown', labels: ['clawmark'] };
+    const target_config = validateTargetConfig(raw.target_config, target_type);
 
     let suggested_rule = null;
     if (raw.suggested_rule && typeof raw.suggested_rule === 'object') {
@@ -203,7 +247,7 @@ function validateRecommendation(raw) {
                 rule_type: sr.rule_type,
                 pattern: String(sr.pattern).slice(0, 500),
                 target_type: sr.target_type,
-                target_config: (sr.target_config && typeof sr.target_config === 'object') ? sr.target_config : target_config,
+                target_config: validateTargetConfig(sr.target_config, sr.target_type),
             };
         }
     }
@@ -211,4 +255,4 @@ function validateRecommendation(raw) {
     return { classification, target_type, target_config, confidence, reasoning, suggested_rule };
 }
 
-module.exports = { recommendRoute, callGemini, buildUserPrompt, validateRecommendation, SYSTEM_PROMPT };
+module.exports = { recommendRoute, validateRecommendation, buildUserPrompt, validateTargetConfig };
