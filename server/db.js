@@ -240,6 +240,17 @@ function initDb(dataDir) {
         db.exec(`ALTER TABLE dispatch_log ADD COLUMN event TEXT NOT NULL DEFAULT 'item.created'`);
     }
 
+    // ----------------------------------------- schema migration: screenshot_analysis (#117)
+    const itemCols2 = db.pragma('table_info(items)').map(c => c.name);
+    if (!itemCols2.includes('screenshot_analysis')) {
+        db.exec(`ALTER TABLE items ADD COLUMN screenshot_analysis TEXT`);
+        console.log('[db] migrated: added column items.screenshot_analysis');
+    }
+    if (!itemCols2.includes('analyzed_at')) {
+        db.exec(`ALTER TABLE items ADD COLUMN analyzed_at TEXT`);
+        console.log('[db] migrated: added column items.analyzed_at');
+    }
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -513,6 +524,13 @@ function initDb(dataDir) {
         return db.prepare(
             'UPDATE items SET classification = ?, classification_confidence = ?, classified_at = ?, updated_at = ? WHERE id = ? AND classification IS NULL'
         ).run(classification, confidence, now, now, item_id);
+    }
+
+    function updateItemScreenshotAnalysis(item_id, analysis) {
+        const now = new Date().toISOString();
+        return db.prepare(
+            'UPDATE items SET screenshot_analysis = ?, analyzed_at = ?, updated_at = ? WHERE id = ?'
+        ).run(JSON.stringify(analysis), now, now, item_id);
     }
 
     function getItemsByClassification({ app_id = 'default', classification, limit = 500 }) {
@@ -1192,6 +1210,7 @@ function initDb(dataDir) {
         updateItemTags,
         updateItemClassification,
         updateItemClassificationIfNull,
+        updateItemScreenshotAnalysis,
         createApiKey,
         validateApiKey,
         revokeApiKey,

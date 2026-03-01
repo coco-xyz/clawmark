@@ -6,7 +6,8 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { recommendRoute, buildUserPrompt, validateRecommendation, validateTargetConfig, classifyAnnotation, generateTags } = require('../server/ai');
+const path = require('path');
+const { recommendRoute, buildUserPrompt, validateRecommendation, validateTargetConfig, classifyAnnotation, generateTags, analyzeScreenshot, validateScreenshotAnalysis } = require('../server/ai');
 
 // Mock AI that returns a valid recommendation
 function mockAI(response) {
@@ -494,5 +495,163 @@ describe('generateTags', () => {
             callAI: async () => JSON.stringify({ tags: 'not-an-array' }),
         });
         assert.deepEqual(result.tags, []);
+    });
+});
+
+// ================================================================= Screenshot Analysis (#117)
+
+const TEST_IMAGE = path.join(__dirname, 'fixtures', 'test-screenshot.png');
+
+const VALID_ANALYSIS = {
+    summary: 'User highlighted a broken button in the header navigation',
+    annotations_found: [
+        { description: 'Red rectangle around the login button', area: 'header', annotation_type: 'rectangle' },
+        { description: 'Arrow pointing to misaligned text', area: 'content', annotation_type: 'arrow' },
+    ],
+    intent: 'bug_report',
+    severity: 'major',
+    details: 'The login button appears unresponsive and the text below it is misaligned with the grid.',
+    suggested_actions: ['Fix button click handler', 'Adjust CSS grid alignment'],
+};
+
+// Mock vision AI — receives extra params (imageBuffer, mimeType)
+function mockVisionAI(response) {
+    return async (_apiKey, _system, _user, _imageBuffer, _mimeType) => JSON.stringify(response);
+}
+
+describe('analyzeScreenshot', () => {
+    it('returns analysis with valid response', async () => {
+        const result = await analyzeScreenshot({
+            imagePath: TEST_IMAGE,
+            source_url: 'https://example.com/app',
+            source_title: 'My App',
+            content: 'The button is broken',
+            apiKey: 'test',
+            callAI: mockVisionAI(VALID_ANALYSIS),
+        });
+
+        assert.equal(result.summary, VALID_ANALYSIS.summary);
+        assert.equal(result.intent, 'bug_report');
+        assert.equal(result.severity, 'major');
+        assert.equal(result.annotations_found.length, 2);
+        assert.equal(result.suggested_actions.length, 2);
+    });
+
+    it('throws when imagePath is missing', async () => {
+        await assert.rejects(
+            () => analyzeScreenshot({ apiKey: 'test', callAI: mockVisionAI(VALID_ANALYSIS) }),
+            { message: 'imagePath is required' }
+        );
+    });
+
+    it('throws when image file does not exist', async () => {
+        await assert.rejects(
+            () => analyzeScreenshot({
+                imagePath: '/nonexistent/file.png',
+                apiKey: 'test',
+                callAI: mockVisionAI(VALID_ANALYSIS),
+            }),
+            { message: 'Screenshot file not found' }
+        );
+    });
+
+    it('passes image buffer and mime type to AI callback', async () => {
+        let capturedMime = null;
+        let capturedBuffer = null;
+
+        await analyzeScreenshot({
+            imagePath: TEST_IMAGE,
+            apiKey: 'test',
+            callAI: async (_key, _sys, _user, imageBuffer, mimeType) => {
+                capturedMime = mimeType;
+                capturedBuffer = imageBuffer;
+                return JSON.stringify(VALID_ANALYSIS);
+            },
+        });
+
+        assert.equal(capturedMime, 'image/png');
+        assert.ok(Buffer.isBuffer(capturedBuffer));
+        assert.ok(capturedBuffer.length > 0);
+    });
+
+    it('works with minimal context (no source_url, no content)', async () => {
+        const result = await analyzeScreenshot({
+            imagePath: TEST_IMAGE,
+            apiKey: 'test',
+            callAI: mockVisionAI({ summary: 'Annotated screenshot', intent: 'general', severity: 'info' }),
+        });
+        assert.equal(result.intent, 'general');
+        assert.equal(result.severity, 'info');
+    });
+});
+
+describe('validateScreenshotAnalysis', () => {
+    it('validates a complete valid response', () => {
+        const result = validateScreenshotAnalysis(VALID_ANALYSIS);
+        assert.equal(result.intent, 'bug_report');
+        assert.equal(result.severity, 'major');
+        assert.equal(result.annotations_found.length, 2);
+    });
+
+    it('defaults unknown intent to general', () => {
+        const result = validateScreenshotAnalysis({ ...VALID_ANALYSIS, intent: 'invalid' });
+        assert.equal(result.intent, 'general');
+    });
+
+    it('defaults unknown severity to info', () => {
+        const result = validateScreenshotAnalysis({ ...VALID_ANALYSIS, severity: 'unknown' });
+        assert.equal(result.severity, 'info');
+    });
+
+    it('truncates long summary to 500 chars', () => {
+        const result = validateScreenshotAnalysis({ ...VALID_ANALYSIS, summary: 'x'.repeat(600) });
+        assert.equal(result.summary.length, 500);
+    });
+
+    it('truncates long details to 1000 chars', () => {
+        const result = validateScreenshotAnalysis({ ...VALID_ANALYSIS, details: 'x'.repeat(1200) });
+        assert.equal(result.details.length, 1000);
+    });
+
+    it('limits annotations to 20', () => {
+        const manyAnns = Array.from({ length: 25 }, (_, i) => ({
+            description: `annotation ${i}`, area: 'content', annotation_type: 'rectangle'
+        }));
+        const result = validateScreenshotAnalysis({ ...VALID_ANALYSIS, annotations_found: manyAnns });
+        assert.equal(result.annotations_found.length, 20);
+    });
+
+    it('defaults invalid annotation_type to highlight', () => {
+        const result = validateScreenshotAnalysis({
+            ...VALID_ANALYSIS,
+            annotations_found: [{ description: 'test', area: 'header', annotation_type: 'invalid' }],
+        });
+        assert.equal(result.annotations_found[0].annotation_type, 'highlight');
+    });
+
+    it('handles missing annotations_found gracefully', () => {
+        const result = validateScreenshotAnalysis({ summary: 'test', intent: 'general', severity: 'info' });
+        assert.deepEqual(result.annotations_found, []);
+        assert.deepEqual(result.suggested_actions, []);
+    });
+
+    it('limits suggested_actions to 5', () => {
+        const actions = Array.from({ length: 8 }, (_, i) => `action ${i}`);
+        const result = validateScreenshotAnalysis({ ...VALID_ANALYSIS, suggested_actions: actions });
+        assert.equal(result.suggested_actions.length, 5);
+    });
+
+    it('accepts all valid intents', () => {
+        for (const intent of ['bug_report', 'ui_feedback', 'content_issue', 'feature_suggestion', 'question', 'general']) {
+            const result = validateScreenshotAnalysis({ ...VALID_ANALYSIS, intent });
+            assert.equal(result.intent, intent);
+        }
+    });
+
+    it('accepts all valid severities', () => {
+        for (const severity of ['critical', 'major', 'minor', 'cosmetic', 'info']) {
+            const result = validateScreenshotAnalysis({ ...VALID_ANALYSIS, severity });
+            assert.equal(result.severity, severity);
+        }
     });
 });
