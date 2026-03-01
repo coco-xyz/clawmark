@@ -22,6 +22,9 @@ const { WebhookAdapter } = require('../server/adapters/webhook');
 const { LarkAdapter } = require('../server/adapters/lark');
 const { SlackAdapter } = require('../server/adapters/slack');
 const { EmailAdapter } = require('../server/adapters/email');
+const { LinearAdapter } = require('../server/adapters/linear');
+const { JiraAdapter } = require('../server/adapters/jira');
+const { HxaConnectAdapter } = require('../server/adapters/hxa-connect');
 
 // ------------------------------------------------------------------ helpers
 
@@ -1129,5 +1132,714 @@ describe('EmailAdapter — SendGrid from parsing (M2)', () => {
 
         const result = adapter._parseSendGridFrom('My Company Bot <bot@company.com>');
         assert.deepEqual(result, { name: 'My Company Bot', email: 'bot@company.com' });
+    });
+});
+
+// ================================================================= Linear Adapter
+
+describe('LinearAdapter — validation', () => {
+    it('requires api_key', () => {
+        const adapter = new LinearAdapter({ team_id: 'team-uuid' });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('api_key'));
+    });
+
+    it('requires team_id', () => {
+        const adapter = new LinearAdapter({ api_key: 'lin_api_xxx' });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('team_id'));
+    });
+
+    it('accepts valid config', () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxxxxxxxxxxx',
+            team_id: 'abc-def-123',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+});
+
+describe('LinearAdapter — title building', () => {
+    it('builds title from item title', () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+        });
+
+        const title = adapter._buildTitle({ title: 'Login broken' });
+        assert.equal(title, '[ClawMark] Login broken');
+    });
+
+    it('builds title from quote when no title', () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+        });
+
+        const title = adapter._buildTitle({ quote: 'Some selected text' });
+        assert.ok(title.includes('[ClawMark]'));
+        assert.ok(title.includes('Some selected text'));
+    });
+
+    it('falls back to default when empty', () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+        });
+
+        const title = adapter._buildTitle({});
+        assert.equal(title, '[ClawMark] New item');
+    });
+
+    it('truncates long content to 80 chars', () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+        });
+
+        const longQuote = 'x'.repeat(200);
+        const title = adapter._buildTitle({ quote: longQuote });
+        assert.ok(title.length <= '[ClawMark] '.length + 80);
+    });
+});
+
+describe('LinearAdapter — description building', () => {
+    it('builds complete description', () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+        });
+
+        const desc = adapter._buildDescription({
+            type: 'issue',
+            priority: 'high',
+            created_by: 'Alice',
+            source_url: 'https://example.com/page',
+            source_title: 'Login Page',
+            quote: 'The button is broken',
+            tags: ['ui', 'regression'],
+            messages: [{ content: 'Please fix ASAP' }],
+        }, {});
+
+        assert.ok(desc.includes('issue'));
+        assert.ok(desc.includes('high'));
+        assert.ok(desc.includes('Alice'));
+        assert.ok(desc.includes('https://example.com/page'));
+        assert.ok(desc.includes('Login Page'));
+        assert.ok(desc.includes('The button is broken'));
+        assert.ok(desc.includes('ui'));
+        assert.ok(desc.includes('regression'));
+        assert.ok(desc.includes('Please fix ASAP'));
+        assert.ok(desc.includes('Created by ClawMark'));
+    });
+
+    it('handles missing optional fields', () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+        });
+
+        const desc = adapter._buildDescription({}, {});
+        assert.ok(desc.includes('normal'));
+        assert.ok(desc.includes('Created by ClawMark'));
+    });
+
+    it('handles string tags', () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+        });
+
+        const desc = adapter._buildDescription({ tags: '["tag1", "tag2"]' }, {});
+        assert.ok(desc.includes('tag1'));
+        assert.ok(desc.includes('tag2'));
+    });
+});
+
+describe('LinearAdapter — persistence', () => {
+    it('uses in-memory map when no db provided', () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+        });
+
+        adapter._setMapping('item-1', 'issue-uuid', 'https://linear.app/team/ISS-1');
+        const mapping = adapter._getMapping('item-1');
+        assert.equal(mapping.id, 'issue-uuid');
+        assert.equal(mapping.url, 'https://linear.app/team/ISS-1');
+        assert.equal(adapter._getMapping('nonexistent'), null);
+    });
+
+    it('uses db when provided', () => {
+        const store = new Map();
+        const mockDb = {
+            setAdapterMapping({ item_id, adapter, channel, external_id, external_url }) {
+                store.set(`${item_id}:${adapter}:${channel}`, { item_id, adapter, channel, external_id, external_url });
+            },
+            getAdapterMapping({ item_id, adapter, channel }) {
+                return store.get(`${item_id}:${adapter}:${channel}`) || null;
+            },
+        };
+
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+            db: mockDb,
+            channelName: 'linear-test',
+        });
+
+        adapter._setMapping('item-1', 'issue-uuid', 'https://linear.app/team/ISS-1');
+        const mapping = adapter._getMapping('item-1');
+        assert.equal(mapping.id, 'issue-uuid');
+        assert.equal(adapter._memoryMap.size, 0);
+        assert.ok(store.has('item-1:linear:linear-test'));
+    });
+});
+
+describe('LinearAdapter — event routing', () => {
+    it('returns undefined for unknown events', async () => {
+        const adapter = new LinearAdapter({
+            api_key: 'lin_api_xxx',
+            team_id: 'team-uuid',
+        });
+
+        const result = await adapter.send('discussion.created', {}, {});
+        assert.equal(result, undefined);
+    });
+});
+
+// ================================================================= Jira Adapter
+
+describe('JiraAdapter — validation', () => {
+    it('requires domain', () => {
+        const adapter = new JiraAdapter({
+            email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('domain'));
+    });
+
+    it('requires email', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', api_token: 'xxx', project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('email'));
+    });
+
+    it('requires api_token', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('api_token'));
+    });
+
+    it('requires project_key', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx',
+        });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('project_key'));
+    });
+
+    it('validates project_key format', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'invalid',
+        });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('uppercase'));
+    });
+
+    it('accepts valid config', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam',
+            email: 'user@example.com',
+            api_token: 'ATATT3xxxx',
+            project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+
+    it('accepts project_key with digits', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam',
+            email: 'user@example.com',
+            api_token: 'ATATT3xxxx',
+            project_key: 'CM2',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+
+    it('rejects domain with dots', () => {
+        const adapter = new JiraAdapter({
+            domain: 'evil.com/path',
+            email: 'a@b.com',
+            api_token: 'xxx',
+            project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('alphanumeric'));
+    });
+
+    it('rejects domain with slashes', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam/../../etc',
+            email: 'a@b.com',
+            api_token: 'xxx',
+            project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('accepts domain with hyphens', () => {
+        const adapter = new JiraAdapter({
+            domain: 'my-team-123',
+            email: 'a@b.com',
+            api_token: 'xxx',
+            project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+
+    it('rejects domain starting with hyphen', () => {
+        const adapter = new JiraAdapter({
+            domain: '-myteam',
+            email: 'a@b.com',
+            api_token: 'xxx',
+            project_key: 'PROJ',
+        });
+        assert.equal(adapter.validate().ok, false);
+    });
+});
+
+describe('JiraAdapter — summary building', () => {
+    it('builds summary from item title', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+
+        const summary = adapter._buildSummary({ title: 'Login broken' });
+        assert.equal(summary, '[ClawMark] Login broken');
+    });
+
+    it('falls back to quote when no title', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+
+        const summary = adapter._buildSummary({ quote: 'Error text' });
+        assert.ok(summary.includes('[ClawMark]'));
+        assert.ok(summary.includes('Error text'));
+    });
+});
+
+describe('JiraAdapter — ADF description building', () => {
+    it('builds valid ADF document', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+
+        const desc = adapter._buildDescription({
+            type: 'issue',
+            priority: 'high',
+            created_by: 'Alice',
+            source_url: 'https://example.com',
+            quote: 'Error message',
+            tags: ['ui', 'bug'],
+            messages: [{ content: 'Fix this' }],
+        }, {});
+
+        assert.equal(desc.type, 'doc');
+        assert.equal(desc.version, 1);
+        assert.ok(Array.isArray(desc.content));
+        assert.ok(desc.content.length >= 3);
+
+        // Check heading
+        assert.equal(desc.content[0].type, 'heading');
+        assert.equal(desc.content[0].content[0].text, 'ClawMark Item');
+
+        // Check blockquote exists for quote
+        const blockquote = desc.content.find(n => n.type === 'blockquote');
+        assert.ok(blockquote);
+        assert.ok(blockquote.content[0].content[0].text.includes('Error message'));
+
+        // Check rule exists (footer separator)
+        const rule = desc.content.find(n => n.type === 'rule');
+        assert.ok(rule);
+    });
+
+    it('handles missing optional fields', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+
+        const desc = adapter._buildDescription({}, {});
+        assert.equal(desc.type, 'doc');
+        assert.ok(desc.content.length >= 2);
+    });
+
+    it('handles string tags', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+
+        const desc = adapter._buildDescription({ tags: '["tag1", "tag2"]' }, {});
+        const tagNode = desc.content.find(n =>
+            n.type === 'paragraph' && n.content?.some(c => c.text?.includes('tag1'))
+        );
+        assert.ok(tagNode);
+    });
+});
+
+describe('JiraAdapter — persistence', () => {
+    it('uses in-memory map when no db provided', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+
+        adapter._setMapping('item-1', 'PROJ-42', 'https://myteam.atlassian.net/browse/PROJ-42');
+        const mapping = adapter._getMapping('item-1');
+        assert.equal(mapping.key, 'PROJ-42');
+        assert.equal(mapping.url, 'https://myteam.atlassian.net/browse/PROJ-42');
+        assert.equal(adapter._getMapping('nonexistent'), null);
+    });
+
+    it('uses db when provided', () => {
+        const store = new Map();
+        const mockDb = {
+            setAdapterMapping({ item_id, adapter, channel, external_id, external_url }) {
+                store.set(`${item_id}:${adapter}:${channel}`, { item_id, adapter, channel, external_id, external_url });
+            },
+            getAdapterMapping({ item_id, adapter, channel }) {
+                return store.get(`${item_id}:${adapter}:${channel}`) || null;
+            },
+        };
+
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+            db: mockDb, channelName: 'jira-test',
+        });
+
+        adapter._setMapping('item-1', 'PROJ-99', 'https://myteam.atlassian.net/browse/PROJ-99');
+        const mapping = adapter._getMapping('item-1');
+        assert.equal(mapping.key, 'PROJ-99');
+        assert.equal(adapter._memoryMap.size, 0);
+        assert.ok(store.has('item-1:jira:jira-test'));
+    });
+});
+
+describe('JiraAdapter — priority mapping', () => {
+    it('maps ClawMark priority to Jira priority', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+
+        // Internal: test the priority mapping logic used in _createIssue
+        const priorityMap = { critical: 'Highest', high: 'High', normal: 'Medium', low: 'Low' };
+        assert.equal(priorityMap['critical'], 'Highest');
+        assert.equal(priorityMap['high'], 'High');
+        assert.equal(priorityMap['normal'], 'Medium');
+        assert.equal(priorityMap['low'], 'Low');
+    });
+
+    it('uses default priority from config when set', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+            priority: 'Blocker',
+        });
+        assert.equal(adapter.defaultPriority, 'Blocker');
+    });
+
+    it('defaults issue type to Task', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+        assert.equal(adapter.issueType, 'Task');
+    });
+
+    it('accepts custom issue type', () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+            issue_type: 'Bug',
+        });
+        assert.equal(adapter.issueType, 'Bug');
+    });
+});
+
+describe('JiraAdapter — event routing', () => {
+    it('returns undefined for unknown events', async () => {
+        const adapter = new JiraAdapter({
+            domain: 'myteam', email: 'a@b.com', api_token: 'xxx', project_key: 'PROJ',
+        });
+
+        const result = await adapter.send('discussion.created', {}, {});
+        assert.equal(result, undefined);
+    });
+});
+
+// ================================================================= HxA Connect Adapter
+
+describe('HxaConnectAdapter — validation', () => {
+    it('requires hub_url', () => {
+        const adapter = new HxaConnectAdapter({ agent_id: 'uuid' });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('hub_url'));
+    });
+
+    it('requires agent_id', () => {
+        const adapter = new HxaConnectAdapter({ hub_url: 'https://hub.example.com' });
+        assert.equal(adapter.validate().ok, false);
+        assert.ok(adapter.validate().error.includes('agent_id'));
+    });
+
+    it('rejects invalid URL', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'not-a-url', agent_id: 'uuid',
+        });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('rejects non-http protocol', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'ftp://hub.example.com', agent_id: 'uuid',
+        });
+        assert.equal(adapter.validate().ok, false);
+    });
+
+    it('accepts valid https config', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'https://jessie.coco.site/hub',
+            agent_id: '2952bd7b-31a7-4e99-a69b-639bb7e05981',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+
+    it('accepts valid http config', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'http://localhost:3000/hub',
+            agent_id: 'test-agent',
+        });
+        assert.equal(adapter.validate().ok, true);
+    });
+});
+
+describe('HxaConnectAdapter — message building', () => {
+    it('builds complete message with all fields', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'https://hub.example.com',
+            agent_id: 'target-uuid',
+            thread_id: 'custom-thread',
+        });
+
+        const msg = adapter._buildMessage('item.created', {
+            id: 'item-1',
+            title: 'Login broken',
+            type: 'issue',
+            priority: 'high',
+            created_by: 'Alice',
+            source_url: 'https://example.com/login',
+            quote: 'Error: invalid credentials',
+            tags: ['auth', 'critical'],
+        }, {});
+
+        assert.equal(msg.target, 'target-uuid');
+        assert.equal(msg.thread, 'custom-thread');
+        assert.ok(msg.content.includes('[ClawMark] New Item'));
+        assert.ok(msg.content.includes('Login broken'));
+        assert.ok(msg.content.includes('Priority: high'));
+        assert.ok(msg.content.includes('Type: issue'));
+        assert.ok(msg.content.includes('By: Alice'));
+        assert.ok(msg.content.includes('Source: https://example.com/login'));
+        assert.ok(msg.content.includes('auth'));
+        assert.ok(msg.content.includes('critical'));
+        assert.equal(msg.metadata.source, 'clawmark');
+        assert.equal(msg.metadata.event, 'item.created');
+        assert.equal(msg.metadata.item_id, 'item-1');
+    });
+
+    it('uses default thread when no thread_id configured', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'https://hub.example.com',
+            agent_id: 'target-uuid',
+        });
+
+        const msg = adapter._buildMessage('item.created', { id: 'item-42' }, {});
+        assert.equal(msg.thread, 'clawmark-item-42');
+    });
+
+    it('handles resolved event', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'https://hub.example.com',
+            agent_id: 'target-uuid',
+        });
+
+        const msg = adapter._buildMessage('item.resolved', { title: 'Fixed bug' }, {});
+        assert.ok(msg.content.includes('Resolved'));
+    });
+
+    it('handles assigned event with assignee', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'https://hub.example.com',
+            agent_id: 'target-uuid',
+        });
+
+        const msg = adapter._buildMessage('item.assigned', {
+            title: 'Task',
+            assignee: 'Bob',
+        }, {});
+
+        assert.ok(msg.content.includes('Assigned'));
+        assert.ok(msg.content.includes('Assignee: Bob'));
+    });
+
+    it('handles missing optional fields', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'https://hub.example.com',
+            agent_id: 'target-uuid',
+        });
+
+        const msg = adapter._buildMessage('item.created', {}, {});
+        assert.ok(msg.content.includes('[ClawMark]'));
+        assert.ok(msg.content.includes('New Item'));
+    });
+
+    it('handles string tags', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'https://hub.example.com',
+            agent_id: 'target-uuid',
+        });
+
+        const msg = adapter._buildMessage('item.created', {
+            tags: '["tag1", "tag2"]',
+        }, {});
+
+        assert.ok(msg.content.includes('tag1'));
+        assert.ok(msg.content.includes('tag2'));
+    });
+
+    it('does not include priority line for normal priority', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'https://hub.example.com',
+            agent_id: 'target-uuid',
+        });
+
+        const msg = adapter._buildMessage('item.created', { priority: 'normal' }, {});
+        assert.ok(!msg.content.includes('Priority:'));
+    });
+
+    it('includes priority line for non-normal priority', () => {
+        const adapter = new HxaConnectAdapter({
+            hub_url: 'https://hub.example.com',
+            agent_id: 'target-uuid',
+        });
+
+        const msg = adapter._buildMessage('item.created', { priority: 'critical' }, {});
+        assert.ok(msg.content.includes('Priority: critical'));
+    });
+});
+
+// ================================================================= AdapterRegistry — new adapter types
+
+describe('AdapterRegistry — new adapter types integration', () => {
+    it('registers and loads linear adapter', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('linear', LinearAdapter);
+
+        registry.loadConfig({
+            rules: [],
+            channels: {
+                'linear-main': {
+                    adapter: 'linear',
+                    api_key: 'lin_api_xxx',
+                    team_id: 'team-uuid',
+                },
+            },
+        });
+
+        assert.ok(registry.channels.has('linear-main'));
+        assert.equal(registry.channels.get('linear-main').type, 'linear');
+    });
+
+    it('registers and loads jira adapter', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('jira', JiraAdapter);
+
+        registry.loadConfig({
+            rules: [],
+            channels: {
+                'jira-main': {
+                    adapter: 'jira',
+                    domain: 'myteam',
+                    email: 'a@b.com',
+                    api_token: 'xxx',
+                    project_key: 'PROJ',
+                },
+            },
+        });
+
+        assert.ok(registry.channels.has('jira-main'));
+        assert.equal(registry.channels.get('jira-main').type, 'jira');
+    });
+
+    it('registers and loads hxa-connect adapter', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('hxa-connect', HxaConnectAdapter);
+
+        registry.loadConfig({
+            rules: [],
+            channels: {
+                'hxa-notify': {
+                    adapter: 'hxa-connect',
+                    hub_url: 'https://hub.example.com',
+                    agent_id: 'target-uuid',
+                },
+            },
+        });
+
+        assert.ok(registry.channels.has('hxa-notify'));
+        assert.equal(registry.channels.get('hxa-notify').type, 'hxa-connect');
+    });
+
+    it('rejects invalid linear config', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('linear', LinearAdapter);
+
+        registry.loadConfig({
+            rules: [],
+            channels: {
+                bad: { adapter: 'linear' /* missing api_key + team_id */ },
+            },
+        });
+
+        assert.equal(registry.channels.has('bad'), false);
+    });
+
+    it('rejects invalid jira config', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('jira', JiraAdapter);
+
+        registry.loadConfig({
+            rules: [],
+            channels: {
+                bad: { adapter: 'jira', domain: 'x' /* missing email, api_token, project_key */ },
+            },
+        });
+
+        assert.equal(registry.channels.has('bad'), false);
+    });
+
+    it('rejects invalid hxa-connect config', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('hxa-connect', HxaConnectAdapter);
+
+        registry.loadConfig({
+            rules: [],
+            channels: {
+                bad: { adapter: 'hxa-connect' /* missing hub_url + agent_id */ },
+            },
+        });
+
+        assert.equal(registry.channels.has('bad'), false);
     });
 });

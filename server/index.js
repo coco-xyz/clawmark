@@ -95,6 +95,9 @@ const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 const { SlackAdapter } = require('./adapters/slack');
 const { EmailAdapter } = require('./adapters/email');
+const { LinearAdapter } = require('./adapters/linear');
+const { JiraAdapter } = require('./adapters/jira');
+const { HxaConnectAdapter } = require('./adapters/hxa-connect');
 const { resolveTarget, resolveTargets } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations } = require('./ai');
@@ -107,6 +110,9 @@ registry.registerType('telegram', TelegramAdapter);
 registry.registerType('github-issue', GitHubIssueAdapter);
 registry.registerType('slack', SlackAdapter);
 registry.registerType('email', EmailAdapter);
+registry.registerType('linear', LinearAdapter);
+registry.registerType('jira', JiraAdapter);
+registry.registerType('hxa-connect', HxaConnectAdapter);
 
 // Load distribution config
 if (config.distribution) {
@@ -1206,7 +1212,7 @@ app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
 function redactConfig(config) {
     if (!config || typeof config !== 'object') return config;
     const redacted = { ...config };
-    const sensitiveKeys = ['api_key', 'bot_token', 'token', 'secret'];
+    const sensitiveKeys = ['api_key', 'bot_token', 'token', 'secret', 'api_token'];
     for (const key of sensitiveKeys) {
         if (redacted[key]) {
             const val = String(redacted[key]);
