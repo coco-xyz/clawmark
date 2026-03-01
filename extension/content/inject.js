@@ -379,8 +379,8 @@
                 return `<label class="cm-dispatch-target">
                     <input type="checkbox" checked data-idx="${i}" />
                     <span class="cm-target-icon">${getTargetIcon(t.target_type)}</span>
-                    <span class="cm-target-label">${label}</span>
-                    <span class="cm-target-method">${t.method.replace('_', ' ')}</span>
+                    <span class="cm-target-label">${escHtml(label)}</span>
+                    <span class="cm-target-method">${escHtml(t.method.replace('_', ' '))}</span>
                 </label>`;
             }).join('');
             previewEl.style.display = 'block';
@@ -415,6 +415,11 @@
             'hxa-connect': '\u{1F310}',
         };
         return icons[type] || '\u{27A1}';
+    }
+
+    function escHtml(s) {
+        if (!s) return '';
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     function hideInputOverlay() {
