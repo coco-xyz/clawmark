@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ClawMark",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Annotate, comment, and track issues on any webpage — your feedback collection tool",
   "permissions": [
     "activeTab",
