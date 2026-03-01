@@ -1,4 +1,5 @@
-/* ClawMark — Screenshot & Annotation Styles */
+/* ClawMark — Screenshot & Annotation Styles (v2) */
+/* #111 — WeChat-style screenshot UX with draggable annotations */
 
 /* ---- Area Selector Overlay ---- */
 #clawmark-area-selector {
@@ -31,9 +32,66 @@
 #clawmark-area-selector .cm-sel-box {
     position: absolute;
     display: none;
-    border: 2px dashed #5865f2;
-    background: rgba(88, 101, 242, 0.1);
-    pointer-events: none;
+    border: 2px solid #5865f2;
+    background: rgba(88, 101, 242, 0.08);
+}
+
+/* Selection resize handles */
+#clawmark-area-selector .cm-sel-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #5865f2;
+    border: 1px solid #fff;
+    border-radius: 2px;
+}
+
+#clawmark-area-selector .cm-sel-handle[data-handle="nw"] { top: -5px; left: -5px; cursor: nw-resize; }
+#clawmark-area-selector .cm-sel-handle[data-handle="ne"] { top: -5px; right: -5px; cursor: ne-resize; }
+#clawmark-area-selector .cm-sel-handle[data-handle="sw"] { bottom: -5px; left: -5px; cursor: sw-resize; }
+#clawmark-area-selector .cm-sel-handle[data-handle="se"] { bottom: -5px; right: -5px; cursor: se-resize; }
+#clawmark-area-selector .cm-sel-handle[data-handle="n"] { top: -5px; left: 50%; transform: translateX(-50%); cursor: n-resize; }
+#clawmark-area-selector .cm-sel-handle[data-handle="s"] { bottom: -5px; left: 50%; transform: translateX(-50%); cursor: s-resize; }
+#clawmark-area-selector .cm-sel-handle[data-handle="w"] { top: 50%; left: -5px; transform: translateY(-50%); cursor: w-resize; }
+#clawmark-area-selector .cm-sel-handle[data-handle="e"] { top: 50%; right: -5px; transform: translateY(-50%); cursor: e-resize; }
+
+/* Selection action buttons (confirm/cancel) */
+#clawmark-area-selector .cm-sel-actions {
+    position: absolute;
+    display: none;
+    gap: 4px;
+    z-index: 1;
+}
+
+#clawmark-area-selector .cm-sel-actions button {
+    width: 32px;
+    height: 28px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#clawmark-area-selector .cm-sel-cancel {
+    background: rgba(255, 255, 255, 0.15);
+    color: #ccc;
+}
+
+#clawmark-area-selector .cm-sel-cancel:hover {
+    background: rgba(239, 68, 68, 0.7);
+    color: #fff;
+}
+
+#clawmark-area-selector .cm-sel-confirm {
+    background: #5865f2;
+    color: #fff;
+}
+
+#clawmark-area-selector .cm-sel-confirm:hover {
+    background: #4752c4;
 }
 
 /* ---- Annotation Editor ---- */
@@ -54,14 +112,31 @@
     animation: clawmark-fade-in 0.15s ease-out;
 }
 
+/* Toolbar below the canvas (WeChat style) */
 #clawmark-annotation-editor .cm-ann-toolbar {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
     padding: 8px 16px;
     background: #1a1a2e;
     border: 1px solid #333;
     border-radius: 10px;
+    order: 2;
+}
+
+#clawmark-annotation-editor .cm-ann-canvas-wrap {
+    border: 1px solid #444;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    order: 1;
+    position: relative;
+}
+
+#clawmark-annotation-editor .cm-ann-separator {
+    width: 1px;
+    height: 20px;
+    background: #444;
 }
 
 #clawmark-annotation-editor .cm-ann-tools,
@@ -111,7 +186,8 @@
     border-color: #fff;
 }
 
-#clawmark-annotation-editor .cm-ann-undo {
+#clawmark-annotation-editor .cm-ann-undo,
+#clawmark-annotation-editor .cm-ann-delete {
     padding: 6px 10px;
     background: transparent;
     border: none;
@@ -121,7 +197,8 @@
     cursor: pointer;
 }
 
-#clawmark-annotation-editor .cm-ann-undo:hover {
+#clawmark-annotation-editor .cm-ann-undo:hover,
+#clawmark-annotation-editor .cm-ann-delete:hover {
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
 }
@@ -157,16 +234,23 @@
     background: #4752c4;
 }
 
-#clawmark-annotation-editor .cm-ann-canvas-wrap {
-    border: 1px solid #444;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-}
-
 #clawmark-annotation-editor canvas {
     display: block;
     cursor: crosshair;
+}
+
+/* Inline text input for text annotations */
+#clawmark-annotation-editor .cm-ann-text-input {
+    position: fixed;
+    z-index: 2147483647;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid #5865f2;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font: bold 16px sans-serif;
+    outline: none;
+    min-width: 100px;
+    max-width: 300px;
 }
 
 /* ---- Image previews in input overlay ---- */
