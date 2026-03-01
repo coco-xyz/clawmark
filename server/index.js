@@ -20,6 +20,7 @@ const http = require('http');
 const https = require('https');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
+const pkg = require('../package.json');
 
 // ---------------------------------------------------------------------- config
 
@@ -1614,7 +1615,7 @@ app.get('/health', (req, res) => {
     try { itemsDb.db.prepare('SELECT 1').get(); } catch { dbOk = false; }
     res.json({
         status: 'ok',
-        version: '0.3.0',
+        version: pkg.version,
         uptime: process.uptime(),
         db_ok: dbOk,
         adapters: Object.keys(registry.getStatus()).length,
