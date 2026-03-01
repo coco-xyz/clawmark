@@ -1,18 +1,27 @@
 /**
  * ClawMark — AI Module
  *
- * Provides AI-powered routing recommendation using Google Gemini API.
- * No external dependencies — uses Node built-in https.
+ * Provides AI-powered features using Google Gemini API:
+ * - Routing recommendation
+ * - Annotation classification
+ * - Tag generation
+ * - Annotation clustering
+ * - Screenshot vision analysis (#117)
+ *
+ * No external dependencies — uses Node built-in https + fs.
  */
 
 'use strict';
 
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const GEMINI_MODEL = 'gemini-2.0-flash';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const REQUEST_TIMEOUT = 15000; // 15s
-const MAX_RESPONSE_BYTES = 64 * 1024; // 64KB
+const MAX_RESPONSE_BYTES = 64 * 1024; // 64KB — text-only API calls
+const MAX_VISION_RESPONSE_BYTES = 256 * 1024; // 256KB — vision responses are larger (structured JSON)
 
 /**
  * Call Gemini API with a prompt.
@@ -79,6 +88,89 @@ async function callGemini(apiKey, systemPrompt, userPrompt) {
         });
         req.on('error', (err) => fail(err));
         req.setTimeout(REQUEST_TIMEOUT, () => { req.destroy(); fail(new Error('Gemini API timeout')); });
+        req.write(body);
+        req.end();
+    });
+}
+
+const VISION_TIMEOUT = 30000; // 30s for image analysis
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB max image size for API
+
+/**
+ * Call Gemini API with an image (vision).
+ *
+ * @param {string} apiKey      Gemini API key
+ * @param {string} systemPrompt  System instruction
+ * @param {string} textPrompt  Text part of the user message
+ * @param {Buffer} imageBuffer Image data
+ * @param {string} mimeType    Image MIME type (e.g. 'image/png')
+ * @returns {Promise<string>}  Model response text
+ */
+async function callGeminiVision(apiKey, systemPrompt, textPrompt, imageBuffer, mimeType) {
+    const url = GEMINI_URL;
+    const base64Data = imageBuffer.toString('base64');
+
+    const body = JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{
+            role: 'user',
+            parts: [
+                { text: textPrompt },
+                { inline_data: { mime_type: mimeType, data: base64Data } },
+            ],
+        }],
+        generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 2048,
+            responseMimeType: 'application/json',
+        },
+    });
+
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const fail = (err) => { if (!settled) { settled = true; reject(err); } };
+        const succeed = (val) => { if (!settled) { settled = true; resolve(val); } };
+
+        const req = https.request(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey,
+            },
+        }, (res) => {
+            const chunks = [];
+            let totalBytes = 0;
+            res.on('data', (chunk) => {
+                totalBytes += chunk.length;
+                if (totalBytes > MAX_VISION_RESPONSE_BYTES) {
+                    req.destroy();
+                    fail(new Error('Response too large'));
+                    return;
+                }
+                chunks.push(chunk);
+            });
+            res.on('end', () => {
+                if (settled) return;
+                const text = Buffer.concat(chunks).toString();
+                if (res.statusCode !== 200) {
+                    fail(new Error(`Gemini Vision API error ${res.statusCode}`));
+                    return;
+                }
+                try {
+                    const data = JSON.parse(text);
+                    const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (!content) {
+                        fail(new Error('Empty response from Gemini Vision'));
+                        return;
+                    }
+                    succeed(content);
+                } catch (e) {
+                    fail(new Error('Failed to parse Gemini Vision response'));
+                }
+            });
+        });
+        req.on('error', (err) => fail(err));
+        req.setTimeout(VISION_TIMEOUT, () => { req.destroy(); fail(new Error('Gemini Vision API timeout')); });
         req.write(body);
         req.end();
     });
@@ -518,4 +610,165 @@ function validateClusters(raw, items) {
     return { clusters, summary };
 }
 
-module.exports = { recommendRoute, validateRecommendation, buildUserPrompt, validateTargetConfig, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, validateClusters };
+// ================================================================= Screenshot Vision Analysis (#117)
+//
+// Analyze annotated screenshots using Gemini Vision to understand
+// what the user's annotations highlight and their intent.
+// =================================================================
+
+const SCREENSHOT_ANALYSIS_PROMPT = `You are a screenshot annotation analyst for ClawMark, a web annotation tool. Users capture screenshots of web pages and add annotations (rectangles, arrows, circles, text labels, numbered markers, pen drawings) to highlight specific areas.
+
+Your job: Analyze the screenshot and its annotations to understand:
+1. What the annotations are pointing to or highlighting
+2. The user's likely intent (reporting a bug, suggesting a change, asking a question, etc.)
+3. Any UI/UX issues, visual bugs, or content problems visible in the annotated areas
+4. Specific actionable insights
+
+Respond with valid JSON:
+{
+  "summary": string (1-2 sentences describing what the annotations highlight),
+  "annotations_found": [
+    {
+      "description": string (what this annotation highlights),
+      "area": string (which part of the page — header, content, sidebar, footer, etc.),
+      "annotation_type": "rectangle" | "arrow" | "circle" | "text" | "number" | "drawing" | "highlight"
+    }
+  ],
+  "intent": "bug_report" | "ui_feedback" | "content_issue" | "feature_suggestion" | "question" | "general",
+  "severity": "critical" | "major" | "minor" | "cosmetic" | "info",
+  "details": string (detailed analysis of what the user is likely trying to communicate),
+  "suggested_actions": [string] (1-3 specific actions to address the annotated issues)
+}
+
+Rules:
+- Focus on the ANNOTATED areas — what the user marked is what matters
+- Be specific about what you see (text content, UI elements, layout issues)
+- If numbered markers are present, reference them by number
+- Keep the summary concise but informative
+- Suggest concrete actions, not vague recommendations`;
+
+/**
+ * Analyze a screenshot with annotations using Gemini Vision.
+ *
+ * @param {object} params
+ * @param {string} params.imagePath     Absolute path to the screenshot file
+ * @param {string} [params.baseDir]     Allowed base directory — if set, imagePath must resolve within it
+ * @param {string} [params.source_url]  Page URL the screenshot was taken from
+ * @param {string} [params.source_title] Page title
+ * @param {string} [params.content]     User's annotation text/description
+ * @param {string} [params.quote]       Selected text on page
+ * @param {string} params.apiKey        Gemini API key
+ * @param {Function} [params.callAI]    Override AI call (for testing)
+ * @returns {Promise<object>}  Analysis result
+ */
+async function analyzeScreenshot(params) {
+    const { imagePath, baseDir, source_url, source_title, content, quote, apiKey, callAI } = params;
+
+    if (!imagePath) {
+        throw new Error('imagePath is required');
+    }
+
+    // Path traversal guard — if baseDir is set, imagePath must resolve within it
+    const resolved = path.resolve(imagePath);
+    const { promises: fsp } = fs;
+    if (baseDir) {
+        const resolvedBase = path.resolve(baseDir) + path.sep;
+        if (!resolved.startsWith(resolvedBase)) {
+            throw new Error('Screenshot path outside allowed directory');
+        }
+        // Symlink guard — resolve the real path and re-check containment
+        let realPath;
+        try {
+            realPath = await fsp.realpath(resolved);
+        } catch {
+            throw new Error('Screenshot file not found');
+        }
+        if (!realPath.startsWith(resolvedBase)) {
+            throw new Error('Screenshot path outside allowed directory');
+        }
+    }
+
+    // Read image file (async to avoid blocking the event loop)
+    let imageBuffer;
+    try {
+        imageBuffer = await fsp.readFile(resolved);
+    } catch {
+        throw new Error('Screenshot file not found');
+    }
+    if (imageBuffer.length > MAX_IMAGE_BYTES) {
+        throw new Error('Screenshot file too large (max 4MB)');
+    }
+
+    // Detect MIME type from extension
+    const ext = path.extname(imagePath).toLowerCase();
+    const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+    const mimeType = mimeMap[ext];
+    if (!mimeType) {
+        throw new Error('Unsupported image format');
+    }
+
+    // Build context prompt
+    const parts = ['Analyze this annotated screenshot.'];
+    if (source_url) parts.push(`Page URL: <USER_INPUT>${String(source_url).slice(0, MAX_URL_LEN)}</USER_INPUT>`);
+    if (source_title) parts.push(`Page title: <USER_INPUT>${String(source_title).slice(0, MAX_TITLE_LEN)}</USER_INPUT>`);
+    if (content) parts.push(`User's note: <USER_INPUT>${String(content).slice(0, MAX_CONTENT_LEN)}</USER_INPUT>`);
+    if (quote) parts.push(`Selected text: <USER_INPUT>${String(quote).slice(0, MAX_QUOTE_LEN)}</USER_INPUT>`);
+    const textPrompt = parts.join('\n');
+
+    if (callAI) {
+        // Test override — pass image buffer info for verification
+        const responseText = await callAI(apiKey, SCREENSHOT_ANALYSIS_PROMPT, textPrompt, imageBuffer, mimeType);
+        let parsed;
+        try {
+            parsed = JSON.parse(responseText);
+        } catch {
+            throw new Error('AI returned invalid JSON');
+        }
+        return validateScreenshotAnalysis(parsed);
+    }
+
+    const responseText = await callGeminiVision(apiKey, SCREENSHOT_ANALYSIS_PROMPT, textPrompt, imageBuffer, mimeType);
+
+    let result;
+    try {
+        result = JSON.parse(responseText);
+    } catch {
+        throw new Error('AI returned invalid JSON');
+    }
+
+    return validateScreenshotAnalysis(result);
+}
+
+const VALID_INTENTS = ['bug_report', 'ui_feedback', 'content_issue', 'feature_suggestion', 'question', 'general'];
+const VALID_SEVERITIES = ['critical', 'major', 'minor', 'cosmetic', 'info'];
+const VALID_ANNOTATION_TYPES = ['rectangle', 'arrow', 'circle', 'text', 'number', 'drawing', 'highlight'];
+
+function validateScreenshotAnalysis(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return { summary: 'Screenshot with annotations', annotations_found: [], intent: 'general', severity: 'info', details: '', suggested_actions: [] };
+    }
+    const summary = typeof raw.summary === 'string' ? raw.summary.slice(0, 500) : 'Screenshot with annotations';
+
+    const annotations_found = Array.isArray(raw.annotations_found)
+        ? raw.annotations_found.slice(0, 20).map(a => {
+            if (!a || typeof a !== 'object') return null;
+            return {
+                description: typeof a.description === 'string' ? a.description.slice(0, 300) : '',
+                area: typeof a.area === 'string' ? a.area.slice(0, 100) : 'unknown',
+                annotation_type: VALID_ANNOTATION_TYPES.includes(a.annotation_type) ? a.annotation_type : 'highlight',
+            };
+        }).filter(Boolean)
+        : [];
+
+    const intent = VALID_INTENTS.includes(raw.intent) ? raw.intent : 'general';
+    const severity = VALID_SEVERITIES.includes(raw.severity) ? raw.severity : 'info';
+    const details = typeof raw.details === 'string' ? raw.details.slice(0, 1000) : '';
+
+    const suggested_actions = Array.isArray(raw.suggested_actions)
+        ? raw.suggested_actions.slice(0, 5).filter(a => typeof a === 'string').map(a => a.slice(0, 300))
+        : [];
+
+    return { summary, annotations_found, intent, severity, details, suggested_actions };
+}
+
+module.exports = { recommendRoute, validateRecommendation, buildUserPrompt, validateTargetConfig, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, validateClusters, analyzeScreenshot, validateScreenshotAnalysis, callGeminiVision };

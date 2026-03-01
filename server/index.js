@@ -100,7 +100,7 @@ const { JiraAdapter } = require('./adapters/jira');
 const { HxaConnectAdapter } = require('./adapters/hxa-connect');
 const { resolveTarget, resolveTargets } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
-const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations } = require('./ai');
+const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
 
 const registry = new AdapterRegistry();
 registry.setDb(itemsDb);
@@ -494,6 +494,16 @@ app.post('/upload', uploadLimiter, v2Auth, upload.single('image'), (req, res) =>
 // Serve uploaded images
 app.use('/images', express.static(UPLOAD_DIR));
 
+// Validate that a screenshot URL matches the server-generated upload pattern.
+// Multer filenames: <timestamp>-<6char_random>.<ext> (e.g. "1709300000000-a1b2c3.png")
+// Rejects arbitrary filenames to prevent cross-user file access via crafted screenshots arrays.
+const UPLOAD_FILENAME_RE = /^\d+-[a-z0-9]{6}\.\w+$/;
+function sanitizeScreenshotUrl(url) {
+    if (typeof url !== 'string') return null;
+    const filename = path.basename(url.replace(/^\/images\//, ''));
+    return UPLOAD_FILENAME_RE.test(filename) ? filename : null;
+}
+
 // ----------------------------------------------------------------- V2 items API
 //
 // Items are the canonical data model: each item is a discussion thread or
@@ -753,6 +763,27 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
         }).catch(err => {
             console.error(`[AI] Auto-classify failed for ${item.id}:`, err.message);
         });
+
+        // Auto-analyze screenshots if present (#117)
+        if (Array.isArray(screenshots) && screenshots.length > 0) {
+            const filename = sanitizeScreenshotUrl(screenshots[0]);
+            if (filename) {
+                const imagePath = path.resolve(UPLOAD_DIR, filename);
+                analyzeScreenshot({
+                    imagePath,
+                    baseDir: UPLOAD_DIR,
+                    source_url: source_url || null,
+                    source_title: source_title || null,
+                    content: content || title,
+                    quote,
+                    apiKey: v2AiKey,
+                }).then((analysis) => {
+                    itemsDb.updateItemScreenshotAnalysis(item.id, analysis);
+                }).catch(err => {
+                    console.error(`[AI] Auto-analyze screenshot failed for ${item.id}:`, err.message);
+                });
+            }
+        }
     }
 
     res.json({ success: true, item });
@@ -797,6 +828,9 @@ app.get('/api/v2/items/:id', apiReadLimiter, v2Auth, (req, res) => {
     // Parse JSON fields for client convenience
     if (typeof item.tags === 'string') item.tags = JSON.parse(item.tags || '[]');
     if (typeof item.screenshots === 'string') item.screenshots = JSON.parse(item.screenshots || '[]');
+    if (typeof item.screenshot_analysis === 'string') {
+        try { item.screenshot_analysis = JSON.parse(item.screenshot_analysis); } catch { /* leave as string */ }
+    }
     // Include dispatch status if dispatches exist
     const dispatches = itemsDb.getDispatchLog(item.id);
     if (dispatches.length > 0) {
@@ -1242,6 +1276,52 @@ app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
     } catch (err) {
         console.error('[AI] Clustering failed:', err.message);
         res.status(500).json({ error: 'AI clustering failed' });
+    }
+});
+
+// -- POST /api/v2/items/:id/analyze — AI-powered screenshot analysis (#117)
+app.post('/api/v2/items/:id/analyze', aiLimiter, v2Auth, async (req, res) => {
+    const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
+    if (!aiApiKey) {
+        return res.status(503).json({ error: 'AI analysis not available' });
+    }
+
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+
+    let screenshots = item.screenshots;
+    if (typeof screenshots === 'string') {
+        try { screenshots = JSON.parse(screenshots); } catch { screenshots = []; }
+    }
+    if (!Array.isArray(screenshots) || screenshots.length === 0) {
+        return res.status(400).json({ error: 'Item has no screenshots to analyze' });
+    }
+
+    try {
+        // Analyze the first screenshot (primary annotation)
+        const filename = sanitizeScreenshotUrl(screenshots[0]);
+        if (!filename) {
+            return res.status(400).json({ error: 'Invalid screenshot reference' });
+        }
+        const imagePath = path.resolve(UPLOAD_DIR, filename);
+
+        const analysis = await analyzeScreenshot({
+            imagePath,
+            baseDir: UPLOAD_DIR,
+            source_url: item.source_url,
+            source_title: item.source_title,
+            content: item.messages?.[0]?.content || item.title || item.quote,
+            quote: item.quote,
+            apiKey: aiApiKey,
+        });
+
+        // Store result in DB
+        itemsDb.updateItemScreenshotAnalysis(item.id, analysis);
+
+        res.json({ success: true, analysis });
+    } catch (err) {
+        console.error('[AI] Screenshot analysis error:', err.message);
+        res.status(500).json({ error: 'Screenshot analysis failed' });
     }
 });
 
