@@ -966,6 +966,12 @@ app.post('/api/v2/items/:id/generate-tags', aiLimiter, v2Auth, async (req, res) 
         return res.status(404).json({ error: 'Item not found' });
     }
 
+    // Ownership check — user can only tag items in their app scope
+    const userAppId = req.body?.app_id || req.v2Auth?.app_id || 'default';
+    if (item.app_id !== userAppId) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
+
     const existingTags = (() => {
         try { return JSON.parse(item.tags || '[]'); } catch { return []; }
     })();
@@ -984,7 +990,9 @@ app.post('/api/v2/items/:id/generate-tags', aiLimiter, v2Auth, async (req, res) 
 
         if (result.tags.length > 0) {
             const { merge } = req.body || {};
-            const finalTags = merge !== false ? [...existingTags, ...result.tags] : result.tags;
+            const merged = merge !== false ? [...existingTags, ...result.tags] : result.tags;
+            // Cap total tags at 25 to prevent unbounded growth
+            const finalTags = [...new Set(merged.map(t => t.toLowerCase()))].slice(0, 25);
             itemsDb.updateItemTags(item.id, finalTags);
             res.json({ tags: finalTags, generated: result.tags, reasoning: result.reasoning, source: 'ai' });
         } else {

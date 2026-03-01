@@ -306,7 +306,7 @@ async function generateTags(params) {
     if (quote) parts.push(`Selected text: <USER_INPUT>${String(quote).slice(0, MAX_QUOTE_LEN)}</USER_INPUT>`);
     if (content) parts.push(`User note: <USER_INPUT>${String(content).slice(0, MAX_CONTENT_LEN)}</USER_INPUT>`);
     if (type) parts.push(`Type: ${String(type).slice(0, 50)}`);
-    if (existingTags.length > 0) parts.push(`Existing tags (do not duplicate): ${existingTags.join(', ')}`);
+    if (existingTags.length > 0) parts.push(`Existing tags (do not duplicate): <USER_INPUT>${existingTags.join(', ')}</USER_INPUT>`);
 
     const aiCall = callAI || callGemini;
     const responseText = await aiCall(apiKey, TAG_GENERATION_PROMPT, parts.join('\n'));
@@ -323,11 +323,12 @@ async function generateTags(params) {
         return { tags: [], reasoning: 'AI returned no tags' };
     }
 
+    const existingLower = existingTags.map(t => t.toLowerCase());
     const tags = result.tags
         .filter(t => typeof t === 'string' && t.trim().length > 0)
         .map(t => t.toLowerCase().trim().replace(/[^a-z0-9-]/g, '').slice(0, MAX_TAG_RESULT_LEN))
         .filter(t => t.length > 0)
-        .filter(t => !existingTags.includes(t));  // Deduplicate against existing
+        .filter(t => !existingLower.includes(t));  // Case-insensitive dedup against existing
 
     // Deduplicate within generated
     const uniqueTags = [...new Set(tags)].slice(0, MAX_GENERATED_TAGS);
