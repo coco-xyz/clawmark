@@ -93,6 +93,7 @@ const { TelegramAdapter } = require('./adapters/telegram');
 const { GitHubIssueAdapter } = require('./adapters/github-issue');
 const { resolveTarget } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
+const { recommendRoute } = require('./ai');
 
 const registry = new AdapterRegistry();
 registry.setDb(itemsDb);
@@ -913,6 +914,35 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
         matched_rule: result.matched_rule ? { id: result.matched_rule.id, pattern: result.matched_rule.pattern } : null,
         js_injection: declaration?.js_injection ?? true,
     });
+});
+
+// -- POST /api/v2/routing/recommend — AI-powered routing recommendation
+app.post('/api/v2/routing/recommend', apiReadLimiter, v2Auth, async (req, res) => {
+    const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
+    if (!aiApiKey) {
+        return res.status(503).json({ error: 'AI routing not configured (missing API key)' });
+    }
+
+    const { source_url, source_title, content, quote, type, priority, tags, userName } = req.body;
+    if (!source_url) {
+        return res.status(400).json({ error: 'source_url is required' });
+    }
+
+    const user = userName || req.v2Auth?.user;
+    const userRules = user ? itemsDb.getUserRules(user) : [];
+    const userEndpoints = user ? itemsDb.getEndpoints(user) : [];
+
+    try {
+        const recommendation = await recommendRoute({
+            source_url, source_title, content, quote,
+            type, priority, tags,
+            userRules, userEndpoints,
+            apiKey: aiApiKey,
+        });
+        res.json({ recommendation });
+    } catch (err) {
+        res.status(500).json({ error: 'AI recommendation failed', detail: err.message });
+    }
 });
 
 // ================================================================= Endpoints API
