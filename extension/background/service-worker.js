@@ -399,6 +399,19 @@ async function handleMessage(message, sender) {
         case 'UPLOAD_IMAGE':
             return uploadImage(message.dataUrl);
 
+        // Routing rules CRUD
+        case 'GET_ROUTING_RULES':
+            return apiRequest('GET', '/api/v2/routing/rules');
+
+        case 'CREATE_ROUTING_RULE':
+            return apiRequest('POST', '/api/v2/routing/rules', message.data);
+
+        case 'UPDATE_ROUTING_RULE':
+            return apiRequest('PUT', `/api/v2/routing/rules/${message.id}`, message.data);
+
+        case 'DELETE_ROUTING_RULE':
+            return apiRequest('DELETE', `/api/v2/routing/rules/${message.id}`);
+
         default:
             return { error: `Unknown message type: ${message.type}` };
     }
