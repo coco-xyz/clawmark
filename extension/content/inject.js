@@ -150,6 +150,10 @@
             <div class="cm-images"></div>
             <textarea placeholder="Write your comment..."></textarea>
             <div class="cm-drop-hint">Paste or drag images here</div>
+            <div class="cm-dispatch-preview" style="display:none;">
+                <div class="cm-dispatch-label">Dispatch to:</div>
+                <div class="cm-dispatch-targets"></div>
+            </div>
             <div class="cm-footer">
                 <div class="cm-tags">
                     <button class="cm-tag" data-tag="bug">bug</button>
@@ -342,6 +346,75 @@
         textarea.value = '';
         textarea.focus();
         inputOverlay.querySelectorAll('.cm-tag').forEach(t => t.classList.remove('active'));
+
+        // Fetch dispatch targets preview (#115)
+        loadDispatchPreview();
+    }
+
+    let resolvedTargets = [];
+
+    async function loadDispatchPreview() {
+        const previewEl = inputOverlay.querySelector('.cm-dispatch-preview');
+        const targetsEl = inputOverlay.querySelector('.cm-dispatch-targets');
+        if (!previewEl || !targetsEl) return;
+
+        const activeTags = [...inputOverlay.querySelectorAll('.cm-tag.active')].map(t => t.dataset.tag);
+
+        try {
+            const result = await chrome.runtime.sendMessage({
+                type: 'RESOLVE_DISPATCH_TARGETS',
+                source_url: window.location.href,
+                item_type: currentMode === 'issue' ? 'issue' : 'comment',
+                tags: activeTags.length > 0 ? activeTags : undefined,
+            });
+
+            resolvedTargets = result.targets || [];
+            if (resolvedTargets.length === 0) {
+                previewEl.style.display = 'none';
+                return;
+            }
+
+            targetsEl.innerHTML = resolvedTargets.map((t, i) => {
+                const label = formatTargetLabel(t);
+                return `<label class="cm-dispatch-target">
+                    <input type="checkbox" checked data-idx="${i}" />
+                    <span class="cm-target-icon">${getTargetIcon(t.target_type)}</span>
+                    <span class="cm-target-label">${label}</span>
+                    <span class="cm-target-method">${t.method.replace('_', ' ')}</span>
+                </label>`;
+            }).join('');
+            previewEl.style.display = 'block';
+        } catch {
+            previewEl.style.display = 'none';
+        }
+    }
+
+    function formatTargetLabel(target) {
+        const cfg = target.target_config || {};
+        if (cfg.repo) return cfg.repo;
+        if (cfg.chat_id) return `Chat ${cfg.chat_id}`;
+        if (cfg.webhook_url) return 'Webhook';
+        if (cfg.channel) return cfg.channel;
+        if (cfg.email) return cfg.email;
+        if (cfg.team_id) return `Linear team`;
+        if (cfg.project_key) return `Jira ${cfg.project_key}`;
+        if (cfg.thread_id) return `HxA thread`;
+        return target.target_type;
+    }
+
+    function getTargetIcon(type) {
+        const icons = {
+            'github-issue': '\u{1F4CB}',
+            'lark': '\u{1F426}',
+            'telegram': '\u{2709}',
+            'webhook': '\u{1F517}',
+            'slack': '\u{1F4AC}',
+            'email': '\u{1F4E7}',
+            'linear': '\u{25B6}',
+            'jira': '\u{1F3AF}',
+            'hxa-connect': '\u{1F310}',
+        };
+        return icons[type] || '\u{27A1}';
     }
 
     function hideInputOverlay() {
@@ -381,6 +454,28 @@
             } catch {}
         }
 
+        // Collect selected dispatch targets (#115)
+        let selected_targets = undefined;
+        const checkboxes = inputOverlay.querySelectorAll('.cm-dispatch-target input[type="checkbox"]');
+        if (checkboxes.length > 0) {
+            const selected = [];
+            checkboxes.forEach(cb => {
+                if (cb.checked) {
+                    const idx = parseInt(cb.dataset.idx, 10);
+                    if (resolvedTargets[idx]) {
+                        selected.push({
+                            target_type: resolvedTargets[idx].target_type,
+                            method: resolvedTargets[idx].method,
+                        });
+                    }
+                }
+            });
+            // Only send selection if user deselected something (otherwise let server use all)
+            if (selected.length < resolvedTargets.length && selected.length > 0) {
+                selected_targets = selected;
+            }
+        }
+
         const data = {
             type: currentMode === 'issue' ? 'issue' : 'comment',
             title: currentMode === 'issue' ? (content.split('\n')[0] || 'Screenshot') : undefined,
@@ -391,12 +486,15 @@
             quote_position,
             tags: activeTags.length > 0 ? activeTags : undefined,
             screenshots,
+            selected_targets,
         };
 
         try {
             const response = await chrome.runtime.sendMessage({ type: 'CREATE_ITEM', data });
             if (response.error) throw new Error(response.error);
-            showToast('Submitted!', 'success');
+            const targetCount = resolvedTargets.length;
+            showToast(targetCount > 0 ? `Submitted \u2192 ${targetCount} target${targetCount > 1 ? 's' : ''}` : 'Submitted!', 'success');
+            resolvedTargets = [];
             hideInputOverlay();
         } catch (err) {
             showToast(`Error: ${err.message}`, 'error');

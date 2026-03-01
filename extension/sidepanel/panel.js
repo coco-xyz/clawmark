@@ -197,6 +197,7 @@ function renderItems() {
                 </div>
                 ${item.title ? `<div class="item-title">${escapeHtml(item.title)}</div>` : ''}
                 ${item.quote ? `<div class="item-quote">${escapeHtml(item.quote)}</div>` : ''}
+                ${renderDispatchBadges(item.dispatches)}
                 <div class="item-meta">
                     <span>${item.created_by}</span>
                     <span>${time}</span>
@@ -224,6 +225,7 @@ function renderThread(item) {
             ${item.title ? `<div class="item-title">${escapeHtml(item.title)}</div>` : ''}
             ${item.quote ? `<div class="item-quote">${escapeHtml(item.quote)}</div>` : ''}
             ${tags.length > 0 ? `<div class="item-tags">${tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+            ${renderDispatchDetails(item.dispatches)}
         </div>
     `;
 
@@ -295,6 +297,46 @@ function formatTime(isoString) {
 function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ------------------------------------------------------------------ dispatch display (#115)
+
+const TARGET_ICONS = {
+    'github-issue': '\u{1F4CB}', lark: '\u{1F426}', telegram: '\u{2709}',
+    webhook: '\u{1F517}', slack: '\u{1F4AC}', email: '\u{1F4E7}',
+    linear: '\u25B6', jira: '\u{1F3AF}', 'hxa-connect': '\u{1F310}',
+};
+
+const STATUS_COLORS = { sent: '#22c55e', pending: '#eab308', failed: '#ef4444' };
+
+function renderDispatchBadges(dispatches) {
+    if (!dispatches || dispatches.length === 0) return '';
+    return `<div class="dispatch-badges">${dispatches.map(d => {
+        const icon = TARGET_ICONS[d.target_type] || '\u27A1';
+        const color = STATUS_COLORS[d.status] || '#888';
+        const title = `${d.target_type} (${d.method?.replace('_', ' ') || ''}) \u2014 ${d.status}`;
+        return `<span class="dispatch-badge" style="border-color:${color}" title="${escapeHtml(title)}">${icon}</span>`;
+    }).join('')}</div>`;
+}
+
+function renderDispatchDetails(dispatches) {
+    if (!dispatches || dispatches.length === 0) return '';
+    return `<div class="dispatch-details">
+        <div class="dispatch-details-label">Dispatched to:</div>
+        ${dispatches.map(d => {
+            const icon = TARGET_ICONS[d.target_type] || '\u27A1';
+            const color = STATUS_COLORS[d.status] || '#888';
+            const linkHtml = d.external_url
+                ? `<a href="${escapeHtml(d.external_url)}" target="_blank" class="dispatch-link">\u2197</a>`
+                : '';
+            return `<div class="dispatch-detail-row">
+                <span>${icon}</span>
+                <span class="dispatch-detail-type">${escapeHtml(d.target_type)}</span>
+                <span class="dispatch-detail-status" style="color:${color}">${d.status}</span>
+                ${linkHtml}
+            </div>`;
+        }).join('')}
+    </div>`;
 }
 
 // ------------------------------------------------------------------ cross-script events

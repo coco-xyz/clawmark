@@ -399,6 +399,14 @@ async function handleMessage(message, sender) {
         case 'UPLOAD_IMAGE':
             return uploadImage(message.dataUrl);
 
+        // Dispatch target preview (#115)
+        case 'RESOLVE_DISPATCH_TARGETS':
+            return apiRequest('POST', '/api/v2/routing/resolve', {
+                source_url: message.source_url,
+                type: message.item_type,
+                tags: message.tags,
+            });
+
         // Routing rules CRUD
         case 'GET_ROUTING_RULES':
             return apiRequest('GET', '/api/v2/routing/rules');

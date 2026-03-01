@@ -240,13 +240,25 @@ async function sendWebhook(event, payload) {
             declaration,
         });
 
-        console.log(`[routing] ${event}: ${targets.length} target(s) — ${targets.map(t => `${t.method}→${t.target_type}`).join(', ')}`);
+        // If user selected specific targets in the UI, filter to only those
+        let filteredTargets = targets;
+        if (payload._selected_targets && Array.isArray(payload._selected_targets)) {
+            const selected = new Set(payload._selected_targets.map(s =>
+                `${s.target_type}:${s.method}`
+            ));
+            filteredTargets = targets.filter(t => selected.has(`${t.target_type}:${t.method}`));
+            // Fall back to all targets if filter results in empty (safety net)
+            if (filteredTargets.length === 0) filteredTargets = targets;
+            delete payload._selected_targets;
+        }
+
+        console.log(`[routing] ${event}: ${filteredTargets.length} target(s) — ${filteredTargets.map(t => `${t.method}→${t.target_type}`).join(', ')}`);
 
         // Store routing decision on the item for debugging/auditing
-        payload._routing = targets.map(t => ({ method: t.method, target_type: t.target_type, repo: t.target_config.repo }));
+        payload._routing = filteredTargets.map(t => ({ method: t.method, target_type: t.target_type, repo: t.target_config.repo }));
 
         // Multi-target dispatch with tracking
-        registry.dispatchToTargets(event, payload, targets, {}).catch(err => {
+        registry.dispatchToTargets(event, payload, filteredTargets, {}).catch(err => {
             console.error(`[dispatch] Multi-target dispatch failed for ${event}:`, err.message);
             // Fallback to static dispatch on error
             registry.dispatch(event, payload).catch(e => {
@@ -697,7 +709,8 @@ function v2Auth(req, res, next) {
 // -- POST /api/v2/items — create item with full V2 schema
 app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
     const { type, app_id, source_url, source_title, quote, quote_position,
-            screenshots, title, content, priority, tags, userName, version } = req.body;
+            screenshots, title, content, priority, tags, userName, version,
+            selected_targets } = req.body;
 
     const user = req.v2Auth?.user || userName;
     const resolvedAppId = req.v2Auth?.app_id || app_id || 'default';
@@ -722,6 +735,10 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
         screenshots: screenshots || [],
     });
 
+    // Pass selected_targets to constrain dispatch if user made a selection
+    if (selected_targets && Array.isArray(selected_targets)) {
+        item._selected_targets = selected_targets;
+    }
     sendWebhook('item.created', item);
 
     // Async classification — fire-and-forget, doesn't block response (M2: only if not already classified)
@@ -746,17 +763,31 @@ app.get('/api/v2/items', apiReadLimiter, v2Auth, (req, res) => {
     const { url, tag, doc, type, status, assignee, app_id } = req.query;
     const resolvedAppId = app_id || 'default';
 
+    // Attach compact dispatch summary to each item
+    function attachDispatches(items) {
+        for (const item of items) {
+            const dispatches = itemsDb.getDispatchLog(item.id);
+            if (dispatches.length > 0) {
+                item.dispatches = dispatches.map(d => ({
+                    target_type: d.target_type, status: d.status,
+                    external_url: d.external_url, method: d.method,
+                }));
+            }
+        }
+        return items;
+    }
+
     if (url) {
         const items = itemsDb.getItemsByUrl({ app_id: resolvedAppId, url });
-        return res.json({ items });
+        return res.json({ items: attachDispatches(items) });
     }
     if (tag) {
         const items = itemsDb.getItemsByTag({ app_id: resolvedAppId, tag });
-        return res.json({ items });
+        return res.json({ items: attachDispatches(items) });
     }
 
     const items = itemsDb.getItems({ app_id: resolvedAppId, doc, type, status, assignee });
-    res.json({ items });
+    res.json({ items: attachDispatches(items) });
 });
 
 // -- GET /api/v2/items/:id
@@ -983,6 +1014,7 @@ app.delete('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
 });
 
 // -- POST /api/v2/routing/resolve — test routing resolution (dry run)
+// Returns ALL matching targets so the extension can show dispatch preview.
 app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => {
     const { source_url, userName, type, priority, tags } = req.body;
     const user = req.v2Auth?.user || userName;
@@ -993,17 +1025,25 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
         declaration = await resolveDeclaration(source_url);
     } catch { /* ignore */ }
 
-    const result = resolveTarget({
+    const targets = resolveTargets({
         source_url, user_name: user, type, priority, tags,
         db: itemsDb, defaultTarget: defaultGitHubTarget,
         declaration,
     });
 
     res.json({
-        target_type: result.target_type,
-        target_config: result.target_config,
-        method: result.method,
-        matched_rule: result.matched_rule ? { id: result.matched_rule.id, pattern: result.matched_rule.pattern } : null,
+        targets: targets.map(t => ({
+            target_type: t.target_type,
+            target_config: redactConfig(
+                typeof t.target_config === 'string' ? JSON.parse(t.target_config) : t.target_config
+            ),
+            method: t.method,
+            matched_rule: t.matched_rule ? { id: t.matched_rule.id, pattern: t.matched_rule.pattern } : null,
+        })),
+        // Legacy single-target fields for backward compatibility (e.g., checkTargetInjection)
+        target_type: targets[0]?.target_type,
+        target_config: targets[0]?.target_config,
+        method: targets[0]?.method,
         js_injection: declaration?.js_injection ?? true,
     });
 });
