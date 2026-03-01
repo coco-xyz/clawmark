@@ -260,11 +260,12 @@ const rfCancel = document.getElementById('rf-cancel');
 
 let routingRules = [];
 let editingRuleId = null;
+let rulesLoaded = false;
 
 deliveryToggle.addEventListener('click', () => {
     const isOpen = deliveryBody.classList.toggle('open');
     deliveryArrow.classList.toggle('open', isOpen);
-    if (isOpen && routingRules.length === 0) loadRoutingRules();
+    if (isOpen && !rulesLoaded) loadRoutingRules();
 });
 
 async function loadRoutingRules() {
@@ -272,6 +273,7 @@ async function loadRoutingRules() {
     try {
         const result = await chrome.runtime.sendMessage({ type: 'GET_ROUTING_RULES' });
         routingRules = result.rules || [];
+        rulesLoaded = true;
         renderRules();
     } catch (err) {
         rulesLoadingEl.textContent = 'Failed to load rules';
@@ -319,8 +321,13 @@ function renderRules() {
     }
 }
 
+function parseConfig(config) {
+    if (typeof config !== 'string') return config || {};
+    try { return JSON.parse(config); } catch { return {}; }
+}
+
 function formatTarget(type, config) {
-    const cfg = typeof config === 'string' ? JSON.parse(config) : (config || {});
+    const cfg = parseConfig(config);
     switch (type) {
         case 'github-issue': return `GitHub: ${cfg.repo || '?'}`;
         case 'lark': return `Lark: ${(cfg.webhook_url || '').substring(0, 30)}...`;
@@ -437,9 +444,7 @@ function editRule(rule) {
     rfPatternLabel.style.display = isDefault ? 'none' : 'block';
     rfPattern.style.display = isDefault ? 'none' : 'block';
 
-    const cfg = typeof rule.target_config === 'string'
-        ? JSON.parse(rule.target_config) : (rule.target_config || {});
-    updateTargetFields(rule.target_type, cfg);
+    updateTargetFields(rule.target_type, parseConfig(rule.target_config));
 
     rfSave.textContent = 'Update Rule';
     ruleFormEl.classList.add('open');
@@ -450,18 +455,34 @@ rfCancel.addEventListener('click', () => {
     editingRuleId = null;
 });
 
+function validateRuleForm() {
+    const type = rfType.value;
+    const target = rfTarget.value;
+    if (type !== 'default' && !rfPattern.value.trim()) return 'Pattern is required';
+    const cfg = getTargetConfig();
+    if (target === 'github-issue' && !cfg.repo) return 'Repository is required';
+    if (target === 'lark' && !cfg.webhook_url) return 'Webhook URL is required';
+    if (target === 'telegram' && (!cfg.bot_token || !cfg.chat_id)) return 'Bot Token and Chat ID are required';
+    if (target === 'webhook' && !cfg.url) return 'Webhook URL is required';
+    return null;
+}
+
 rfSave.addEventListener('click', async () => {
+    const error = validateRuleForm();
+    if (error) { showMessage(error, 'error'); return; }
+
     const isEditing = !!editingRuleId;
     rfSave.disabled = true;
     rfSave.textContent = 'Saving...';
 
     try {
+        const priority = Math.max(0, Math.min(100, parseInt(rfPriority.value, 10) || 0));
         const data = {
             rule_type: rfType.value,
             pattern: rfType.value === 'default' ? null : rfPattern.value.trim(),
             target_type: rfTarget.value,
             target_config: getTargetConfig(),
-            priority: parseInt(rfPriority.value, 10) || 0,
+            priority,
         };
 
         if (isEditing) {
@@ -483,6 +504,7 @@ rfSave.addEventListener('click', async () => {
 });
 
 async function deleteRule(id) {
+    if (!confirm('Delete this routing rule?')) return;
     try {
         await chrome.runtime.sendMessage({ type: 'DELETE_ROUTING_RULE', id });
         showMessage('Rule deleted', 'success');
