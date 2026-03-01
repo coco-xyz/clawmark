@@ -255,4 +255,70 @@ function validateRecommendation(raw) {
     return { classification, target_type, target_config, confidence, reasoning, suggested_rule };
 }
 
-module.exports = { recommendRoute, validateRecommendation, buildUserPrompt, validateTargetConfig };
+// ================================================================= Classification
+//
+// Classify an annotation into: bug, feature_request, question, praise, general.
+// Lightweight — only returns classification + confidence.
+// =================================================================
+
+const CLASSIFICATION_PROMPT = `You are an annotation classifier. Given the context of a web annotation (page URL, title, selected text, user note), classify it into one of these categories:
+
+- bug: Reports a defect, broken feature, or unexpected behavior
+- feature_request: Suggests a new feature or improvement
+- question: Asks for help, clarification, or information
+- praise: Positive feedback, compliment, or appreciation
+- general: Anything else (comments, observations, notes)
+
+Respond with valid JSON:
+{
+  "classification": "bug" | "feature_request" | "question" | "praise" | "general",
+  "confidence": number (0.0 to 1.0),
+  "reasoning": string (1 sentence)
+}`;
+
+/**
+ * Classify an annotation using AI.
+ *
+ * @param {object} params
+ * @param {string} params.source_url       Page URL
+ * @param {string} [params.source_title]   Page title
+ * @param {string} [params.content]        User's note/message
+ * @param {string} [params.quote]          Selected text
+ * @param {string} [params.type]           Annotation type
+ * @param {string} params.apiKey           Gemini API key
+ * @param {Function} [params.callAI]       Override AI call (for testing)
+ * @returns {Promise<{classification: string, confidence: number, reasoning: string}>}
+ */
+async function classifyAnnotation(params) {
+    const { source_url, source_title, content, quote, type, apiKey, callAI } = params;
+
+    if (!source_url && !content && !quote) {
+        return { classification: 'general', confidence: 0, reasoning: 'Insufficient context' };
+    }
+
+    const parts = [];
+    if (source_url) parts.push(`URL: <USER_INPUT>${String(source_url).slice(0, MAX_URL_LEN)}</USER_INPUT>`);
+    if (source_title) parts.push(`Title: <USER_INPUT>${String(source_title).slice(0, MAX_TITLE_LEN)}</USER_INPUT>`);
+    if (quote) parts.push(`Selected text: <USER_INPUT>${String(quote).slice(0, MAX_QUOTE_LEN)}</USER_INPUT>`);
+    if (content) parts.push(`User note: <USER_INPUT>${String(content).slice(0, MAX_CONTENT_LEN)}</USER_INPUT>`);
+    if (type) parts.push(`Type: ${String(type).slice(0, 50)}`);
+
+    const aiCall = callAI || callGemini;
+    const responseText = await aiCall(apiKey, CLASSIFICATION_PROMPT, parts.join('\n'));
+
+    let result;
+    try {
+        result = JSON.parse(responseText);
+    } catch {
+        throw new Error('AI returned invalid JSON');
+    }
+
+    const validClassifications = ['bug', 'feature_request', 'question', 'praise', 'general'];
+    const classification = validClassifications.includes(result.classification) ? result.classification : 'general';
+    const confidence = typeof result.confidence === 'number' ? Math.max(0, Math.min(1, result.confidence)) : 0.5;
+    const reasoning = typeof result.reasoning === 'string' ? result.reasoning.slice(0, 500) : '';
+
+    return { classification, confidence, reasoning };
+}
+
+module.exports = { recommendRoute, validateRecommendation, buildUserPrompt, validateTargetConfig, classifyAnnotation };

@@ -6,7 +6,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { recommendRoute, buildUserPrompt, validateRecommendation, validateTargetConfig } = require('../server/ai');
+const { recommendRoute, buildUserPrompt, validateRecommendation, validateTargetConfig, classifyAnnotation } = require('../server/ai');
 
 // Mock AI that returns a valid recommendation
 function mockAI(response) {
@@ -285,5 +285,111 @@ describe('validateTargetConfig', () => {
     it('returns default for unknown target type', () => {
         const result = validateTargetConfig({ foo: 'bar' }, 'unknown');
         assert.equal(result.repo, 'unknown');
+    });
+});
+
+// Mock AI for classification tests
+function mockClassifyAI(classification, confidence = 0.9) {
+    return async () => JSON.stringify({ classification, confidence, reasoning: 'Test reasoning' });
+}
+
+describe('classifyAnnotation', () => {
+    it('classifies a bug report', async () => {
+        const result = await classifyAnnotation({
+            source_url: 'https://example.com',
+            content: 'The button is broken',
+            apiKey: 'test',
+            callAI: mockClassifyAI('bug', 0.95),
+        });
+        assert.equal(result.classification, 'bug');
+        assert.equal(result.confidence, 0.95);
+        assert.ok(result.reasoning.length > 0);
+    });
+
+    it('classifies a feature request', async () => {
+        const result = await classifyAnnotation({
+            source_url: 'https://example.com',
+            content: 'It would be nice to have dark mode',
+            apiKey: 'test',
+            callAI: mockClassifyAI('feature_request', 0.88),
+        });
+        assert.equal(result.classification, 'feature_request');
+    });
+
+    it('returns general with 0 confidence when no context provided', async () => {
+        const result = await classifyAnnotation({ apiKey: 'test' });
+        assert.equal(result.classification, 'general');
+        assert.equal(result.confidence, 0);
+    });
+
+    it('normalizes invalid classification to general', async () => {
+        const result = await classifyAnnotation({
+            source_url: 'https://example.com',
+            apiKey: 'test',
+            callAI: mockClassifyAI('invalid_type'),
+        });
+        assert.equal(result.classification, 'general');
+    });
+
+    it('clamps confidence to [0, 1]', async () => {
+        const result = await classifyAnnotation({
+            source_url: 'https://example.com',
+            apiKey: 'test',
+            callAI: async () => JSON.stringify({ classification: 'bug', confidence: 1.5 }),
+        });
+        assert.equal(result.confidence, 1);
+    });
+
+    it('throws when AI returns invalid JSON', async () => {
+        await assert.rejects(
+            () => classifyAnnotation({
+                source_url: 'https://example.com',
+                apiKey: 'test',
+                callAI: async () => 'not json',
+            }),
+            { message: 'AI returned invalid JSON' }
+        );
+    });
+
+    it('works with only quote provided', async () => {
+        const result = await classifyAnnotation({
+            quote: 'Why is this not working?',
+            apiKey: 'test',
+            callAI: mockClassifyAI('question', 0.82),
+        });
+        assert.equal(result.classification, 'question');
+    });
+
+    it('works with only content provided', async () => {
+        const result = await classifyAnnotation({
+            content: 'Great product!',
+            apiKey: 'test',
+            callAI: mockClassifyAI('praise', 0.9),
+        });
+        assert.equal(result.classification, 'praise');
+    });
+
+    it('accepts all valid classifications', async () => {
+        for (const cls of ['bug', 'feature_request', 'question', 'praise', 'general']) {
+            const result = await classifyAnnotation({
+                source_url: 'https://example.com',
+                apiKey: 'test',
+                callAI: mockClassifyAI(cls),
+            });
+            assert.equal(result.classification, cls);
+        }
+    });
+
+    it('truncates long reasoning', async () => {
+        const result = await classifyAnnotation({
+            source_url: 'https://example.com',
+            apiKey: 'test',
+            callAI: async () => JSON.stringify({
+                classification: 'bug',
+                confidence: 0.9,
+                reasoning: 'x'.repeat(600),
+            }),
+        });
+        assert.equal(result.reasoning.length, 500);
     });
 });
