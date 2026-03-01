@@ -1294,6 +1294,15 @@ app.put('/api/v2/endpoints/:id', apiWriteLimiter, v2Auth, (req, res) => {
             case 'telegram':
                 if (!cfg.chat_id) return res.status(400).json({ error: 'Telegram endpoint requires "chat_id" in config' });
                 break;
+            case 'slack':
+                if (!cfg.webhook_url) return res.status(400).json({ error: 'Slack endpoint requires "webhook_url" in config' });
+                break;
+            case 'email':
+                if (!cfg.api_key) return res.status(400).json({ error: 'Email endpoint requires "api_key" in config' });
+                if (!cfg.from) return res.status(400).json({ error: 'Email endpoint requires "from" in config' });
+                if (cfg.to && !Array.isArray(cfg.to)) cfg.to = [cfg.to];
+                if (!cfg.to || cfg.to.length === 0) return res.status(400).json({ error: 'Email endpoint requires "to" in config' });
+                break;
         }
     }
 
