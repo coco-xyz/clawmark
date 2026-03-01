@@ -3,15 +3,19 @@
  *
  * Tests cover:
  * 1. Declaration validation (schema, adapter normalization, config extraction)
- * 2. Cache behavior (positive cache, negative cache, TTL expiry)
- * 3. Integration with routing (declaration priority)
+ * 2. SSRF prevention (isPrivateIP, isSafeUrl, webhook endpoint validation)
+ * 3. Cache behavior (positive cache, negative cache, TTL expiry, size limit)
+ * 4. Integration with routing (declaration priority)
  */
 
 'use strict';
 
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { validateDeclaration, _cache, CACHE_TTL, NEGATIVE_CACHE_TTL } = require('../server/target-declaration');
+const {
+    validateDeclaration, isPrivateIP, isSafeUrl,
+    _cache, _setCache, CACHE_TTL, NEGATIVE_CACHE_TTL, CACHE_MAX_SIZE, MAX_REDIRECTS,
+} = require('../server/target-declaration');
 const { resolveTarget } = require('../server/routing');
 
 // ==================================================================
@@ -42,7 +46,7 @@ describe('validateDeclaration', () => {
         assert.equal(result.target_config.repo, 'owner/repo');
     });
 
-    it('validates webhook adapter with endpoint', () => {
+    it('validates webhook adapter with HTTPS endpoint', () => {
         const result = validateDeclaration({
             adapter: 'webhook',
             endpoint: 'https://api.example.com/feedback',
@@ -53,6 +57,32 @@ describe('validateDeclaration', () => {
         assert.equal(result.target_config.url, 'https://api.example.com/feedback');
         assert.equal(result.target_config.method, 'POST');
         assert.deepStrictEqual(result.target_config.types, ['issue', 'comment']);
+    });
+
+    it('rejects webhook with HTTP endpoint (SSRF prevention)', () => {
+        assert.equal(validateDeclaration({
+            adapter: 'webhook',
+            endpoint: 'http://api.example.com/feedback',
+        }), null);
+    });
+
+    it('rejects webhook with localhost endpoint (SSRF prevention)', () => {
+        assert.equal(validateDeclaration({
+            adapter: 'webhook',
+            endpoint: 'https://localhost/hook',
+        }), null);
+        assert.equal(validateDeclaration({
+            adapter: 'webhook',
+            endpoint: 'https://127.0.0.1/hook',
+        }), null);
+        assert.equal(validateDeclaration({
+            adapter: 'webhook',
+            endpoint: 'https://0.0.0.0/hook',
+        }), null);
+        assert.equal(validateDeclaration({
+            adapter: 'webhook',
+            endpoint: 'https://[::1]/hook',
+        }), null);
     });
 
     it('defaults labels to ["clawmark"] for github-issue', () => {
@@ -92,10 +122,11 @@ describe('validateDeclaration', () => {
         assert.equal(validateDeclaration({ adapter: 'webhook', endpoint: 'not-a-url' }), null);
     });
 
-    it('rejects null/undefined input', () => {
+    it('rejects null/undefined/array input', () => {
         assert.equal(validateDeclaration(null), null);
         assert.equal(validateDeclaration(undefined), null);
         assert.equal(validateDeclaration('string'), null);
+        assert.equal(validateDeclaration([1, 2]), null);
     });
 
     it('truncates labels array to 10 items', () => {
@@ -126,27 +157,115 @@ describe('validateDeclaration', () => {
         assert.equal(result.target_type, 'github-issue');
     });
 
-    it('validates lark adapter', () => {
+    it('validates lark adapter with safe fields only', () => {
         const result = validateDeclaration({
             adapter: 'lark',
             webhook_url: 'https://open.larksuite.com/hook/xxx',
+            evil_field: 'should-not-copy',
         });
         assert.ok(result);
         assert.equal(result.target_type, 'lark');
+        assert.equal(result.target_config.webhook_url, 'https://open.larksuite.com/hook/xxx');
+        assert.equal(result.target_config.evil_field, undefined);
     });
 
-    it('validates telegram adapter', () => {
+    it('validates telegram adapter with safe fields only', () => {
         const result = validateDeclaration({
             adapter: 'telegram',
             chat_id: '-1001234567890',
+            dangerous_field: 'should-not-copy',
         });
         assert.ok(result);
         assert.equal(result.target_type, 'telegram');
+        assert.equal(result.target_config.chat_id, '-1001234567890');
+        assert.equal(result.target_config.dangerous_field, undefined);
     });
 });
 
 // ==================================================================
-// 2. Cache behavior
+// 2. SSRF prevention
+// ==================================================================
+
+describe('isPrivateIP', () => {
+    it('detects IPv4 loopback', () => {
+        assert.equal(isPrivateIP('127.0.0.1'), true);
+        assert.equal(isPrivateIP('127.0.0.2'), true);
+        assert.equal(isPrivateIP('127.255.255.255'), true);
+    });
+
+    it('detects Class A private (10.x)', () => {
+        assert.equal(isPrivateIP('10.0.0.1'), true);
+        assert.equal(isPrivateIP('10.255.255.255'), true);
+    });
+
+    it('detects Class B private (172.16-31.x)', () => {
+        assert.equal(isPrivateIP('172.16.0.1'), true);
+        assert.equal(isPrivateIP('172.31.255.255'), true);
+        assert.equal(isPrivateIP('172.15.0.1'), false);
+        assert.equal(isPrivateIP('172.32.0.1'), false);
+    });
+
+    it('detects Class C private (192.168.x)', () => {
+        assert.equal(isPrivateIP('192.168.0.1'), true);
+        assert.equal(isPrivateIP('192.168.255.255'), true);
+    });
+
+    it('detects link-local / cloud metadata (169.254.x)', () => {
+        assert.equal(isPrivateIP('169.254.169.254'), true);
+        assert.equal(isPrivateIP('169.254.0.1'), true);
+    });
+
+    it('detects 0.0.0.0', () => {
+        assert.equal(isPrivateIP('0.0.0.0'), true);
+    });
+
+    it('detects IPv6 loopback', () => {
+        assert.equal(isPrivateIP('::1'), true);
+    });
+
+    it('detects IPv6 link-local', () => {
+        assert.equal(isPrivateIP('fe80::1'), true);
+    });
+
+    it('detects IPv6 unique local', () => {
+        assert.equal(isPrivateIP('fc00::1'), true);
+        assert.equal(isPrivateIP('fd12::1'), true);
+    });
+
+    it('allows public IPs', () => {
+        assert.equal(isPrivateIP('8.8.8.8'), false);
+        assert.equal(isPrivateIP('1.1.1.1'), false);
+        assert.equal(isPrivateIP('185.199.108.153'), false);
+    });
+
+    it('rejects null/empty', () => {
+        assert.equal(isPrivateIP(null), true);
+        assert.equal(isPrivateIP(''), true);
+    });
+});
+
+describe('isSafeUrl', () => {
+    it('rejects HTTP URLs', async () => {
+        assert.equal(await isSafeUrl('http://example.com'), false);
+    });
+
+    it('allows HTTPS URLs with trusted hosts', async () => {
+        assert.equal(await isSafeUrl('https://raw.githubusercontent.com/owner/repo/main/file'), true);
+    });
+
+    it('rejects non-URL strings', async () => {
+        assert.equal(await isSafeUrl('not-a-url'), false);
+    });
+});
+
+describe('fetchUrl security', () => {
+    it('has max redirects limit of 3', () => {
+        assert.equal(MAX_REDIRECTS, 3);
+    });
+});
+
+// ==================================================================
+// 3. Cache behavior
 // ==================================================================
 
 describe('cache', () => {
@@ -156,14 +275,14 @@ describe('cache', () => {
 
     it('stores and retrieves positive cache entries', () => {
         const value = { target_type: 'github-issue', target_config: { repo: 'a/b' } };
-        _cache.set('test-key', { value, timestamp: Date.now(), negative: false });
+        _setCache('test-key', value, false);
         const entry = _cache.get('test-key');
         assert.ok(entry);
         assert.deepStrictEqual(entry.value, value);
     });
 
     it('stores negative cache entries', () => {
-        _cache.set('miss-key', { value: null, timestamp: Date.now(), negative: true });
+        _setCache('miss-key', null, true);
         const entry = _cache.get('miss-key');
         assert.ok(entry);
         assert.equal(entry.value, null);
@@ -176,6 +295,21 @@ describe('cache', () => {
 
     it('negative cache TTL is 2 minutes', () => {
         assert.equal(NEGATIVE_CACHE_TTL, 2 * 60 * 1000);
+    });
+
+    it('cache max size is 1000', () => {
+        assert.equal(CACHE_MAX_SIZE, 1000);
+    });
+
+    it('evicts oldest entry when full', () => {
+        for (let i = 0; i < CACHE_MAX_SIZE; i++) {
+            _cache.set(`key-${i}`, { value: null, timestamp: Date.now(), negative: true });
+        }
+        assert.equal(_cache.size, CACHE_MAX_SIZE);
+        _setCache('new-key', null, true);
+        assert.equal(_cache.size, CACHE_MAX_SIZE);
+        assert.equal(_cache.has('key-0'), false);
+        assert.equal(_cache.has('new-key'), true);
     });
 });
 
