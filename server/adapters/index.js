@@ -17,6 +17,8 @@ class AdapterRegistry {
         this.rules = [];
         /** @type {object|null} DB instance for adapters that need persistence */
         this.db = null;
+        /** @type {string|null} Default GitHub token for dynamic dispatch fallback */
+        this.defaultGitHubToken = null;
     }
 
     /**
@@ -25,6 +27,19 @@ class AdapterRegistry {
      */
     setDb(db) {
         this.db = db;
+    }
+
+    /**
+     * Set the default GitHub token for dynamic dispatch.
+     * Used as a fallback when no static github-issue channel is configured
+     * or when dynamically resolved targets (e.g. github_auto routing) lack a token.
+     *
+     * @param {string} token  GitHub Personal Access Token with repo scope
+     */
+    setDefaultGitHubToken(token) {
+        if (token) {
+            this.defaultGitHubToken = token;
+        }
     }
 
     /**
@@ -136,6 +151,33 @@ class AdapterRegistry {
     }
 
     /**
+     * Resolve GitHub token for dynamic dispatch.
+     * Priority: target_config.token > static channel token > defaultGitHubToken.
+     *
+     * @param {object} config  Target config (may be mutated to add token)
+     * @returns {boolean} true if a token was resolved
+     */
+    _resolveGitHubToken(config) {
+        if (config.token) return true;
+
+        // Try inheriting from a static github-issue channel
+        for (const [, adapter] of this.channels) {
+            if (adapter.type === 'github-issue' && adapter.token) {
+                config.token = adapter.token;
+                return true;
+            }
+        }
+
+        // Fall back to the default GitHub token (from env or config)
+        if (this.defaultGitHubToken) {
+            config.token = this.defaultGitHubToken;
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Dispatch an event to a dynamically resolved target (not from static rules).
      * Creates an ad-hoc adapter instance using the registered adapter type.
      *
@@ -152,17 +194,9 @@ class AdapterRegistry {
             return;
         }
 
-        // Inherit token from default channel config if not provided.
-        // This is safe because dynamic targets are still GitHub repos the user
-        // explicitly configured — we just reuse the PAT from the static config
-        // rather than requiring each rule to carry its own token.
-        if (target_type === 'github-issue' && !target_config.token) {
-            for (const [, adapter] of this.channels) {
-                if (adapter.type === 'github-issue' && adapter.token) {
-                    target_config.token = adapter.token;
-                    break;
-                }
-            }
+        // Resolve GitHub token from available sources
+        if (target_type === 'github-issue') {
+            this._resolveGitHubToken(target_config);
         }
 
         const channelName = `dynamic-${target_type}-${Date.now()}`;
@@ -251,14 +285,9 @@ class AdapterRegistry {
         // Copy config to avoid mutating caller's object (M3)
         const config = { ...target_config };
 
-        // Inherit token from default channel for github-issue
-        if (target_type === 'github-issue' && !config.token) {
-            for (const [, adapter] of this.channels) {
-                if (adapter.type === 'github-issue' && adapter.token) {
-                    config.token = adapter.token;
-                    break;
-                }
-            }
+        // Resolve GitHub token from available sources
+        if (target_type === 'github-issue') {
+            this._resolveGitHubToken(config);
         }
 
         const channelName = `dynamic-${target_type}-${Date.now()}`;

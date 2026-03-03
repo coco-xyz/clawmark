@@ -1843,3 +1843,94 @@ describe('AdapterRegistry — new adapter types integration', () => {
         assert.equal(registry.channels.has('bad'), false);
     });
 });
+
+// ============================ defaultGitHubToken tests (#141)
+
+describe('AdapterRegistry — defaultGitHubToken (#141)', () => {
+
+    it('_resolveGitHubToken returns false when no token source exists', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('github-issue', GitHubIssueAdapter);
+        const config = { repo: 'owner/repo' };
+        assert.equal(registry._resolveGitHubToken(config), false);
+        assert.equal(config.token, undefined);
+    });
+
+    it('_resolveGitHubToken uses defaultGitHubToken when no channels exist', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('github-issue', GitHubIssueAdapter);
+        registry.setDefaultGitHubToken('ghp_default_test_token');
+        const config = { repo: 'owner/repo' };
+        assert.equal(registry._resolveGitHubToken(config), true);
+        assert.equal(config.token, 'ghp_default_test_token');
+    });
+
+    it('_resolveGitHubToken prefers static channel token over default', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('github-issue', GitHubIssueAdapter);
+        registry.setDefaultGitHubToken('ghp_default_token');
+        registry.loadConfig({
+            rules: [],
+            channels: {
+                'gh-static': {
+                    adapter: 'github-issue',
+                    token: 'ghp_static_channel_token',
+                    repo: 'org/static-repo',
+                },
+            },
+        });
+        const config = { repo: 'owner/other-repo' };
+        assert.equal(registry._resolveGitHubToken(config), true);
+        assert.equal(config.token, 'ghp_static_channel_token');
+    });
+
+    it('_resolveGitHubToken preserves explicit token in config', () => {
+        const registry = new AdapterRegistry();
+        registry.registerType('github-issue', GitHubIssueAdapter);
+        registry.setDefaultGitHubToken('ghp_default_token');
+        const config = { repo: 'owner/repo', token: 'ghp_explicit_token' };
+        assert.equal(registry._resolveGitHubToken(config), true);
+        assert.equal(config.token, 'ghp_explicit_token');
+    });
+
+    it('setDefaultGitHubToken ignores falsy values', () => {
+        const registry = new AdapterRegistry();
+        registry.setDefaultGitHubToken(null);
+        assert.equal(registry.defaultGitHubToken, null);
+        registry.setDefaultGitHubToken('');
+        assert.equal(registry.defaultGitHubToken, null);
+        registry.setDefaultGitHubToken(undefined);
+        assert.equal(registry.defaultGitHubToken, null);
+    });
+
+    it('setDefaultGitHubToken sets a valid token', () => {
+        const registry = new AdapterRegistry();
+        registry.setDefaultGitHubToken('ghp_abc123');
+        assert.equal(registry.defaultGitHubToken, 'ghp_abc123');
+    });
+
+    it('_dispatchSingleTarget uses default token for github-issue', async () => {
+        const registry = new AdapterRegistry();
+        // Track what token the adapter receives
+        let capturedToken = null;
+        class MockGH {
+            constructor(cfg) {
+                this.type = 'github-issue';
+                capturedToken = cfg.token;
+            }
+            validate() { return { ok: true }; }
+            async send() { return { external_id: '42', external_url: 'https://example.com' }; }
+        }
+        registry.registerType('github-issue', MockGH);
+        registry.setDefaultGitHubToken('ghp_from_default');
+
+        await registry._dispatchSingleTarget(
+            'item.created',
+            { id: 'test-1' },
+            'github-issue',
+            { repo: 'owner/repo' },
+            {}
+        );
+        assert.equal(capturedToken, 'ghp_from_default');
+    });
+});

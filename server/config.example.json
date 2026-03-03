@@ -13,6 +13,7 @@
     "secret": ""
   },
   "distribution": {
+    "defaultGitHubToken": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "rules": [
       {
         "match": { "event": "item.created", "type": "issue", "priority": ["high", "critical"] },

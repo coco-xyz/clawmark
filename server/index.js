@@ -6,9 +6,11 @@
  * variables or config.json.
  *
  * Environment variables (all optional):
- *   CLAWMARK_PORT       Port to listen on              (default: 3458)
- *   CLAWMARK_DATA_DIR   Directory for DB + uploads     (default: ./data)
- *   CLAWMARK_CONFIG     Path to config.json            (default: ../config.json)
+ *   CLAWMARK_PORT           Port to listen on              (default: 3458)
+ *   CLAWMARK_DATA_DIR       Directory for DB + uploads     (default: ./data)
+ *   CLAWMARK_CONFIG         Path to config.json            (default: ../config.json)
+ *   CLAWMARK_GITHUB_TOKEN   Default GitHub PAT for dynamic dispatch (repo scope)
+ *   CLAWMARK_JWT_SECRET     Secret for signing auth JWTs
  */
 
 'use strict';
@@ -113,6 +115,18 @@ registry.registerType('email', EmailAdapter);
 registry.registerType('linear', LinearAdapter);
 registry.registerType('jira', JiraAdapter);
 registry.registerType('hxa-connect', HxaConnectAdapter);
+
+// Default GitHub token for dynamic dispatch (auto-routed GitHub URLs).
+// Priority: env var > config.distribution.defaultGitHubToken > static channel inheritance.
+const DEFAULT_GITHUB_TOKEN = process.env.CLAWMARK_GITHUB_TOKEN
+    || (config.distribution && config.distribution.defaultGitHubToken)
+    || null;
+if (DEFAULT_GITHUB_TOKEN) {
+    registry.setDefaultGitHubToken(DEFAULT_GITHUB_TOKEN);
+    console.log('[adapters] Default GitHub token configured for dynamic dispatch');
+} else {
+    console.warn('[adapters] No default GitHub token — dynamic dispatch to GitHub will fail unless a static github-issue channel provides one');
+}
 
 // Load distribution config
 if (config.distribution) {

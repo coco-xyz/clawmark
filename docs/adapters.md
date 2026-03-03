@@ -142,6 +142,34 @@ Creates and syncs GitHub Issues from ClawMark items.
 - `item.closed` → Closes the GitHub Issue
 - `item.reopened` → Reopens the GitHub Issue
 
+#### Default GitHub Token (for dynamic dispatch)
+
+When ClawMark auto-detects a GitHub URL (e.g. a user annotates a PR page), it dynamically resolves the target repo but needs a token with `repo` scope to create issues. The token is resolved in this order:
+
+1. **Per-channel token** — the `token` field in the channel config (static rules)
+2. **Inherited from static channel** — if any `github-issue` channel is configured, its token is reused
+3. **Default token** — from the `CLAWMARK_GITHUB_TOKEN` environment variable or `distribution.defaultGitHubToken` in config.json
+
+Set the default token to ensure dynamic dispatch works even when no static GitHub channel is configured:
+
+```bash
+# Environment variable (recommended for production)
+export CLAWMARK_GITHUB_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+```json
+// Or in config.json under distribution
+{
+  "distribution": {
+    "defaultGitHubToken": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "rules": [...],
+    "channels": {...}
+  }
+}
+```
+
+The token needs `repo` scope for private repositories, or `public_repo` for public-only access.
+
 ## Example: Full Configuration
 
 ```json
