@@ -185,7 +185,7 @@ async function apiRequest(method, path, body = null) {
 // ------------------------------------------------------------------ API methods
 
 async function createItem({ type, title, content, source_url, source_title, quote,
-                            quote_position, priority, tags, screenshots }) {
+                            quote_position, priority, tags, screenshots, selected_targets }) {
     const config = await getConfig();
     return apiRequest('POST', '/api/v2/items', {
         type: type || 'comment',
@@ -199,6 +199,7 @@ async function createItem({ type, title, content, source_url, source_title, quot
         tags: tags || [],
         screenshots: screenshots || [],
         app_id: config.appId,
+        selected_targets,
     });
 }
 

@@ -369,12 +369,8 @@
             });
 
             resolvedTargets = result.targets || [];
-            if (resolvedTargets.length === 0) {
-                previewEl.style.display = 'none';
-                return;
-            }
 
-            targetsEl.innerHTML = resolvedTargets.map((t, i) => {
+            let html = resolvedTargets.map((t, i) => {
                 const label = formatTargetLabel(t);
                 return `<label class="cm-dispatch-target">
                     <input type="checkbox" checked data-idx="${i}" />
@@ -383,9 +379,26 @@
                     <span class="cm-target-method">${escHtml(t.method.replace('_', ' '))}</span>
                 </label>`;
             }).join('');
+
+            // Always show the ClawMark fallback destination
+            html += `<label class="cm-dispatch-target cm-dispatch-fallback">
+                <input type="checkbox" checked disabled />
+                <span class="cm-target-icon">\u{1F4BE}</span>
+                <span class="cm-target-label">ClawMark</span>
+                <span class="cm-target-method">saved</span>
+            </label>`;
+
+            targetsEl.innerHTML = html;
             previewEl.style.display = 'block';
         } catch {
-            previewEl.style.display = 'none';
+            // Even on error, show the fallback
+            targetsEl.innerHTML = `<label class="cm-dispatch-target cm-dispatch-fallback">
+                <input type="checkbox" checked disabled />
+                <span class="cm-target-icon">\u{1F4BE}</span>
+                <span class="cm-target-label">ClawMark</span>
+                <span class="cm-target-method">saved</span>
+            </label>`;
+            previewEl.style.display = 'block';
         }
     }
 
@@ -497,8 +510,16 @@
         try {
             const response = await chrome.runtime.sendMessage({ type: 'CREATE_ITEM', data });
             if (response.error) throw new Error(response.error);
-            const targetCount = resolvedTargets.length;
-            showToast(targetCount > 0 ? `Submitted \u2192 ${targetCount} target${targetCount > 1 ? 's' : ''}` : 'Submitted!', 'success');
+
+            // Build informative toast with dispatch destinations
+            const dispatched = response.dispatched || [];
+            const targetNames = dispatched.length > 0
+                ? dispatched.map(d => d.label || d.target_type).join(', ')
+                : resolvedTargets.map(t => formatTargetLabel(t)).join(', ');
+            const summary = targetNames
+                ? `Saved \u2192 ${targetNames}`
+                : 'Saved to ClawMark';
+            showToast(summary, 'success');
             resolvedTargets = [];
             hideInputOverlay();
         } catch (err) {
