@@ -421,6 +421,38 @@ async function handleMessage(message, sender) {
         case 'DELETE_ROUTING_RULE':
             return apiRequest('DELETE', `/api/v2/routing/rules/${message.id}`);
 
+        // Master toggle (global on/off)
+        case 'GET_MASTER_TOGGLE': {
+            const { masterEnabled = true } = await chrome.storage.sync.get({ masterEnabled: true });
+            return { masterEnabled };
+        }
+
+        case 'SET_MASTER_TOGGLE': {
+            await chrome.storage.sync.set({ masterEnabled: message.enabled });
+            // Broadcast to all content scripts
+            const tabs = await chrome.tabs.query({});
+            for (const tab of tabs) {
+                chrome.tabs.sendMessage(tab.id, {
+                    type: 'MASTER_TOGGLE_CHANGED',
+                    enabled: message.enabled,
+                }).catch(() => {});
+            }
+            return { success: true };
+        }
+
+        // Get annotation count for a URL (for popup badge)
+        case 'GET_ANNOTATION_COUNT': {
+            try {
+                const result = await getItemsByUrl(message.url);
+                const items = result.items || [];
+                const comments = items.filter(i => i.type === 'comment').length;
+                const issues = items.filter(i => i.type === 'issue').length;
+                return { comments, issues, total: items.length, recent: items.slice(0, 3) };
+            } catch {
+                return { comments: 0, issues: 0, total: 0, recent: [] };
+            }
+        }
+
         default:
             return { error: `Unknown message type: ${message.type}` };
     }

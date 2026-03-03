@@ -1,121 +1,105 @@
 /**
- * ClawMark Chrome Extension — Popup
+ * ClawMark Chrome Extension — Popup (v2)
  *
- * Config and authentication UI
+ * Current-page focused: master toggle, delivery targets, annotation stats, quick actions.
+ * All configuration moved to Dashboard (options page).
  */
 
 'use strict';
 
 // ------------------------------------------------------------------ elements
 
-const serverUrlInput = document.getElementById('server-url');
-const apiKeyInput = document.getElementById('api-key');
-const inviteCodeInput = document.getElementById('invite-code');
-const googleClientIdInput = document.getElementById('google-client-id');
-const userNameInput = document.getElementById('user-name');
-const saveBtn = document.getElementById('save-btn');
-const panelBtn = document.getElementById('panel-btn');
-const statusDot = document.getElementById('status-dot');
-const statusText = document.getElementById('status-text');
+const masterToggle = document.getElementById('master-toggle');
+const gearBtn = document.getElementById('gear-btn');
+const disabledOverlay = document.getElementById('disabled-overlay');
+const loginPrompt = document.getElementById('login-prompt');
+const mainContent = document.getElementById('main-content');
+const googleBtn = document.getElementById('google-btn');
+const settingsLink = document.getElementById('settings-link');
+const tabUrlEl = document.getElementById('tab-url');
+const targetListEl = document.getElementById('target-list');
+const noTargetsEl = document.getElementById('no-targets');
+const commentCountEl = document.getElementById('comment-count');
+const issueCountEl = document.getElementById('issue-count');
+const recentEl = document.getElementById('recent-annotations');
+const emptyAnnotationsEl = document.getElementById('empty-annotations');
+const siteSectionEl = document.getElementById('site-section');
+const siteInfoEl = document.getElementById('site-info');
+const siteBtnEl = document.getElementById('site-btn');
 const messageEl = document.getElementById('message');
 
-// Auth elements
-const userInfoEl = document.getElementById('user-info');
-const userAvatarEl = document.getElementById('user-avatar');
-const userDisplayNameEl = document.getElementById('user-display-name');
-const userEmailEl = document.getElementById('user-email');
-const signOutBtn = document.getElementById('sign-out-btn');
-const googleBtn = document.getElementById('google-btn');
-const authNoteEl = document.getElementById('auth-note');
+let currentUrl = '';
+let currentHostname = '';
+let disabledSites = [];
+let isLoggedIn = false;
 
-// Manual auth toggle
-const manualAuthToggle = document.getElementById('manual-auth-toggle');
-const manualAuthArrow = document.getElementById('manual-auth-arrow');
-const manualAuthSection = document.getElementById('manual-auth-section');
+// ------------------------------------------------------------------ master toggle
 
-// ------------------------------------------------------------------ auth UI
-
-function showLoggedIn(user) {
-    userInfoEl.classList.add('visible');
-    googleBtn.classList.remove('visible');
-    authNoteEl.classList.remove('visible');
-
-    userDisplayNameEl.textContent = user.name || user.email || 'User';
-    userEmailEl.textContent = user.email || '';
-
-    // Avatar: use picture URL or initials
-    if (user.picture) {
-        userAvatarEl.innerHTML = `<img src="${user.picture}" alt="">`;
-    } else {
-        const initials = (user.name || user.email || 'U').charAt(0).toUpperCase();
-        userAvatarEl.textContent = initials;
-    }
+async function loadMasterToggle() {
+    const result = await chrome.runtime.sendMessage({ type: 'GET_MASTER_TOGGLE' });
+    masterToggle.checked = result.masterEnabled;
+    updateMasterState(result.masterEnabled);
 }
 
-function showLoggedOut() {
-    userInfoEl.classList.remove('visible');
-    googleBtn.classList.add('visible');
-    authNoteEl.classList.add('visible');
-}
-
-async function loadAuthState() {
-    try {
-        const state = await chrome.runtime.sendMessage({ type: 'GET_AUTH_STATE' });
-        if (state.authToken && state.authUser) {
-            showLoggedIn(state.authUser);
+function updateMasterState(enabled) {
+    if (enabled) {
+        disabledOverlay.classList.remove('visible');
+        if (isLoggedIn) {
+            mainContent.classList.remove('hidden');
+            loginPrompt.classList.remove('visible');
         } else {
-            showLoggedOut();
+            mainContent.classList.add('hidden');
+            loginPrompt.classList.add('visible');
         }
-    } catch {
-        showLoggedOut();
+    } else {
+        disabledOverlay.classList.add('visible');
+        mainContent.classList.add('hidden');
+        loginPrompt.classList.remove('visible');
     }
 }
 
-// ------------------------------------------------------------------ config
-
-async function loadConfig() {
-    const config = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
-    serverUrlInput.value = config.serverUrl || '';
-    apiKeyInput.value = config.apiKey || '';
-    inviteCodeInput.value = config.inviteCode || '';
-    googleClientIdInput.value = config.googleClientId || '';
-    userNameInput.value = config.userName || '';
-}
-
-saveBtn.addEventListener('click', async () => {
-    const config = {
-        serverUrl: serverUrlInput.value.trim().replace(/\/$/, '') || DEFAULT_SERVER_URL,
-        apiKey: apiKeyInput.value.trim(),
-        inviteCode: inviteCodeInput.value.trim(),
-        googleClientId: googleClientIdInput.value.trim(),
-        userName: userNameInput.value.trim(),
-    };
-
-    await chrome.runtime.sendMessage({ type: 'SAVE_CONFIG', config });
-    showMessage('Saved!', 'success');
-    checkConnection();
+masterToggle.addEventListener('change', async () => {
+    const enabled = masterToggle.checked;
+    await chrome.runtime.sendMessage({ type: 'SET_MASTER_TOGGLE', enabled });
+    updateMasterState(enabled);
+    showMessage(enabled ? 'ClawMark enabled' : 'ClawMark paused', 'success');
 });
 
-const DEFAULT_SERVER_URL = 'https://api.coco.xyz/clawmark';
+// ------------------------------------------------------------------ gear -> dashboard
 
-// ------------------------------------------------------------------ Google sign-in
+gearBtn.addEventListener('click', () => {
+    chrome.runtime.openOptionsPage();
+    window.close();
+});
+
+settingsLink.addEventListener('click', () => {
+    chrome.runtime.openOptionsPage();
+    window.close();
+});
+
+// ------------------------------------------------------------------ auth
+
+async function loadAuth() {
+    try {
+        const state = await chrome.runtime.sendMessage({ type: 'GET_AUTH_STATE' });
+        isLoggedIn = !!(state.authToken && state.authUser);
+    } catch {
+        isLoggedIn = false;
+    }
+}
 
 googleBtn.addEventListener('click', async () => {
     googleBtn.disabled = true;
     googleBtn.textContent = 'Signing in...';
-
     try {
         const result = await chrome.runtime.sendMessage({ type: 'LOGIN_GOOGLE' });
         if (result.error) throw new Error(result.error);
-        showLoggedIn(result.user);
+        isLoggedIn = true;
+        updateMasterState(masterToggle.checked);
         showMessage('Signed in!', 'success');
-        // Update username field if populated by OAuth
-        if (result.user?.name) {
-            userNameInput.value = result.user.name;
-        }
+        loadPageData();
     } catch (err) {
         showMessage(err.message, 'error');
-        showLoggedOut();
     } finally {
         googleBtn.disabled = false;
         googleBtn.innerHTML = `
@@ -129,100 +113,176 @@ googleBtn.addEventListener('click', async () => {
     }
 });
 
-// ------------------------------------------------------------------ sign out
+// ------------------------------------------------------------------ current tab
 
-signOutBtn.addEventListener('click', async () => {
-    await chrome.runtime.sendMessage({ type: 'LOGOUT' });
-    showLoggedOut();
-    showMessage('Signed out', 'success');
-});
-
-// ------------------------------------------------------------------ manual auth toggle
-
-manualAuthToggle.addEventListener('click', () => {
-    const isOpen = manualAuthSection.classList.toggle('open');
-    manualAuthArrow.classList.toggle('open', isOpen);
-});
-
-// ------------------------------------------------------------------ open side panel
-
-panelBtn.addEventListener('click', async () => {
+async function loadCurrentTab() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab) {
-        await chrome.sidePanel.open({ tabId: tab.id });
-        window.close();
+    if (!tab?.url) return;
+
+    currentUrl = tab.url;
+    try {
+        const url = new URL(tab.url);
+        currentHostname = url.hostname;
+        // Show truncated URL
+        const display = url.hostname + url.pathname;
+        tabUrlEl.textContent = display.length > 40 ? display.substring(0, 40) + '...' : display;
+    } catch {
+        tabUrlEl.textContent = tab.url.substring(0, 40);
     }
+}
+
+// ------------------------------------------------------------------ delivery targets
+
+async function loadDeliveryTargets() {
+    if (!currentUrl || currentUrl.startsWith('chrome')) {
+        noTargetsEl.style.display = 'block';
+        return;
+    }
+
+    try {
+        // Get matched targets for this URL
+        const result = await chrome.runtime.sendMessage({
+            type: 'RESOLVE_DISPATCH_TARGETS',
+            source_url: currentUrl,
+            item_type: 'comment',
+            tags: [],
+        });
+
+        const targets = result.targets || [];
+        if (targets.length === 0) {
+            noTargetsEl.style.display = 'block';
+            return;
+        }
+
+        noTargetsEl.style.display = 'none';
+        targetListEl.innerHTML = '';
+
+        for (let i = 0; i < targets.length; i++) {
+            const t = targets[i];
+            const div = document.createElement('div');
+            div.className = 'target-item';
+            const name = t.name || formatTargetName(t.target_type, t.target_config);
+            div.innerHTML = `
+                ${i === 0 ? '<span class="target-star">&#x2605;</span>' : '<span style="width:12px;display:inline-block"></span>'}
+                <span class="target-name">${escHtml(name)}</span>
+                <span class="target-type">${escHtml(t.target_type)}</span>`;
+            targetListEl.appendChild(div);
+        }
+    } catch {
+        // Server may not support resolve endpoint yet
+        noTargetsEl.textContent = 'Could not load targets';
+        noTargetsEl.style.display = 'block';
+    }
+}
+
+function formatTargetName(type, config) {
+    const cfg = typeof config === 'string' ? JSON.parse(config || '{}') : (config || {});
+    switch (type) {
+        case 'github-issue': return `GitHub: ${cfg.repo || '?'}`;
+        case 'lark': return 'Lark Webhook';
+        case 'telegram': return `Telegram: ${cfg.chat_id || '?'}`;
+        case 'slack': return `Slack: ${cfg.channel || 'webhook'}`;
+        case 'webhook': return 'Webhook';
+        case 'email': return `Email: ${(cfg.to || []).join(', ') || '?'}`;
+        case 'hxa-connect': return 'HxA Connect';
+        default: return type;
+    }
+}
+
+document.getElementById('btn-more-targets').addEventListener('click', () => {
+    chrome.runtime.openOptionsPage();
+    window.close();
 });
 
-// ------------------------------------------------------------------ connection check
+// ------------------------------------------------------------------ annotation stats
 
-async function checkConnection() {
-    statusText.textContent = 'Checking...';
-    statusDot.classList.remove('connected');
+async function loadAnnotationStats() {
+    if (!currentUrl || currentUrl.startsWith('chrome')) {
+        emptyAnnotationsEl.style.display = 'block';
+        return;
+    }
 
     try {
-        const health = await chrome.runtime.sendMessage({ type: 'CHECK_HEALTH' });
-        if (health.status === 'ok') {
-            statusDot.classList.add('connected');
-            statusText.textContent = `Connected (v${health.version || '?'})`;
-        } else {
-            statusText.textContent = 'Server error';
+        const counts = await chrome.runtime.sendMessage({
+            type: 'GET_ANNOTATION_COUNT',
+            url: currentUrl,
+        });
+
+        commentCountEl.textContent = counts.comments;
+        issueCountEl.textContent = counts.issues;
+
+        if (counts.total === 0) {
+            emptyAnnotationsEl.style.display = 'block';
+            recentEl.innerHTML = '';
+            return;
         }
-    } catch (err) {
-        statusText.textContent = 'Disconnected';
+
+        emptyAnnotationsEl.style.display = 'none';
+        recentEl.innerHTML = '';
+
+        for (const item of (counts.recent || []).slice(0, 3)) {
+            const text = item.quote || item.content || item.title || '';
+            const time = item.created_at ? timeAgo(new Date(item.created_at)) : '';
+            const div = document.createElement('div');
+            div.className = 'recent-item';
+            div.innerHTML = `<span class="quote">"${escHtml(text.substring(0, 40))}"</span><span class="time">${escHtml(time)}</span>`;
+            recentEl.appendChild(div);
+        }
+
+        // View all button
+        const viewAll = document.createElement('button');
+        viewAll.className = 'view-all';
+        viewAll.textContent = 'View all \u2192';
+        viewAll.addEventListener('click', async () => {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tab) {
+                await chrome.sidePanel.open({ tabId: tab.id });
+                window.close();
+            }
+        });
+        recentEl.appendChild(viewAll);
+
+        // Update badge
+        if (counts.total > 0) {
+            chrome.action.setBadgeText({ text: String(counts.total) });
+            chrome.action.setBadgeBackgroundColor({ color: '#5865f2' });
+        }
+    } catch {
+        emptyAnnotationsEl.style.display = 'block';
     }
 }
 
-function showMessage(text, type) {
-    messageEl.textContent = text;
-    messageEl.className = `message ${type}`;
-    setTimeout(() => { messageEl.textContent = ''; }, 3000);
+function timeAgo(date) {
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
 }
 
-// ------------------------------------------------------------------ injection toggle
+// ------------------------------------------------------------------ site toggle
 
-const injectionToggle = document.getElementById('injection-toggle');
-const siteToggleEl = document.getElementById('site-toggle');
-const siteLabelEl = document.getElementById('site-label');
-const siteBtnEl = document.getElementById('site-btn');
+async function loadSiteToggle() {
+    if (!currentHostname || currentUrl.startsWith('chrome://') || currentUrl.startsWith('chrome-extension://')) {
+        return;
+    }
 
-let currentHostname = '';
-let disabledSites = [];
+    const setting = await chrome.runtime.sendMessage({ type: 'GET_INJECTION_SETTING' });
+    disabledSites = setting.disabledSites || [];
 
-async function loadInjectionSetting() {
-    try {
-        const setting = await chrome.runtime.sendMessage({ type: 'GET_INJECTION_SETTING' });
-        injectionToggle.checked = setting.jsInjectionEnabled;
-        disabledSites = setting.disabledSites || [];
-
-        // Get current tab hostname for per-site toggle
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab?.url) {
-            try {
-                currentHostname = new URL(tab.url).hostname;
-                if (currentHostname && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
-                    siteLabelEl.textContent = currentHostname;
-                    updateSiteButton();
-                    siteToggleEl.classList.add('visible');
-                }
-            } catch {}
-        }
-    } catch {}
+    siteInfoEl.textContent = currentHostname;
+    updateSiteBtn();
+    siteSectionEl.classList.add('visible');
 }
 
-function updateSiteButton() {
+function updateSiteBtn() {
     const isDisabled = disabledSites.includes(currentHostname);
     siteBtnEl.textContent = isDisabled ? 'Disabled' : 'Enabled';
-    siteBtnEl.classList.toggle('disabled-site', isDisabled);
+    siteBtnEl.classList.toggle('disabled-state', isDisabled);
 }
-
-injectionToggle.addEventListener('change', async () => {
-    await chrome.runtime.sendMessage({
-        type: 'SET_INJECTION_SETTING',
-        jsInjectionEnabled: injectionToggle.checked,
-    });
-    showMessage(injectionToggle.checked ? 'Overlay enabled' : 'Overlay disabled', 'success');
-});
 
 siteBtnEl.addEventListener('click', async () => {
     const isDisabled = disabledSites.includes(currentHostname);
@@ -235,389 +295,59 @@ siteBtnEl.addEventListener('click', async () => {
         type: 'SET_INJECTION_SETTING',
         disabledSites,
     });
-    updateSiteButton();
+    updateSiteBtn();
     showMessage(isDisabled ? `Enabled for ${currentHostname}` : `Disabled for ${currentHostname}`, 'success');
 });
 
-// ------------------------------------------------------------------ delivery settings
+// ------------------------------------------------------------------ quick actions
 
-const deliveryToggle = document.getElementById('delivery-toggle');
-const deliveryArrow = document.getElementById('delivery-arrow');
-const deliveryBody = document.getElementById('delivery-body');
-const rulesCountEl = document.getElementById('rules-count');
-const rulesListEl = document.getElementById('rules-list');
-const rulesLoadingEl = document.getElementById('rules-loading');
-const addRuleBtn = document.getElementById('add-rule-btn');
-const ruleFormEl = document.getElementById('rule-form');
-const rfType = document.getElementById('rf-type');
-const rfPattern = document.getElementById('rf-pattern');
-const rfPatternLabel = document.getElementById('rf-pattern-label');
-const rfTarget = document.getElementById('rf-target');
-const targetFieldsEl = document.getElementById('target-fields');
-const rfPriority = document.getElementById('rf-priority');
-const rfSave = document.getElementById('rf-save');
-const rfCancel = document.getElementById('rf-cancel');
-
-let routingRules = [];
-let editingRuleId = null;
-let rulesLoaded = false;
-
-deliveryToggle.addEventListener('click', () => {
-    const isOpen = deliveryBody.classList.toggle('open');
-    deliveryArrow.classList.toggle('open', isOpen);
-    if (isOpen && !rulesLoaded) loadRoutingRules();
+document.getElementById('btn-screenshot').addEventListener('click', async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab) {
+        chrome.tabs.sendMessage(tab.id, { type: 'START_SCREENSHOT' });
+        window.close();
+    }
 });
 
-async function loadRoutingRules() {
-    rulesLoadingEl.style.display = 'block';
-    try {
-        const result = await chrome.runtime.sendMessage({ type: 'GET_ROUTING_RULES' });
-        routingRules = result.rules || [];
-        rulesLoaded = true;
-        renderRules();
-    } catch (err) {
-        rulesLoadingEl.textContent = 'Failed to load rules';
+document.getElementById('btn-panel').addEventListener('click', async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab) {
+        await chrome.sidePanel.open({ tabId: tab.id });
+        window.close();
     }
-}
+});
 
-function renderRules() {
-    rulesLoadingEl.style.display = 'none';
-    // Remove old rule cards
-    rulesListEl.querySelectorAll('.rule-card, .rules-empty').forEach(el => el.remove());
-
-    rulesCountEl.textContent = `Rules (${routingRules.length})`;
-
-    if (routingRules.length === 0) {
-        rulesListEl.insertAdjacentHTML('beforeend',
-            '<div class="rules-empty">No routing rules yet</div>');
-        return;
-    }
-
-    for (const rule of routingRules) {
-        const card = document.createElement('div');
-        card.className = 'rule-card';
-
-        const patternText = rule.rule_type === 'default'
-            ? '(default fallback)'
-            : (rule.pattern || '—');
-
-        const targetText = formatTarget(rule.target_type, rule.target_config);
-
-        card.innerHTML = `
-            <div class="rule-pattern">
-                <span class="type-badge">${escHtml(rule.rule_type)}</span>
-                ${escHtml(patternText)}
-            </div>
-            <div class="rule-target">&rarr; ${escHtml(targetText)}</div>
-            <div class="rule-actions">
-                <button class="edit-btn" data-id="${escHtml(rule.id)}">Edit</button>
-                <button class="del-btn" data-id="${escHtml(rule.id)}">Delete</button>
-            </div>`;
-
-        card.querySelector('.edit-btn').addEventListener('click', () => editRule(rule));
-        card.querySelector('.del-btn').addEventListener('click', () => deleteRule(rule.id));
-
-        rulesListEl.appendChild(card);
-    }
-}
-
-function parseConfig(config) {
-    if (typeof config !== 'string') return config || {};
-    try { return JSON.parse(config); } catch { return {}; }
-}
-
-function formatTarget(type, config) {
-    const cfg = parseConfig(config);
-    switch (type) {
-        case 'github-issue': return `GitHub: ${cfg.repo || '?'}`;
-        case 'lark': return `Lark: ${(cfg.webhook_url || '').substring(0, 30)}...`;
-        case 'telegram': return `Telegram: ${cfg.chat_id || '?'}`;
-        case 'webhook': return `Webhook: ${(cfg.url || '').substring(0, 30)}...`;
-        case 'slack': return `Slack: ${cfg.channel || (cfg.webhook_url || '').substring(0, 30) + '...'}`;
-        case 'email': return `Email: ${(cfg.to || []).join(', ').substring(0, 30) || '?'}`;
-        default: return type;
-    }
-}
+// ------------------------------------------------------------------ helpers
 
 function escHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
 }
 
-// ---- target config fields
-
-function updateTargetFields(targetType, existingConfig) {
-    const cfg = existingConfig || {};
-    let html = '';
-
-    switch (targetType) {
-        case 'github-issue':
-            html = `
-                <label>Repository (owner/repo)</label>
-                <input type="text" id="tc-repo" placeholder="owner/repo" value="${escHtml(cfg.repo || '')}">
-                <label>Labels (comma-separated)</label>
-                <input type="text" id="tc-labels" placeholder="clawmark, bug" value="${escHtml((cfg.labels || []).join(', '))}">`;
-            break;
-        case 'lark':
-            html = `
-                <label>Webhook URL</label>
-                <input type="text" id="tc-webhook" placeholder="https://open.larksuite.com/..." value="${escHtml(cfg.webhook_url || '')}">`;
-            break;
-        case 'telegram':
-            html = `
-                <label>Bot Token</label>
-                <input type="password" id="tc-bot-token" placeholder="123456:ABC-DEF..." value="${escHtml(cfg.bot_token || '')}">
-                <label>Chat ID</label>
-                <input type="text" id="tc-chat-id" placeholder="-100123456789" value="${escHtml(cfg.chat_id || '')}">`;
-            break;
-        case 'webhook':
-            html = `
-                <label>Webhook URL</label>
-                <input type="text" id="tc-url" placeholder="https://your-endpoint.com/webhook" value="${escHtml(cfg.url || '')}">
-                <label>Secret (optional)</label>
-                <input type="password" id="tc-secret" placeholder="signing secret" value="${escHtml(cfg.secret || '')}">`;
-            break;
-        case 'slack':
-            html = `
-                <label>Webhook URL</label>
-                <input type="text" id="tc-slack-webhook" placeholder="https://hooks.slack.com/services/T.../B.../xxx" value="${escHtml(cfg.webhook_url || '')}">
-                <label>Channel (optional)</label>
-                <input type="text" id="tc-slack-channel" placeholder="#channel-name" value="${escHtml(cfg.channel || '')}">`;
-            break;
-        case 'email':
-            html = `
-                <label>Provider</label>
-                <select id="tc-email-provider">
-                    <option value="resend"${(cfg.provider || 'resend') === 'resend' ? ' selected' : ''}>Resend</option>
-                    <option value="sendgrid"${cfg.provider === 'sendgrid' ? ' selected' : ''}>SendGrid</option>
-                </select>
-                <label>API Key</label>
-                <input type="password" id="tc-email-apikey" placeholder="re_xxx... or SG.xxx..." value="${escHtml(cfg.api_key || '')}">
-                <label>From</label>
-                <input type="text" id="tc-email-from" placeholder="ClawMark <noreply@example.com>" value="${escHtml(cfg.from || '')}">
-                <label>To (comma-separated)</label>
-                <input type="text" id="tc-email-to" placeholder="team@example.com, lead@example.com" value="${escHtml((cfg.to || []).join(', '))}">`;
-            break;
-        case 'linear':
-            html = `
-                <label>API Key</label>
-                <input type="password" id="tc-linear-apikey" placeholder="lin_api_..." value="${escHtml(cfg.api_key || '')}">
-                <label>Team ID</label>
-                <input type="text" id="tc-linear-team" placeholder="team UUID" value="${escHtml(cfg.team_id || '')}">
-                <label>Assignee ID (optional)</label>
-                <input type="text" id="tc-linear-assignee" placeholder="user UUID" value="${escHtml(cfg.assignee_id || '')}">`;
-            break;
-        case 'jira':
-            html = `
-                <label>Domain</label>
-                <input type="text" id="tc-jira-domain" placeholder="myteam (→ myteam.atlassian.net)" value="${escHtml(cfg.domain || '')}">
-                <label>Email</label>
-                <input type="text" id="tc-jira-email" placeholder="user@example.com" value="${escHtml(cfg.email || '')}">
-                <label>API Token</label>
-                <input type="password" id="tc-jira-token" placeholder="ATATT3..." value="${escHtml(cfg.api_token || '')}">
-                <label>Project Key</label>
-                <input type="text" id="tc-jira-project" placeholder="PROJ" value="${escHtml(cfg.project_key || '')}">
-                <label>Issue Type (optional)</label>
-                <input type="text" id="tc-jira-issuetype" placeholder="Task, Bug, Story..." value="${escHtml(cfg.issue_type || '')}">`;
-            break;
-        case 'hxa-connect':
-            html = `
-                <label>Hub URL</label>
-                <input type="text" id="tc-hxa-hub" placeholder="https://hub.example.com" value="${escHtml(cfg.hub_url || '')}">
-                <label>Agent ID</label>
-                <input type="text" id="tc-hxa-agent" placeholder="agent UUID" value="${escHtml(cfg.agent_id || '')}">
-                <label>API Key (optional)</label>
-                <input type="password" id="tc-hxa-apikey" placeholder="Bearer token" value="${escHtml(cfg.api_key || '')}">
-                <label>Thread ID (optional)</label>
-                <input type="text" id="tc-hxa-thread" placeholder="custom-thread-id" value="${escHtml(cfg.thread_id || '')}">`;
-            break;
-    }
-    targetFieldsEl.innerHTML = html;
+function showMessage(text, type) {
+    messageEl.textContent = text;
+    messageEl.className = `message ${type}`;
+    setTimeout(() => { messageEl.textContent = ''; messageEl.className = 'message'; }, 3000);
 }
 
-function getTargetConfig() {
-    const type = rfTarget.value;
-    switch (type) {
-        case 'github-issue': {
-            const repo = (document.getElementById('tc-repo')?.value || '').trim();
-            const labelsRaw = (document.getElementById('tc-labels')?.value || '').trim();
-            const labels = labelsRaw ? labelsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
-            return { repo, labels, assignees: [] };
-        }
-        case 'lark':
-            return { webhook_url: (document.getElementById('tc-webhook')?.value || '').trim() };
-        case 'telegram':
-            return {
-                bot_token: (document.getElementById('tc-bot-token')?.value || '').trim(),
-                chat_id: (document.getElementById('tc-chat-id')?.value || '').trim(),
-            };
-        case 'webhook': {
-            const url = (document.getElementById('tc-url')?.value || '').trim();
-            const secret = (document.getElementById('tc-secret')?.value || '').trim();
-            const cfg = { url };
-            if (secret) cfg.secret = secret;
-            return cfg;
-        }
-        case 'slack': {
-            const webhookUrl = (document.getElementById('tc-slack-webhook')?.value || '').trim();
-            const channel = (document.getElementById('tc-slack-channel')?.value || '').trim();
-            const cfg = { webhook_url: webhookUrl };
-            if (channel) cfg.channel = channel;
-            return cfg;
-        }
-        case 'email': {
-            const provider = (document.getElementById('tc-email-provider')?.value || 'resend');
-            const apiKey = (document.getElementById('tc-email-apikey')?.value || '').trim();
-            const from = (document.getElementById('tc-email-from')?.value || '').trim();
-            const toRaw = (document.getElementById('tc-email-to')?.value || '').trim();
-            const to = toRaw ? toRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
-            return { provider, api_key: apiKey, from, to };
-        }
-        case 'linear': {
-            const apiKey = (document.getElementById('tc-linear-apikey')?.value || '').trim();
-            const teamId = (document.getElementById('tc-linear-team')?.value || '').trim();
-            const assigneeId = (document.getElementById('tc-linear-assignee')?.value || '').trim();
-            const cfg = { api_key: apiKey, team_id: teamId };
-            if (assigneeId) cfg.assignee_id = assigneeId;
-            return cfg;
-        }
-        case 'jira': {
-            const domain = (document.getElementById('tc-jira-domain')?.value || '').trim();
-            const email = (document.getElementById('tc-jira-email')?.value || '').trim();
-            const apiToken = (document.getElementById('tc-jira-token')?.value || '').trim();
-            const projectKey = (document.getElementById('tc-jira-project')?.value || '').trim();
-            const issueType = (document.getElementById('tc-jira-issuetype')?.value || '').trim();
-            const cfg = { domain, email, api_token: apiToken, project_key: projectKey };
-            if (issueType) cfg.issue_type = issueType;
-            return cfg;
-        }
-        case 'hxa-connect': {
-            const hubUrl = (document.getElementById('tc-hxa-hub')?.value || '').trim();
-            const agentId = (document.getElementById('tc-hxa-agent')?.value || '').trim();
-            const apiKey = (document.getElementById('tc-hxa-apikey')?.value || '').trim();
-            const threadId = (document.getElementById('tc-hxa-thread')?.value || '').trim();
-            const cfg = { hub_url: hubUrl, agent_id: agentId };
-            if (apiKey) cfg.api_key = apiKey;
-            if (threadId) cfg.thread_id = threadId;
-            return cfg;
-        }
-        default:
-            return {};
-    }
-}
+// ------------------------------------------------------------------ page data loader
 
-rfType.addEventListener('change', () => {
-    const isDefault = rfType.value === 'default';
-    rfPatternLabel.style.display = isDefault ? 'none' : 'block';
-    rfPattern.style.display = isDefault ? 'none' : 'block';
-});
-
-rfTarget.addEventListener('change', () => {
-    updateTargetFields(rfTarget.value);
-});
-
-// ---- add / edit / delete
-
-addRuleBtn.addEventListener('click', () => {
-    editingRuleId = null;
-    rfType.value = 'url_pattern';
-    rfPattern.value = '';
-    rfTarget.value = 'github-issue';
-    rfPriority.value = '0';
-    rfPatternLabel.style.display = 'block';
-    rfPattern.style.display = 'block';
-    updateTargetFields('github-issue');
-    rfSave.textContent = 'Save Rule';
-    ruleFormEl.classList.add('open');
-});
-
-function editRule(rule) {
-    editingRuleId = rule.id;
-    rfType.value = rule.rule_type;
-    rfPattern.value = rule.pattern || '';
-    rfTarget.value = rule.target_type;
-    rfPriority.value = rule.priority || 0;
-
-    const isDefault = rule.rule_type === 'default';
-    rfPatternLabel.style.display = isDefault ? 'none' : 'block';
-    rfPattern.style.display = isDefault ? 'none' : 'block';
-
-    updateTargetFields(rule.target_type, parseConfig(rule.target_config));
-
-    rfSave.textContent = 'Update Rule';
-    ruleFormEl.classList.add('open');
-}
-
-rfCancel.addEventListener('click', () => {
-    ruleFormEl.classList.remove('open');
-    editingRuleId = null;
-});
-
-function validateRuleForm() {
-    const type = rfType.value;
-    const target = rfTarget.value;
-    if (type !== 'default' && !rfPattern.value.trim()) return 'Pattern is required';
-    const cfg = getTargetConfig();
-    if (target === 'github-issue' && !cfg.repo) return 'Repository is required';
-    if (target === 'lark' && !cfg.webhook_url) return 'Webhook URL is required';
-    if (target === 'telegram' && (!cfg.bot_token || !cfg.chat_id)) return 'Bot Token and Chat ID are required';
-    if (target === 'webhook' && !cfg.url) return 'Webhook URL is required';
-    if (target === 'slack' && !cfg.webhook_url) return 'Slack Webhook URL is required';
-    if (target === 'email' && (!cfg.api_key || !cfg.from || !cfg.to?.length)) return 'API Key, From, and To are required';
-    return null;
-}
-
-rfSave.addEventListener('click', async () => {
-    const error = validateRuleForm();
-    if (error) { showMessage(error, 'error'); return; }
-
-    const isEditing = !!editingRuleId;
-    rfSave.disabled = true;
-    rfSave.textContent = 'Saving...';
-
-    try {
-        const priority = Math.max(0, Math.min(100, parseInt(rfPriority.value, 10) || 0));
-        const data = {
-            rule_type: rfType.value,
-            pattern: rfType.value === 'default' ? null : rfPattern.value.trim(),
-            target_type: rfTarget.value,
-            target_config: getTargetConfig(),
-            priority,
-        };
-
-        if (isEditing) {
-            await chrome.runtime.sendMessage({ type: 'UPDATE_ROUTING_RULE', id: editingRuleId, data });
-        } else {
-            await chrome.runtime.sendMessage({ type: 'CREATE_ROUTING_RULE', data });
-        }
-
-        ruleFormEl.classList.remove('open');
-        editingRuleId = null;
-        showMessage(isEditing ? 'Rule updated' : 'Rule created', 'success');
-        await loadRoutingRules();
-    } catch (err) {
-        showMessage(err.message, 'error');
-    } finally {
-        rfSave.disabled = false;
-        rfSave.textContent = 'Save Rule';
-    }
-});
-
-async function deleteRule(id) {
-    if (!confirm('Delete this routing rule?')) return;
-    try {
-        await chrome.runtime.sendMessage({ type: 'DELETE_ROUTING_RULE', id });
-        showMessage('Rule deleted', 'success');
-        await loadRoutingRules();
-    } catch (err) {
-        showMessage(err.message, 'error');
-    }
+async function loadPageData() {
+    await loadCurrentTab();
+    loadDeliveryTargets();
+    loadAnnotationStats();
+    loadSiteToggle();
 }
 
 // ------------------------------------------------------------------ init
 
-loadConfig();
-loadAuthState();
-loadInjectionSetting();
-checkConnection();
+async function init() {
+    await loadAuth();
+    await loadMasterToggle();
+
+    if (isLoggedIn && masterToggle.checked) {
+        loadPageData();
+    }
+}
+
+init();

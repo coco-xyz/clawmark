@@ -20,6 +20,7 @@
     // ----------------------------------------------------------- injection check (#86)
 
     let injectionActive = false;
+    let masterEnabled = true;
     let targetDisabled = false; // true if target declaration says js_injection: false
 
     /**
@@ -66,6 +67,7 @@
 
     chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'sync') return;
+        if (!masterEnabled) return;
         if (changes.jsInjectionEnabled || changes.disabledSites) {
             const gen = ++toggleGeneration;
             checkInjectionEnabled().then(enabled => {
@@ -436,7 +438,7 @@
 
     function escHtml(s) {
         if (!s) return '';
-        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
     }
 
     function hideInputOverlay() {
@@ -613,6 +615,23 @@
             showInputOverlay(message.action);
             sendResponse({ ok: true });
         }
+
+        if (message.type === 'MASTER_TOGGLE_CHANGED') {
+            masterEnabled = message.enabled;
+            if (!masterEnabled && injectionActive) {
+                injectionActive = false;
+                teardownOverlay();
+            } else if (masterEnabled && !injectionActive) {
+                const gen = ++toggleGeneration;
+                checkInjectionEnabled().then(enabled => {
+                    if (gen !== toggleGeneration) return;
+                    if (enabled) {
+                        injectionActive = true;
+                        initOverlay();
+                    }
+                });
+            }
+        }
     });
 
     // ----------------------------------------------------------- side panel
@@ -643,6 +662,16 @@
     // ----------------------------------------------------------- startup
 
     async function startup() {
+        // Check master toggle first (global on/off for all pages)
+        try {
+            const result = await chrome.runtime.sendMessage({ type: 'GET_MASTER_TOGGLE' });
+            masterEnabled = result.masterEnabled;
+        } catch {
+            masterEnabled = true; // default to enabled on error
+        }
+
+        if (!masterEnabled) return;
+
         // Check target declaration first (immutable — target owner's choice)
         await checkTargetDeclaration();
 
