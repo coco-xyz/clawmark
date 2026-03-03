@@ -493,7 +493,6 @@
     width: 0%;
     background: linear-gradient(90deg, #5865f2, #818cf8);
     border-radius: 2px;
-    transition: width 0.3s ease;
     animation: clawmark-progress-indeterminate 1.5s ease-in-out infinite;
 }
 
