@@ -275,9 +275,10 @@ async function uploadImage(dataUrl) {
     return { url: `${serverUrl}${data.url}` };
 }
 
-// --------------------------------------------------------- context menu
+// --------------------------------------------------------- context menu + onInstalled
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
+    // Context menus (always recreate)
     chrome.contextMenus.create({
         id: 'clawmark-comment',
         title: 'ClawMark: Comment on selection',
@@ -288,6 +289,11 @@ chrome.runtime.onInstalled.addListener(() => {
         title: 'ClawMark: Create Issue',
         contexts: ['selection', 'page'],
     });
+
+    // Open welcome page on first install only
+    if (details.reason === 'install') {
+        chrome.tabs.create({ url: chrome.runtime.getURL('welcome/welcome.html') });
+    }
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -475,3 +481,55 @@ async function checkTargetInjection(url) {
         return { js_injection: true };
     }
 }
+
+// ------------------------------------------------------------------ badge: annotation count
+
+chrome.action.setBadgeBackgroundColor({ color: '#5865f2' });
+
+/**
+ * Update the extension badge with the annotation count for a tab's URL.
+ */
+async function updateBadge(tabId, url) {
+    if (!url || !url.startsWith('http')) {
+        chrome.action.setBadgeText({ text: '', tabId });
+        return;
+    }
+
+    try {
+        const data = await getItemsByUrl(url);
+        const items = data.items || data || [];
+        const count = Array.isArray(items) ? items.length : 0;
+        chrome.action.setBadgeText({
+            text: count > 0 ? String(count) : '',
+            tabId,
+        });
+    } catch {
+        chrome.action.setBadgeText({ text: '', tabId });
+    }
+}
+
+// Update badge when a tab finishes loading
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete' && tab.url) {
+        updateBadge(tabId, tab.url);
+    }
+});
+
+// Update badge when switching tabs
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    try {
+        const tab = await chrome.tabs.get(activeInfo.tabId);
+        if (tab.url) {
+            updateBadge(activeInfo.tabId, tab.url);
+        }
+    } catch {}
+});
+
+// Refresh badge after a new item is created
+chrome.runtime.onMessage.addListener((message) => {
+    if (message.type === 'ITEM_CREATED') {
+        chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+            if (tab?.url) updateBadge(tab.id, tab.url);
+        }).catch(() => {});
+    }
+});
