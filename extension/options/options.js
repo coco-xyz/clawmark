@@ -735,3 +735,66 @@ chrome.runtime.onMessage.addListener((message) => {
         loadAccount();
     }
 });
+
+// ------------------------------------------------------------------ Welcome page (Phase 2)
+
+function initWelcome() {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('welcome')) return;
+
+    // Show welcome section, hide sidebar + main tabs
+    const welcomeSection = document.getElementById('welcome-section');
+    if (!welcomeSection) return;
+    welcomeSection.style.display = 'flex';
+
+    // Hide normal nav and main content
+    const sidebar = document.querySelector('.sidebar');
+    const mainContent = document.querySelector('main');
+    if (sidebar) sidebar.style.display = 'none';
+    if (mainContent) {
+        // Hide all tab panels
+        mainContent.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+    }
+
+    // Welcome → login button
+    document.getElementById('btn-welcome-login')?.addEventListener('click', () => {
+        // Navigate to account tab with login trigger
+        window.location.href = 'options.html?tab=account&login=1';
+    });
+
+    // Show advanced settings toggle
+    document.getElementById('btn-show-advanced')?.addEventListener('click', () => {
+        const panel = document.getElementById('welcome-advanced-panel');
+        if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // Go to connection settings
+    document.getElementById('btn-go-connection')?.addEventListener('click', () => {
+        window.location.href = 'options.html?tab=connection';
+    });
+
+    // Skip welcome
+    document.getElementById('btn-welcome-skip')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.location.href = 'options.html';
+    });
+}
+
+// Handle ?tab= param for direct tab navigation
+function handleTabParam() {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (!tab) return;
+    const navItem = document.querySelector(`.nav-item[data-tab="${tab}"]`);
+    if (navItem) navItem.click();
+    // Handle login=1 trigger
+    if (params.get('login') === '1') {
+        setTimeout(() => {
+            document.getElementById('btn-google-login')?.click();
+        }, 300);
+    }
+}
+
+// Init welcome + tab routing
+initWelcome();
+handleTabParam();
