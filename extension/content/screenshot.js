@@ -467,6 +467,7 @@
             annotations.push({ type: 'pen', color, points: [pos] });
         } else if (tool === 'text') {
             isDrawing = false;
+            e.preventDefault();
             showTextInput(pos);
         } else if (tool === 'number') {
             isDrawing = false;
@@ -536,15 +537,17 @@
     function showTextInput(pos) {
         if (textInputEl) textInputEl.remove();
 
+        const wrap = editorOverlay.querySelector('.cm-ann-canvas-wrap');
         const rect = canvas.getBoundingClientRect();
+        const wrapRect = wrap.getBoundingClientRect();
         const scaleX = rect.width / canvas.width;
         const scaleY = rect.height / canvas.height;
 
         textInputEl = document.createElement('input');
         textInputEl.type = 'text';
         textInputEl.className = 'cm-ann-text-input';
-        textInputEl.style.left = (rect.left + pos.x * scaleX) + 'px';
-        textInputEl.style.top = (rect.top + pos.y * scaleY - 12) + 'px';
+        textInputEl.style.left = (rect.left - wrapRect.left + pos.x * scaleX) + 'px';
+        textInputEl.style.top = (rect.top - wrapRect.top + pos.y * scaleY - 12) + 'px';
         textInputEl.style.color = color;
         textInputEl.placeholder = 'Type text...';
 
@@ -574,8 +577,8 @@
         });
         textInputEl.addEventListener('blur', commitText);
 
-        editorOverlay.appendChild(textInputEl);
-        textInputEl.focus();
+        wrap.appendChild(textInputEl);
+        requestAnimationFrame(() => { if (textInputEl) textInputEl.focus(); });
     }
 
     // ----------------------------------------------------------- redraw

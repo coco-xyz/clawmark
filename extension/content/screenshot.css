@@ -241,8 +241,8 @@
 
 /* Inline text input for text annotations */
 #clawmark-annotation-editor .cm-ann-text-input {
-    position: fixed;
-    z-index: 2147483647;
+    position: absolute;
+    z-index: 10;
     background: rgba(0, 0, 0, 0.6);
     border: 1px solid #5865f2;
     border-radius: 4px;
