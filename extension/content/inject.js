@@ -97,6 +97,13 @@
     let inputOverlay = null;
     let toast = null;
 
+    // Named document-level listeners for cleanup (P1 fix: prevent listener leaks)
+    let _onDocClickOverflow = null;
+    let _onDocMouseMoveDrag = null;
+    let _onDocMouseUpDrag = null;
+    let _onDocMouseMoveResize = null;
+    let _onDocMouseUpResize = null;
+
     // ----------------------------------------------------------- init / teardown (#86)
 
     function initOverlay() {
@@ -108,6 +115,13 @@
     }
 
     function teardownOverlay() {
+        // Remove document-level listeners from drag/resize/overflow
+        if (_onDocClickOverflow) { document.removeEventListener('click', _onDocClickOverflow); _onDocClickOverflow = null; }
+        if (_onDocMouseMoveDrag) { document.removeEventListener('mousemove', _onDocMouseMoveDrag); _onDocMouseMoveDrag = null; }
+        if (_onDocMouseUpDrag) { document.removeEventListener('mouseup', _onDocMouseUpDrag); _onDocMouseUpDrag = null; }
+        if (_onDocMouseMoveResize) { document.removeEventListener('mousemove', _onDocMouseMoveResize); _onDocMouseMoveResize = null; }
+        if (_onDocMouseUpResize) { document.removeEventListener('mouseup', _onDocMouseUpResize); _onDocMouseUpResize = null; }
+
         if (toolbar) { toolbar.remove(); toolbar = null; }
         if (inputOverlay) { inputOverlay.remove(); inputOverlay = null; }
         if (toast) { toast.remove(); toast = null; }
@@ -152,13 +166,14 @@
             }
         });
 
-        // Close overflow menu on outside click
-        document.addEventListener('click', (e) => {
+        // Close overflow menu on outside click (named for cleanup)
+        _onDocClickOverflow = (e) => {
             if (!e.target.closest('.cm-overflow-wrapper')) {
                 const menu = el.querySelector('.cm-overflow-menu');
                 if (menu) menu.classList.remove('visible');
             }
-        });
+        };
+        document.addEventListener('click', _onDocClickOverflow);
 
         return el;
     }
@@ -287,7 +302,10 @@
         addBtn.parentElement.insertBefore(input, addBtn);
         input.focus();
 
+        let committed = false;
         function commit() {
+            if (committed) return;
+            committed = true;
             const name = input.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
             input.remove();
             if (!name) return;
@@ -302,7 +320,7 @@
 
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { e.preventDefault(); commit(); }
-            if (e.key === 'Escape') { e.preventDefault(); input.remove(); }
+            if (e.key === 'Escape') { e.preventDefault(); committed = true; input.remove(); }
         });
         input.addEventListener('blur', commit);
     }
@@ -344,7 +362,7 @@
             e.preventDefault();
         });
 
-        document.addEventListener('mousemove', (e) => {
+        _onDocMouseMoveDrag = (e) => {
             if (!isDragging) return;
             const dx = e.clientX - dragStartX;
             const dy = e.clientY - dragStartY;
@@ -360,14 +378,16 @@
 
             el.style.left = `${newX}px`;
             el.style.top = `${newY}px`;
-        });
+        };
+        document.addEventListener('mousemove', _onDocMouseMoveDrag);
 
-        document.addEventListener('mouseup', () => {
+        _onDocMouseUpDrag = () => {
             if (!isDragging) return;
             isDragging = false;
             header.classList.remove('cm-dragging');
             saveOverlayPosition();
-        });
+        };
+        document.addEventListener('mouseup', _onDocMouseUpDrag);
     }
 
     // ----------------------------------------------------------- resize
@@ -387,23 +407,25 @@
             e.stopPropagation();
         });
 
-        document.addEventListener('mousemove', (e) => {
+        _onDocMouseMoveResize = (e) => {
             if (!isResizing) return;
             const dx = e.clientX - resizeStartX;
             const dy = e.clientY - resizeStartY;
 
-            const newWidth = Math.max(300, startWidth + dx);
-            const newHeight = Math.max(200, startHeight + dy);
+            const newWidth = Math.max(300, Math.min(startWidth + dx, window.innerWidth - 40));
+            const newHeight = Math.max(200, Math.min(startHeight + dy, window.innerHeight - 40));
 
             el.style.width = `${newWidth}px`;
             el.style.height = `${newHeight}px`;
-        });
+        };
+        document.addEventListener('mousemove', _onDocMouseMoveResize);
 
-        document.addEventListener('mouseup', () => {
+        _onDocMouseUpResize = () => {
             if (!isResizing) return;
             isResizing = false;
             saveOverlayPosition();
-        });
+        };
+        document.addEventListener('mouseup', _onDocMouseUpResize);
     }
 
     // ----------------------------------------------------------- position & size memory
