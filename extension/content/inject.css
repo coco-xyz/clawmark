@@ -58,25 +58,60 @@
     margin: 0 2px;
 }
 
+/* ---- Toolbar overflow menu ---- */
+#clawmark-toolbar .cm-overflow-wrapper {
+    position: relative;
+}
+
+#clawmark-toolbar .cm-overflow-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    display: none;
+    flex-direction: column;
+    min-width: 140px;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    padding: 4px;
+    z-index: 2147483647;
+    animation: clawmark-fade-in 0.1s ease-out;
+}
+
+#clawmark-toolbar .cm-overflow-menu.visible {
+    display: flex;
+}
+
+#clawmark-toolbar .cm-overflow-menu button {
+    padding: 6px 10px;
+    text-align: left;
+    justify-content: flex-start;
+    width: 100%;
+}
+
 /* ---- Inline Comment Input ---- */
 #clawmark-input-overlay {
     position: fixed;
     z-index: 2147483647;
     display: none;
     flex-direction: column;
-    width: 320px;
+    min-width: 300px;
+    min-height: 200px;
     background: #1a1a2e;
     border: 1px solid #333;
     border-radius: 10px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     animation: clawmark-fade-in 0.15s ease-out;
+    overflow: hidden;
 }
 
 #clawmark-input-overlay.visible {
     display: flex;
 }
 
+/* ---- Draggable header ---- */
 #clawmark-input-overlay .cm-header {
     display: flex;
     align-items: center;
@@ -86,6 +121,13 @@
     color: #ccc;
     font-size: 12px;
     font-weight: 600;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#clawmark-input-overlay .cm-header.cm-dragging {
+    cursor: grabbing;
 }
 
 #clawmark-input-overlay .cm-header .cm-close {
@@ -114,73 +156,7 @@
     text-overflow: ellipsis;
 }
 
-#clawmark-input-overlay textarea {
-    margin: 8px 12px;
-    padding: 8px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid #333;
-    border-radius: 6px;
-    color: #e0e0e0;
-    font-size: 13px;
-    font-family: inherit;
-    resize: vertical;
-    min-height: 60px;
-    outline: none;
-}
-
-#clawmark-input-overlay textarea:focus {
-    border-color: #5865f2;
-}
-
-#clawmark-input-overlay .cm-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px 10px;
-}
-
-#clawmark-input-overlay .cm-tags {
-    display: flex;
-    gap: 4px;
-}
-
-#clawmark-input-overlay .cm-tag {
-    padding: 2px 8px;
-    background: rgba(88, 101, 242, 0.2);
-    color: #8b9cf7;
-    border-radius: 10px;
-    font-size: 11px;
-    cursor: pointer;
-    border: none;
-}
-
-#clawmark-input-overlay .cm-tag.active {
-    background: #5865f2;
-    color: #fff;
-}
-
-#clawmark-input-overlay .cm-submit {
-    padding: 6px 14px;
-    background: #5865f2;
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    font-family: inherit;
-}
-
-#clawmark-input-overlay .cm-submit:hover {
-    background: #4752c4;
-}
-
-#clawmark-input-overlay .cm-submit:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-/* ---- Dispatch Preview (#115) ---- */
+/* ---- Dispatch Preview (#115) — now above textarea ---- */
 #clawmark-input-overlay .cm-dispatch-preview {
     margin: 4px 12px 0;
     padding: 6px 8px;
@@ -239,6 +215,234 @@
     border-top: 1px solid #333;
     margin-top: 2px;
     padding-top: 5px;
+}
+
+/* ---- Textarea — fills remaining space, no manual resize ---- */
+#clawmark-input-overlay textarea {
+    margin: 8px 12px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid #333;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 13px;
+    font-family: inherit;
+    resize: none;
+    min-height: 60px;
+    flex: 1;
+    outline: none;
+}
+
+#clawmark-input-overlay textarea:focus {
+    border-color: #5865f2;
+}
+
+#clawmark-input-overlay .cm-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px 10px;
+}
+
+#clawmark-input-overlay .cm-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+#clawmark-input-overlay .cm-tag {
+    padding: 2px 8px;
+    background: rgba(88, 101, 242, 0.2);
+    color: #8b9cf7;
+    border-radius: 10px;
+    font-size: 11px;
+    cursor: pointer;
+    border: none;
+    white-space: nowrap;
+}
+
+#clawmark-input-overlay .cm-tag.active {
+    background: #5865f2;
+    color: #fff;
+}
+
+/* ---- Custom tag add button ---- */
+#clawmark-input-overlay .cm-tag-add {
+    padding: 2px 8px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #888;
+    border-radius: 10px;
+    font-size: 11px;
+    cursor: pointer;
+    border: 1px dashed #555;
+    white-space: nowrap;
+}
+
+#clawmark-input-overlay .cm-tag-add:hover {
+    color: #ccc;
+    border-color: #777;
+}
+
+/* ---- Custom tag inline input ---- */
+#clawmark-input-overlay .cm-tag-input {
+    width: 80px;
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid #5865f2;
+    border-radius: 10px;
+    color: #e0e0e0;
+    font-size: 11px;
+    font-family: inherit;
+    outline: none;
+}
+
+/* ---- Custom tag remove button ---- */
+#clawmark-input-overlay .cm-tag-remove {
+    margin-left: 2px;
+    padding: 0 2px;
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 10px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+#clawmark-input-overlay .cm-tag-remove:hover {
+    color: #ef4444;
+}
+
+#clawmark-input-overlay .cm-submit {
+    padding: 6px 14px;
+    background: #5865f2;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+#clawmark-input-overlay .cm-submit:hover {
+    background: #4752c4;
+}
+
+#clawmark-input-overlay .cm-submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ---- Submit progress bar ---- */
+#clawmark-input-overlay .cm-progress-bar {
+    height: 3px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 2px;
+    margin: 0 12px 4px;
+    overflow: hidden;
+    display: none;
+}
+
+#clawmark-input-overlay .cm-progress-bar.visible {
+    display: block;
+}
+
+#clawmark-input-overlay .cm-progress-bar .cm-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: #5865f2;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+@keyframes clawmark-progress-indeterminate {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(300%); }
+}
+
+#clawmark-input-overlay .cm-progress-bar.indeterminate .cm-progress-fill {
+    width: 33%;
+    animation: clawmark-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+/* ---- Resize handle ---- */
+#clawmark-input-overlay .cm-resize-handle {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+    z-index: 10;
+}
+
+#clawmark-input-overlay .cm-resize-handle::before {
+    content: '';
+    position: absolute;
+    bottom: 3px;
+    right: 3px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid #555;
+    border-bottom: 2px solid #555;
+    border-radius: 0 0 2px 0;
+}
+
+#clawmark-input-overlay .cm-resize-handle:hover::before {
+    border-color: #888;
+}
+
+/* ---- Drop hint & images ---- */
+#clawmark-input-overlay .cm-drop-hint {
+    margin: 0 12px 4px;
+    padding: 4px;
+    text-align: center;
+    font-size: 11px;
+    color: #666;
+    border: 1px dashed #333;
+    border-radius: 4px;
+    display: none;
+}
+
+#clawmark-input-overlay.cm-dragover .cm-drop-hint {
+    display: block;
+    border-color: #5865f2;
+    color: #5865f2;
+}
+
+#clawmark-input-overlay .cm-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 0 12px;
+}
+
+#clawmark-input-overlay .cm-image-preview {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+#clawmark-input-overlay .cm-image-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+#clawmark-input-overlay .cm-image-preview .cm-image-remove {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: rgba(0,0,0,0.6);
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0 4px;
+    line-height: 1.4;
 }
 
 /* ---- Toast notification ---- */

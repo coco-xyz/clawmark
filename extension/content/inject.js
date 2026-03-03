@@ -7,6 +7,10 @@
  * - Screenshot capture + annotation (#69)
  * - Image paste + drag-drop (#70)
  * - JS injection toggle (#86) — global, per-site, and target declaration
+ * - Draggable + resizable overlay with smart positioning (Phase 1.5)
+ * - Custom tags with localStorage persistence (Phase 1.5)
+ * - Toolbar overflow menu (Phase 1.5)
+ * - Submit progress indicator (Phase 1.5)
  * - Message relay to background service worker
  */
 
@@ -122,7 +126,13 @@
             <div class="separator"></div>
             <button data-action="screenshot"><span class="icon">\u{1F4F7}</span> Screenshot</button>
             <div class="separator"></div>
-            <button data-action="sidepanel"><span class="icon">\u{1F4CB}</span> Panel</button>
+            <div class="cm-overflow-wrapper">
+                <button data-action="overflow"><span class="icon">\u22EE</span></button>
+                <div class="cm-overflow-menu">
+                    <button data-action="sidepanel"><span class="icon">\u{1F4CB}</span> Panel</button>
+                    <button data-action="copy-selection"><span class="icon">\u{1F4CB}</span> Copy Selection</button>
+                </div>
+            </div>
         `;
         document.body.appendChild(el);
 
@@ -130,47 +140,97 @@
             const btn = e.target.closest('button');
             if (!btn) return;
             const action = btn.dataset.action;
-            if (action === 'comment') showInputOverlay('comment');
-            else if (action === 'issue') showInputOverlay('issue');
-            else if (action === 'screenshot') startScreenshot();
-            else if (action === 'sidepanel') openSidePanel();
-            hideToolbar();
+            if (action === 'comment') { showInputOverlay('comment'); hideToolbar(); }
+            else if (action === 'issue') { showInputOverlay('issue'); hideToolbar(); }
+            else if (action === 'screenshot') { startScreenshot(); hideToolbar(); }
+            else if (action === 'sidepanel') { openSidePanel(); hideToolbar(); }
+            else if (action === 'copy-selection') { copySelection(); hideToolbar(); }
+            else if (action === 'overflow') {
+                const menu = el.querySelector('.cm-overflow-menu');
+                menu.classList.toggle('visible');
+                e.stopPropagation();
+            }
+        });
+
+        // Close overflow menu on outside click
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.cm-overflow-wrapper')) {
+                const menu = el.querySelector('.cm-overflow-menu');
+                if (menu) menu.classList.remove('visible');
+            }
         });
 
         return el;
     }
 
+    function copySelection() {
+        if (currentSelection?.text) {
+            navigator.clipboard.writeText(currentSelection.text).then(() => {
+                showToast('Copied to clipboard', 'success');
+            }).catch(() => {
+                showToast('Copy failed', 'error');
+            });
+        }
+    }
+
     function createInputOverlay() {
         const el = document.createElement('div');
         el.id = 'clawmark-input-overlay';
+
+        // Load custom tags from localStorage
+        const customTags = loadCustomTags();
+        const customTagsHtml = customTags.map(tag =>
+            `<button class="cm-tag cm-tag-custom" data-tag="${escHtml(tag)}">${escHtml(tag)}<span class="cm-tag-remove" data-remove-tag="${escHtml(tag)}">\u00D7</span></button>`
+        ).join('');
+
         el.innerHTML = `
             <div class="cm-header">
                 <span class="cm-title">Comment</span>
                 <button class="cm-close">\u00D7</button>
             </div>
             <div class="cm-quote"></div>
+            <div class="cm-dispatch-preview" style="display:none;">
+                <div class="cm-dispatch-label">\u{1F4EE} Dispatch to:</div>
+                <div class="cm-dispatch-targets"></div>
+            </div>
             <div class="cm-images"></div>
             <textarea placeholder="Write your comment..."></textarea>
             <div class="cm-drop-hint">Paste or drag images here</div>
-            <div class="cm-dispatch-preview" style="display:none;">
-                <div class="cm-dispatch-label">Dispatch to:</div>
-                <div class="cm-dispatch-targets"></div>
-            </div>
+            <div class="cm-progress-bar"><div class="cm-progress-fill"></div></div>
             <div class="cm-footer">
                 <div class="cm-tags">
                     <button class="cm-tag" data-tag="bug">bug</button>
                     <button class="cm-tag" data-tag="feature">feature</button>
                     <button class="cm-tag" data-tag="question">question</button>
+                    ${customTagsHtml}
+                    <button class="cm-tag-add">+ Custom</button>
                 </div>
                 <button class="cm-submit">Submit</button>
             </div>
+            <div class="cm-resize-handle"></div>
         `;
         document.body.appendChild(el);
 
         el.querySelector('.cm-close').addEventListener('click', hideInputOverlay);
 
-        el.querySelectorAll('.cm-tag').forEach(tag => {
-            tag.addEventListener('click', () => tag.classList.toggle('active'));
+        // Tag click delegation (handles built-in + custom tags)
+        el.querySelector('.cm-tags').addEventListener('click', (e) => {
+            const removeBtn = e.target.closest('.cm-tag-remove');
+            if (removeBtn) {
+                e.stopPropagation();
+                const tagName = removeBtn.dataset.removeTag;
+                removeCustomTag(tagName);
+                return;
+            }
+            const tag = e.target.closest('.cm-tag');
+            if (tag) {
+                tag.classList.toggle('active');
+                return;
+            }
+            const addBtn = e.target.closest('.cm-tag-add');
+            if (addBtn) {
+                showCustomTagInput(addBtn);
+            }
         });
 
         el.querySelector('.cm-submit').addEventListener('click', handleSubmit);
@@ -190,7 +250,191 @@
         el.addEventListener('dragleave', () => el.classList.remove('cm-dragover'));
         el.addEventListener('drop', handleDrop);
 
+        // Drag support
+        initDrag(el);
+
+        // Resize support
+        initResize(el);
+
         return el;
+    }
+
+    // ----------------------------------------------------------- custom tags
+
+    function loadCustomTags() {
+        try {
+            const stored = localStorage.getItem('clawmark_custom_tags');
+            return stored ? JSON.parse(stored) : [];
+        } catch { return []; }
+    }
+
+    function saveCustomTags(tags) {
+        try {
+            localStorage.setItem('clawmark_custom_tags', JSON.stringify(tags));
+        } catch {}
+    }
+
+    function showCustomTagInput(addBtn) {
+        // Don't add another input if one already exists
+        if (addBtn.parentElement.querySelector('.cm-tag-input')) return;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'cm-tag-input';
+        input.placeholder = 'tag name';
+        input.maxLength = 20;
+
+        addBtn.parentElement.insertBefore(input, addBtn);
+        input.focus();
+
+        function commit() {
+            const name = input.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+            input.remove();
+            if (!name) return;
+
+            const tags = loadCustomTags();
+            if (tags.includes(name)) return; // duplicate
+
+            tags.push(name);
+            saveCustomTags(tags);
+            addCustomTagButton(name, addBtn);
+        }
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { e.preventDefault(); input.remove(); }
+        });
+        input.addEventListener('blur', commit);
+    }
+
+    function addCustomTagButton(name, beforeEl) {
+        const btn = document.createElement('button');
+        btn.className = 'cm-tag cm-tag-custom';
+        btn.dataset.tag = name;
+        btn.innerHTML = `${escHtml(name)}<span class="cm-tag-remove" data-remove-tag="${escHtml(name)}">\u00D7</span>`;
+        beforeEl.parentElement.insertBefore(btn, beforeEl);
+    }
+
+    function removeCustomTag(tagName) {
+        if (!inputOverlay) return;
+        const tags = loadCustomTags().filter(t => t !== tagName);
+        saveCustomTags(tags);
+        // Remove button from DOM
+        const btns = inputOverlay.querySelectorAll('.cm-tag-custom');
+        btns.forEach(btn => {
+            if (btn.dataset.tag === tagName) btn.remove();
+        });
+    }
+
+    // ----------------------------------------------------------- drag
+
+    function initDrag(el) {
+        const header = el.querySelector('.cm-header');
+        let isDragging = false;
+        let dragStartX, dragStartY, overlayStartX, overlayStartY;
+
+        header.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.cm-close')) return; // don't drag from close button
+            isDragging = true;
+            header.classList.add('cm-dragging');
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            overlayStartX = el.offsetLeft;
+            overlayStartY = el.offsetTop;
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+
+            let newX = overlayStartX + dx;
+            let newY = overlayStartY + dy;
+
+            // Clamp to viewport
+            const w = el.offsetWidth;
+            const h = el.offsetHeight;
+            newX = Math.max(0, Math.min(newX, window.innerWidth - w));
+            newY = Math.max(0, Math.min(newY, window.innerHeight - h));
+
+            el.style.left = `${newX}px`;
+            el.style.top = `${newY}px`;
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            isDragging = false;
+            header.classList.remove('cm-dragging');
+            saveOverlayPosition();
+        });
+    }
+
+    // ----------------------------------------------------------- resize
+
+    function initResize(el) {
+        const handle = el.querySelector('.cm-resize-handle');
+        let isResizing = false;
+        let resizeStartX, resizeStartY, startWidth, startHeight;
+
+        handle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizeStartX = e.clientX;
+            resizeStartY = e.clientY;
+            startWidth = el.offsetWidth;
+            startHeight = el.offsetHeight;
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const dx = e.clientX - resizeStartX;
+            const dy = e.clientY - resizeStartY;
+
+            const newWidth = Math.max(300, startWidth + dx);
+            const newHeight = Math.max(200, startHeight + dy);
+
+            el.style.width = `${newWidth}px`;
+            el.style.height = `${newHeight}px`;
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (!isResizing) return;
+            isResizing = false;
+            saveOverlayPosition();
+        });
+    }
+
+    // ----------------------------------------------------------- position & size memory
+
+    function saveOverlayPosition() {
+        if (!inputOverlay) return;
+        try {
+            const pos = {
+                left: inputOverlay.offsetLeft,
+                top: inputOverlay.offsetTop,
+                width: inputOverlay.offsetWidth,
+                height: inputOverlay.offsetHeight,
+            };
+            localStorage.setItem('clawmark_overlay_pos', JSON.stringify(pos));
+        } catch {}
+    }
+
+    function loadOverlayPosition() {
+        try {
+            const stored = localStorage.getItem('clawmark_overlay_pos');
+            if (!stored) return null;
+            const pos = JSON.parse(stored);
+            // Validate it would be on-screen
+            if (pos.left + pos.width > window.innerWidth + 50) return null;
+            if (pos.top + pos.height > window.innerHeight + 50) return null;
+            if (pos.left < -50 || pos.top < -50) return null;
+            // Clamp to current viewport
+            pos.left = Math.max(0, Math.min(pos.left, window.innerWidth - pos.width));
+            pos.top = Math.max(0, Math.min(pos.top, window.innerHeight - pos.height));
+            return pos;
+        } catch { return null; }
     }
 
     function createToast() {
@@ -214,7 +458,11 @@
     }
 
     function hideToolbar() {
-        if (toolbar) toolbar.classList.remove('visible');
+        if (toolbar) {
+            toolbar.classList.remove('visible');
+            const menu = toolbar.querySelector('.cm-overflow-menu');
+            if (menu) menu.classList.remove('visible');
+        }
     }
 
     // ----------------------------------------------------------- screenshot (#69)
@@ -339,11 +587,19 @@
             quoteEl.style.display = 'none';
         }
 
-        if (currentSelection?.position) {
-            const { x, y } = currentSelection.position;
-            inputOverlay.style.left = `${Math.min(x, window.innerWidth - 340)}px`;
-            inputOverlay.style.top = `${Math.min(y + 10, window.innerHeight - 300)}px`;
+        // Smart positioning: try remembered position first, then compute
+        const remembered = loadOverlayPosition();
+        if (remembered) {
+            inputOverlay.style.left = `${remembered.left}px`;
+            inputOverlay.style.top = `${remembered.top}px`;
+            inputOverlay.style.width = `${remembered.width}px`;
+            inputOverlay.style.height = `${remembered.height}px`;
+        } else if (currentSelection?.position) {
+            positionNearSelection();
         } else {
+            // Center on screen
+            inputOverlay.style.width = '';
+            inputOverlay.style.height = '';
             inputOverlay.style.left = `${(window.innerWidth - 320) / 2}px`;
             inputOverlay.style.top = `${window.innerHeight / 3}px`;
         }
@@ -353,8 +609,53 @@
         textarea.focus();
         inputOverlay.querySelectorAll('.cm-tag').forEach(t => t.classList.remove('active'));
 
+        // Hide progress bar
+        const progressBar = inputOverlay.querySelector('.cm-progress-bar');
+        if (progressBar) {
+            progressBar.classList.remove('visible', 'indeterminate');
+            progressBar.querySelector('.cm-progress-fill').style.width = '0%';
+        }
+
         // Fetch dispatch targets preview (#115)
         loadDispatchPreview();
+    }
+
+    function positionNearSelection() {
+        if (!inputOverlay || !currentSelection?.position) return;
+        const { x, y } = currentSelection.position;
+        const overlayW = inputOverlay.offsetWidth || 320;
+        const overlayH = inputOverlay.offsetHeight || 300;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const scrollX = window.scrollX;
+        const scrollY = window.scrollY;
+
+        // Convert from document coords to viewport coords
+        let posX = x - scrollX;
+        let posY = y - scrollY + 10; // 10px gap below selection
+
+        // If not enough space below, appear above
+        if (posY + overlayH > vh) {
+            const selRect = currentSelection.range?.getBoundingClientRect();
+            if (selRect) {
+                posY = selRect.top - overlayH - 10;
+            } else {
+                posY = y - scrollY - overlayH - 10;
+            }
+        }
+
+        // Clamp left/right to viewport
+        if (posX + overlayW > vw) posX = vw - overlayW - 8;
+        if (posX < 8) posX = 8;
+
+        // Clamp top/bottom
+        if (posY + overlayH > vh) posY = vh - overlayH - 8;
+        if (posY < 8) posY = 8;
+
+        inputOverlay.style.width = '';
+        inputOverlay.style.height = '';
+        inputOverlay.style.left = `${posX}px`;
+        inputOverlay.style.top = `${posY}px`;
     }
 
     let resolvedTargets = [];
@@ -448,6 +749,35 @@
         renderImagePreviews();
     }
 
+    // ----------------------------------------------------------- progress bar
+
+    function showProgressBar(indeterminate) {
+        if (!inputOverlay) return;
+        const bar = inputOverlay.querySelector('.cm-progress-bar');
+        if (!bar) return;
+        bar.classList.add('visible');
+        if (indeterminate) {
+            bar.classList.add('indeterminate');
+        } else {
+            bar.classList.remove('indeterminate');
+        }
+    }
+
+    function setProgress(pct) {
+        if (!inputOverlay) return;
+        const fill = inputOverlay.querySelector('.cm-progress-fill');
+        if (!fill) return;
+        fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+    }
+
+    function hideProgressBar() {
+        if (!inputOverlay) return;
+        const bar = inputOverlay.querySelector('.cm-progress-bar');
+        if (!bar) return;
+        bar.classList.remove('visible', 'indeterminate');
+        bar.querySelector('.cm-progress-fill').style.width = '0%';
+    }
+
     // ----------------------------------------------------------- submit
 
     async function handleSubmit() {
@@ -458,12 +788,24 @@
 
         const submitBtn = inputOverlay.querySelector('.cm-submit');
         submitBtn.disabled = true;
-        submitBtn.textContent = pendingImages.length > 0 ? 'Uploading...' : '...';
+        submitBtn.textContent = '...';
+
+        // Show progress bar
+        if (pendingImages.length > 0) {
+            showProgressBar(false);
+            setProgress(10);
+        } else {
+            showProgressBar(true);
+        }
 
         const activeTags = [...inputOverlay.querySelectorAll('.cm-tag.active')].map(t => t.dataset.tag);
 
         let screenshots = [];
-        if (pendingImages.length > 0) screenshots = await uploadPendingImages();
+        if (pendingImages.length > 0) {
+            setProgress(20);
+            screenshots = await uploadPendingImages();
+            setProgress(60);
+        }
 
         let quote_position = null;
         if (currentSelection?.range) {
@@ -500,6 +842,8 @@
             }
         }
 
+        setProgress(70);
+
         const data = {
             type: currentMode === 'issue' ? 'issue' : 'comment',
             title: currentMode === 'issue' ? (content.split('\n')[0] || 'Screenshot') : undefined,
@@ -514,8 +858,11 @@
         };
 
         try {
+            setProgress(80);
             const response = await chrome.runtime.sendMessage({ type: 'CREATE_ITEM', data });
             if (response.error) throw new Error(response.error);
+
+            setProgress(100);
 
             // Build informative toast with dispatch destinations
             const dispatched = response.dispatched || [];
@@ -533,6 +880,7 @@
         } finally {
             submitBtn.disabled = false;
             submitBtn.textContent = currentMode === 'issue' ? 'Create Issue' : 'Submit';
+            hideProgressBar();
         }
     }
 
