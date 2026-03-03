@@ -167,10 +167,14 @@ Popup 只展示跟当前页面相关的内容 + 最常用操作。
 - 导入/导出规则（JSON）
 - **智能推荐**（Kevin #155）：根据当前页面 URL 自动推荐分发规则 — 例如在 GitHub PR 页面提示「发送到 GitHub Issue」，在 Notion 页面提示「发送到 Slack」。基于 URL pattern 匹配 + 预置规则模板
 
-**📮 Delivery URL 处理**（Kevin #152）
+**📮 Delivery URL 处理**（Kevin #152 + PR review comment）
 - 分发目标（delivery URL）从 popup 完整迁移到 Dashboard
 - Dashboard 里提供完整的 delivery URL 管理：增删改查 + 测试连通性
 - Popup 中不再显示 delivery URL 配置，仅在标注时自动按规则匹配分发
+- **Delivery 智能化三层**（Kevin PR comment）：
+  1. **综合推荐**：根据当前页面 URL + 用户历史分发记录 + 标注类型，自动推荐最佳 delivery 目标（如 GitHub PR 页面 → 推荐发到对应 repo 的 Issue）
+  2. **可选择特定目标**：推荐之外允许手动选择其他已配置的 delivery 目标
+  3. **候选列表**：展示所有可用的 delivery 目标，按匹配度排序
 
 **🌐 站点管理**
 - 已启用/已禁用站点列表
