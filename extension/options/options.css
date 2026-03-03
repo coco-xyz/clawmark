@@ -561,3 +561,48 @@ label {
 }
 
 .link-list a:hover { text-decoration: underline; }
+
+/* ---- Phase 3: Site Mode Toggle ---- */
+.mode-toggle-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mode-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.mode-option:has(input:checked) {
+    border-color: var(--accent);
+    background: rgba(88, 101, 242, 0.06);
+}
+
+.mode-option input[type="radio"] {
+    margin-top: 2px;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+}
+
+.mode-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mode-label strong {
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.mode-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+}

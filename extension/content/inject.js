@@ -802,6 +802,34 @@
 
     // ----------------------------------------------------------- submit
 
+    function humanizeError(msg) {
+        if (!msg) return '提交失败，请稍后重试';
+        const m = msg.toLowerCase();
+        if (m.includes('network') || m.includes('fetch') || m.includes('failed to fetch') || m.includes('networkerror')) {
+            return '无法连接服务器，请检查网络连接';
+        }
+        if (m.includes('401') || m.includes('unauthorized') || m.includes('auth')) {
+            return '登录已过期，请重新登录';
+        }
+        if (m.includes('403') || m.includes('forbidden')) {
+            return '没有权限执行此操作';
+        }
+        if (m.includes('404')) {
+            return '资源不存在，请刷新后重试';
+        }
+        if (m.includes('500') || m.includes('server error') || m.includes('internal')) {
+            return '服务器错误，请稍后重试';
+        }
+        if (m.includes('timeout') || m.includes('timed out')) {
+            return '请求超时，请检查网络后重试';
+        }
+        if (m.includes('disconnected') || m.includes('disconnect')) {
+            return '无法连接服务器，请检查网络';
+        }
+        // Fallback: show original but cap length
+        return msg.length > 60 ? msg.substring(0, 60) + '…' : msg;
+    }
+
     async function handleSubmit() {
         if (!inputOverlay) return;
         const textarea = inputOverlay.querySelector('textarea');
@@ -809,10 +837,11 @@
         if (!content && pendingImages.length === 0) return;
 
         const submitBtn = inputOverlay.querySelector('.cm-submit');
+        const progressBar = inputOverlay.querySelector('.cm-progress-bar');
         submitBtn.disabled = true;
-        submitBtn.textContent = '...';
+        submitBtn.textContent = pendingImages.length > 0 ? 'Uploading...' : 'Submitting...';
 
-        // Show progress bar
+        // Show progress bar (Phase 1.5 API)
         if (pendingImages.length > 0) {
             showProgressBar(false);
             setProgress(10);
@@ -897,13 +926,47 @@
             showToast(summary, 'success');
             resolvedTargets = [];
             hideInputOverlay();
+            maybeShowShortcutTip();
         } catch (err) {
-            showToast(`Error: ${err.message}`, 'error');
+            showToast(humanizeError(err.message), 'error');
         } finally {
             submitBtn.disabled = false;
             submitBtn.textContent = currentMode === 'issue' ? 'Create Issue' : 'Submit';
             hideProgressBar();
         }
+    }
+
+    // ----------------------------------------------------------- shortcut tip (Phase 3)
+
+    function maybeShowShortcutTip() {
+        // Show once after first successful annotation
+        const STORAGE_KEY = 'clawmark_shortcut_tip_shown';
+        chrome.storage.local.get([STORAGE_KEY], (result) => {
+            if (result[STORAGE_KEY]) return;
+            chrome.storage.local.set({ [STORAGE_KEY]: true });
+            showShortcutTip();
+        });
+    }
+
+    function showShortcutTip() {
+        const existing = document.getElementById('clawmark-shortcut-tip');
+        if (existing) return;
+
+        const isMac = navigator.platform.toUpperCase().includes('MAC');
+        const shortcut = isMac ? '⌘+Shift+X' : 'Ctrl+Shift+X';
+
+        const tip = document.createElement('div');
+        tip.id = 'clawmark-shortcut-tip';
+        tip.innerHTML = `
+            <span>💡 快捷键 <kbd>${shortcut}</kbd> 可随时打开标注面板</span>
+            <button class="tip-close" title="关闭">×</button>
+        `;
+        document.body.appendChild(tip);
+
+        tip.querySelector('.tip-close').addEventListener('click', () => tip.remove());
+
+        // Auto-dismiss after 8s
+        setTimeout(() => { if (tip.parentNode) tip.remove(); }, 8000);
     }
 
     // ----------------------------------------------------------- toast
