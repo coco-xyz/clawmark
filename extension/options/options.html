@@ -202,13 +202,36 @@
         <section class="tab-panel" id="tab-sites">
             <h1>Site Management</h1>
             <div class="card">
-                <h3>Disabled Sites</h3>
-                <p class="help-text">ClawMark annotation overlay is disabled on these sites.</p>
+                <h3>工作模式</h3>
+                <p class="help-text">选择 ClawMark 在哪些网站上生效。</p>
+                <div class="mode-toggle-group" id="site-mode-group">
+                    <label class="mode-option">
+                        <input type="radio" name="site-mode" value="blacklist" id="mode-blacklist">
+                        <span class="mode-label">
+                            <strong>黑名单模式</strong>（默认）
+                            <span class="mode-desc">在所有网站启用，以下列表中的除外</span>
+                        </span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="site-mode" value="whitelist" id="mode-whitelist">
+                        <span class="mode-label">
+                            <strong>白名单模式</strong>
+                            <span class="mode-desc">仅在以下列表中的网站启用</span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+            <div class="card">
+                <h3 id="site-list-title">已禁用的网站</h3>
+                <p class="help-text" id="site-list-desc">列表中的网站将禁用 ClawMark 标注功能。</p>
                 <div class="toolbar">
-                    <button class="btn btn-secondary" id="btn-enable-all">Enable All</button>
+                    <input type="text" class="input" id="site-add-input" placeholder="添加域名，如 example.com" style="flex:1;margin-right:8px;">
+                    <button class="btn btn-primary" id="btn-add-site">添加</button>
+                    <div style="flex:1"></div>
+                    <button class="btn btn-secondary" id="btn-toggle-all-sites">全部启用</button>
                 </div>
                 <ul class="site-list" id="site-list">
-                    <li class="empty-state">No disabled sites</li>
+                    <li class="empty-state">列表为空</li>
                 </ul>
             </div>
         </section>
@@ -225,7 +248,7 @@
                 <h3>Links</h3>
                 <ul class="link-list">
                     <li><a href="https://github.com/coco-xyz/clawmark/issues" target="_blank">Report an Issue</a></li>
-                    <li><a href="https://labs.coco.xyz/clawmark/privacy-policy" target="_blank">Privacy Policy</a></li>
+                    <li><a href="https://labs.coco.xyz/clawmark/privacy/" target="_blank">Privacy Policy</a></li>
                     <li><a href="https://github.com/coco-xyz/clawmark/blob/main/CHANGELOG.md" target="_blank">Changelog</a></li>
                 </ul>
             </div>

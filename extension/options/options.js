@@ -200,11 +200,11 @@ async function testConnection() {
             text.textContent = 'Connected';
             versionEl.textContent = `Server v${health.version || '?'}`;
         } else {
-            text.textContent = 'Server error';
+            text.textContent = '服务器异常，请稍后重试';
             versionEl.textContent = '—';
         }
     } catch {
-        text.textContent = 'Disconnected';
+        text.textContent = '无法连接服务器，请检查网络或 Server URL';
         versionEl.textContent = '—';
     }
 }
@@ -576,16 +576,53 @@ document.getElementById('btn-import-rules').addEventListener('change', async (e)
     e.target.value = '';
 });
 
-// ------------------------------------------------------------------ Site Management
+// ------------------------------------------------------------------ Site Management (Phase 3: blacklist/whitelist + bulk)
+
+let currentSiteMode = 'blacklist'; // 'blacklist' | 'whitelist'
+let currentSiteList = [];
 
 async function loadSites() {
     try {
         const setting = await chrome.runtime.sendMessage({ type: 'GET_INJECTION_SETTING' });
-        const sites = setting.disabledSites || [];
-        renderSiteList(sites);
+        currentSiteList = setting.disabledSites || [];
+        currentSiteMode = setting.siteMode || 'blacklist';
     } catch {
-        renderSiteList([]);
+        currentSiteList = [];
+        currentSiteMode = 'blacklist';
     }
+    renderSiteMode();
+    renderSiteList(currentSiteList);
+}
+
+function renderSiteMode() {
+    const blacklistRadio = document.getElementById('mode-blacklist');
+    const whitelistRadio = document.getElementById('mode-whitelist');
+    if (blacklistRadio) blacklistRadio.checked = currentSiteMode === 'blacklist';
+    if (whitelistRadio) whitelistRadio.checked = currentSiteMode === 'whitelist';
+    updateSiteListLabels();
+}
+
+function updateSiteListLabels() {
+    const titleEl = document.getElementById('site-list-title');
+    const descEl = document.getElementById('site-list-desc');
+    const toggleAllBtn = document.getElementById('btn-toggle-all-sites');
+    if (currentSiteMode === 'whitelist') {
+        if (titleEl) titleEl.textContent = '已启用的网站（白名单）';
+        if (descEl) descEl.textContent = '仅这些网站会启用 ClawMark 标注功能。';
+        if (toggleAllBtn) toggleAllBtn.textContent = '清空列表';
+    } else {
+        if (titleEl) titleEl.textContent = '已禁用的网站（黑名单）';
+        if (descEl) descEl.textContent = '列表中的网站将禁用 ClawMark 标注功能。';
+        if (toggleAllBtn) toggleAllBtn.textContent = '全部启用（清空）';
+    }
+}
+
+async function saveSiteSettings() {
+    await chrome.runtime.sendMessage({
+        type: 'SET_INJECTION_SETTING',
+        disabledSites: currentSiteList,
+        siteMode: currentSiteMode,
+    });
 }
 
 function renderSiteList(sites) {
@@ -593,38 +630,87 @@ function renderSiteList(sites) {
     listEl.innerHTML = '';
 
     if (sites.length === 0) {
-        listEl.innerHTML = '<li class="empty-state">No disabled sites</li>';
+        const emptyMsg = currentSiteMode === 'whitelist' ? '白名单为空（所有网站均被禁用）' : '列表为空（所有网站均已启用）';
+        listEl.innerHTML = `<li class="empty-state">${emptyMsg}</li>`;
         return;
     }
 
     for (const hostname of sites) {
         const li = document.createElement('li');
         li.className = 'site-item';
+        const btnLabel = currentSiteMode === 'whitelist' ? '移除' : '启用';
         li.innerHTML = `
             <span class="site-hostname">${escHtml(hostname)}</span>
-            <button class="btn btn-secondary enable-site-btn">Enable</button>`;
+            <button class="btn btn-secondary remove-site-btn">${btnLabel}</button>`;
 
-        li.querySelector('.enable-site-btn').addEventListener('click', async () => {
-            const updated = sites.filter(s => s !== hostname);
-            await chrome.runtime.sendMessage({
-                type: 'SET_INJECTION_SETTING',
-                disabledSites: updated,
-            });
-            showToast(`Enabled ${hostname}`);
-            loadSites();
+        li.querySelector('.remove-site-btn').addEventListener('click', async () => {
+            currentSiteList = currentSiteList.filter(s => s !== hostname);
+            await saveSiteSettings();
+            const msg = currentSiteMode === 'whitelist' ? `已从白名单移除 ${hostname}` : `已为 ${hostname} 重新启用`;
+            showToast(msg);
+            renderSiteList(currentSiteList);
         });
 
         listEl.appendChild(li);
     }
 }
 
-document.getElementById('btn-enable-all').addEventListener('click', async () => {
-    await chrome.runtime.sendMessage({
-        type: 'SET_INJECTION_SETTING',
-        disabledSites: [],
+// Mode toggle
+document.querySelectorAll('input[name="site-mode"]').forEach(radio => {
+    radio.addEventListener('change', async (e) => {
+        const newMode = e.target.value;
+        // P2-1: confirm before clearing list if it has entries
+        if (currentSiteList.length > 0) {
+            const modeLabel = newMode === 'whitelist' ? '白名单' : '黑名单';
+            const confirmed = confirm(`切换到${modeLabel}模式会清空当前列表（${currentSiteList.length} 个网站），确定继续？`);
+            if (!confirmed) {
+                // revert radio selection
+                const prevRadio = document.querySelector(`input[name="site-mode"][value="${currentSiteMode}"]`);
+                if (prevRadio) prevRadio.checked = true;
+                return;
+            }
+        }
+        currentSiteMode = newMode;
+        currentSiteList = []; // clear list when switching mode
+        await saveSiteSettings();
+        updateSiteListLabels();
+        renderSiteList(currentSiteList);
+        showToast(currentSiteMode === 'whitelist' ? '已切换到白名单模式' : '已切换到黑名单模式');
     });
-    showToast('All sites enabled');
-    loadSites();
+});
+
+// Add site manually
+document.getElementById('btn-add-site')?.addEventListener('click', async () => {
+    const input = document.getElementById('site-add-input');
+    if (!input) return;
+    const raw = input.value.trim().toLowerCase();
+    if (!raw) return;
+    // Normalize: strip protocol/path
+    let hostname = raw.replace(/^https?:\/\//, '').split('/')[0];
+    if (!hostname) return;
+    if (currentSiteList.includes(hostname)) {
+        showToast(`${hostname} 已在列表中`, 'error');
+        return;
+    }
+    currentSiteList = [...currentSiteList, hostname];
+    await saveSiteSettings();
+    input.value = '';
+    const msg = currentSiteMode === 'whitelist' ? `已添加到白名单: ${hostname}` : `已禁用: ${hostname}`;
+    showToast(msg);
+    renderSiteList(currentSiteList);
+});
+
+// Enter key in add input
+document.getElementById('site-add-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('btn-add-site')?.click();
+});
+
+// Toggle all / clear
+document.getElementById('btn-toggle-all-sites')?.addEventListener('click', async () => {
+    currentSiteList = [];
+    await saveSiteSettings();
+    showToast(currentSiteMode === 'whitelist' ? '白名单已清空' : '已为所有网站启用');
+    renderSiteList(currentSiteList);
 });
 
 // ------------------------------------------------------------------ About
