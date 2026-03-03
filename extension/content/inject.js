@@ -473,8 +473,9 @@
         if (m.includes('disconnected') || m.includes('disconnect')) {
             return '无法连接服务器，请检查网络';
         }
-        // Fallback: show original but cap length
-        return msg.length > 60 ? msg.substring(0, 60) + '…' : msg;
+        // P1-2: don't leak raw server errors to UI; log for debug only
+        console.debug('[ClawMark] submit error:', msg);
+        return '提交失败，请稍后重试';
     }
 
     async function handleSubmit() {
@@ -583,18 +584,32 @@
         const existing = document.getElementById('clawmark-shortcut-tip');
         if (existing) return;
 
-        const isMac = navigator.platform.toUpperCase().includes('MAC');
+        // P2-2: use userAgentData (non-deprecated) with platform fallback
+        const isMac = (navigator.userAgentData?.platform || navigator.platform || '').toUpperCase().includes('MAC');
         const shortcut = isMac ? '⌘+Shift+X' : 'Ctrl+Shift+X';
 
         const tip = document.createElement('div');
         tip.id = 'clawmark-shortcut-tip';
-        tip.innerHTML = `
-            <span>💡 快捷键 <kbd>${shortcut}</kbd> 可随时打开标注面板</span>
-            <button class="tip-close" title="关闭">×</button>
-        `;
-        document.body.appendChild(tip);
 
-        tip.querySelector('.tip-close').addEventListener('click', () => tip.remove());
+        // P1-1: use imperative DOM instead of innerHTML + template literal
+        const textSpan = document.createElement('span');
+        const iconText = document.createTextNode('💡 快捷键 ');
+        const kbd = document.createElement('kbd');
+        kbd.textContent = shortcut;
+        const trailText = document.createTextNode(' 可随时打开标注面板');
+        textSpan.appendChild(iconText);
+        textSpan.appendChild(kbd);
+        textSpan.appendChild(trailText);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'tip-close';
+        closeBtn.title = '关闭';
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', () => tip.remove());
+
+        tip.appendChild(textSpan);
+        tip.appendChild(closeBtn);
+        document.body.appendChild(tip);
 
         // Auto-dismiss after 8s
         setTimeout(() => { if (tip.parentNode) tip.remove(); }, 8000);

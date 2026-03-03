@@ -655,7 +655,19 @@ function renderSiteList(sites) {
 // Mode toggle
 document.querySelectorAll('input[name="site-mode"]').forEach(radio => {
     radio.addEventListener('change', async (e) => {
-        currentSiteMode = e.target.value;
+        const newMode = e.target.value;
+        // P2-1: confirm before clearing list if it has entries
+        if (currentSiteList.length > 0) {
+            const modeLabel = newMode === 'whitelist' ? '白名单' : '黑名单';
+            const confirmed = confirm(`切换到${modeLabel}模式会清空当前列表（${currentSiteList.length} 个网站），确定继续？`);
+            if (!confirmed) {
+                // revert radio selection
+                const prevRadio = document.querySelector(`input[name="site-mode"][value="${currentSiteMode}"]`);
+                if (prevRadio) prevRadio.checked = true;
+                return;
+            }
+        }
+        currentSiteMode = newMode;
         currentSiteList = []; // clear list when switching mode
         await saveSiteSettings();
         updateSiteListLabels();
