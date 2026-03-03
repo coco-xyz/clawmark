@@ -200,11 +200,15 @@
 
     // ----------------------------------------------------------- toolbar
 
-    function showToolbar(x, y) {
+    function showToolbar(centerX, y) {
         if (!toolbar) return;
-        toolbar.style.left = `${x}px`;
-        toolbar.style.top = `${y}px`;
         toolbar.classList.add('visible');
+        const tw = toolbar.offsetWidth;
+        const th = toolbar.offsetHeight;
+        const x = Math.max(0, Math.min(centerX - tw / 2, window.innerWidth - tw));
+        const clampedY = Math.max(0, Math.min(y, window.innerHeight - th));
+        toolbar.style.left = `${x}px`;
+        toolbar.style.top = `${clampedY}px`;
     }
 
     function hideToolbar() {
@@ -558,7 +562,7 @@
                     range: range.cloneRange(),
                     position: { x: rect.left + window.scrollX, y: rect.bottom + window.scrollY },
                 };
-                showToolbar(rect.left + (rect.width / 2) - 120, rect.bottom + 8);
+                showToolbar(rect.left + (rect.width / 2), rect.bottom + 8);
             } else {
                 currentSelection = null;
                 hideToolbar();
