@@ -720,8 +720,108 @@ function loadAbout() {
     document.getElementById('about-version').textContent = manifest.version;
 }
 
+// ------------------------------------------------------------------ Welcome Tab (Phase 2: onboarding)
+
+function switchToTab(tabName) {
+    navItems.forEach(n => n.classList.remove('active'));
+    tabPanels.forEach(p => p.classList.remove('active'));
+    const navItem = document.querySelector(`.nav-item[data-tab="${tabName}"]`);
+    const panel = document.getElementById(`tab-${tabName}`);
+    if (navItem) navItem.classList.add('active');
+    if (panel) panel.classList.add('active');
+}
+
+function initWelcomeTab() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') !== 'welcome') return;
+
+    // Show the welcome nav item and switch to it
+    const welcomeNav = document.getElementById('nav-welcome');
+    if (welcomeNav) welcomeNav.style.display = '';
+    switchToTab('welcome');
+
+    // Pre-fill server URL
+    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }).then(config => {
+        const serverInput = document.getElementById('welcome-server-url');
+        if (serverInput) serverInput.value = config.serverUrl || '';
+    });
+
+    // Check if already logged in
+    chrome.runtime.sendMessage({ type: 'GET_AUTH_STATE' }).then(state => {
+        if (state.authToken && state.authUser) {
+            showWelcomeLoggedIn(state.authUser);
+        }
+    });
+}
+
+function showWelcomeLoggedIn(user) {
+    const loggedOut = document.getElementById('welcome-logged-out');
+    const loggedIn = document.getElementById('welcome-logged-in');
+    if (loggedOut) loggedOut.style.display = 'none';
+    if (loggedIn) loggedIn.style.display = 'block';
+
+    const greeting = document.getElementById('welcome-user-greeting');
+    const name = user.name || user.email || '';
+    if (greeting && name) {
+        greeting.textContent = `Welcome, ${name}! Redirecting...`;
+    }
+
+    // Auto-redirect to Overview after a brief moment
+    setTimeout(() => {
+        // Hide welcome nav since onboarding is done
+        const welcomeNav = document.getElementById('nav-welcome');
+        if (welcomeNav) welcomeNav.style.display = 'none';
+        switchToTab('overview');
+        // Clean up URL param
+        const url = new URL(window.location);
+        url.searchParams.delete('tab');
+        history.replaceState(null, '', url.pathname + url.search);
+    }, 1500);
+}
+
+// Welcome Google login button
+document.getElementById('btn-welcome-google')?.addEventListener('click', async function() {
+    this.disabled = true;
+    this.textContent = 'Signing in...';
+    try {
+        const result = await chrome.runtime.sendMessage({ type: 'LOGIN_GOOGLE' });
+        if (result.error) throw new Error(result.error);
+        showWelcomeLoggedIn(result.user);
+        // Also update the Account tab state
+        showAccountLoggedIn(result.user);
+        if (result.user?.name) {
+            document.getElementById('opt-username').value = result.user.name;
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+        this.disabled = false;
+        this.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
+            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+        </svg> Sign in with Google`;
+    }
+});
+
+// Welcome server URL save
+document.getElementById('btn-welcome-save-server')?.addEventListener('click', async () => {
+    const url = (document.getElementById('welcome-server-url')?.value || '').trim().replace(/\/$/, '');
+    if (!url) {
+        showToast('Server URL is required', 'error');
+        return;
+    }
+    const config = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
+    config.serverUrl = url;
+    await chrome.runtime.sendMessage({ type: 'SAVE_CONFIG', config });
+    // Also sync to the Connection tab input
+    document.getElementById('opt-server-url').value = url;
+    showToast('Server URL saved');
+});
+
 // ------------------------------------------------------------------ Init
 
+initWelcomeTab();
 loadOverview();
 loadAccount();
 loadConnection();

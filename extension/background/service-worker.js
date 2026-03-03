@@ -98,8 +98,12 @@ async function loginWithGoogle() {
     await setAuthState(data.token, data.user);
 
     // Update userName from OAuth profile if not manually set
-    if (data.user?.name && !config.userName) {
-        await saveConfig({ ...config, userName: data.user.name });
+    if (!config.userName) {
+        const displayName = data.user?.name
+            || (data.user?.email ? data.user.email.split('@')[0] : '');
+        if (displayName) {
+            await saveConfig({ ...config, userName: displayName });
+        }
     }
 
     // Broadcast auth state change
@@ -277,7 +281,7 @@ async function uploadImage(dataUrl) {
 
 // --------------------------------------------------------- context menu
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
     chrome.contextMenus.create({
         id: 'clawmark-comment',
         title: 'ClawMark: Comment on selection',
@@ -288,6 +292,12 @@ chrome.runtime.onInstalled.addListener(() => {
         title: 'ClawMark: Create Issue',
         contexts: ['selection', 'page'],
     });
+
+    // Open welcome page on fresh install
+    if (details.reason === 'install') {
+        const optionsUrl = chrome.runtime.getURL('options/options.html') + '?tab=welcome';
+        chrome.tabs.create({ url: optionsUrl });
+    }
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -320,6 +330,11 @@ async function handleMessage(message, sender) {
             const result = await createItem(message.data);
             // Notify side panel to refresh after item creation
             chrome.runtime.sendMessage({ type: 'ITEM_CREATED' }).catch(() => {});
+            // Update badge count for the sender tab
+            if (sender.tab?.id) {
+                _badgeCache.delete(sender.tab.id);
+                updateBadge(sender.tab.id);
+            }
             return result;
         }
 
@@ -457,6 +472,67 @@ async function handleMessage(message, sender) {
             return { error: `Unknown message type: ${message.type}` };
     }
 }
+
+// ------------------------------------------------------------------ badge count
+
+const _badgeCache = new Map();          // tabId -> { count, ts }
+const BADGE_CACHE_TTL = 30 * 1000;      // 30 seconds
+
+async function updateBadge(tabId) {
+    if (!tabId) return;
+
+    try {
+        const tab = await chrome.tabs.get(tabId);
+        if (!tab?.url || tab.url.startsWith('chrome') || tab.url.startsWith('about:')) {
+            chrome.action.setBadgeText({ text: '', tabId });
+            return;
+        }
+
+        // Check cache
+        const cached = _badgeCache.get(tabId);
+        if (cached && Date.now() - cached.ts < BADGE_CACHE_TTL) {
+            const text = cached.count > 0 ? String(cached.count) : '';
+            chrome.action.setBadgeText({ text, tabId });
+            return;
+        }
+
+        const result = await getItemsByUrl(tab.url);
+        const items = result.items || [];
+        const count = items.length;
+
+        _badgeCache.set(tabId, { count, ts: Date.now() });
+
+        // Evict old cache entries if too many
+        if (_badgeCache.size > 200) {
+            const oldest = _badgeCache.keys().next().value;
+            _badgeCache.delete(oldest);
+        }
+
+        chrome.action.setBadgeText({ text: count > 0 ? String(count) : '', tabId });
+        chrome.action.setBadgeBackgroundColor({ color: '#5865f2', tabId });
+    } catch {
+        // Silently fail — badge is non-critical
+    }
+}
+
+// Update badge when tab is activated
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+    updateBadge(tabId);
+});
+
+// Update badge when tab URL changes (navigation complete)
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'complete') {
+        // Invalidate cache for this tab since URL may have changed
+        _badgeCache.delete(tabId);
+        updateBadge(tabId);
+    }
+});
+
+// Clean up badge cache when tabs are closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+    _badgeCache.delete(tabId);
+});
 
 // ------------------------------------------------------------------ target declaration check (#86)
 //
