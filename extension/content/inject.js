@@ -20,6 +20,7 @@
     // ----------------------------------------------------------- injection check (#86)
 
     let injectionActive = false;
+    let masterEnabled = true;
     let targetDisabled = false; // true if target declaration says js_injection: false
 
     /**
@@ -613,6 +614,23 @@
             showInputOverlay(message.action);
             sendResponse({ ok: true });
         }
+
+        if (message.type === 'MASTER_TOGGLE_CHANGED') {
+            masterEnabled = message.enabled;
+            if (!masterEnabled && injectionActive) {
+                injectionActive = false;
+                teardownOverlay();
+            } else if (masterEnabled && !injectionActive) {
+                const gen = ++toggleGeneration;
+                checkInjectionEnabled().then(enabled => {
+                    if (gen !== toggleGeneration) return;
+                    if (enabled) {
+                        injectionActive = true;
+                        initOverlay();
+                    }
+                });
+            }
+        }
     });
 
     // ----------------------------------------------------------- side panel
@@ -643,6 +661,16 @@
     // ----------------------------------------------------------- startup
 
     async function startup() {
+        // Check master toggle first (global on/off for all pages)
+        try {
+            const result = await chrome.runtime.sendMessage({ type: 'GET_MASTER_TOGGLE' });
+            masterEnabled = result.masterEnabled;
+        } catch {
+            masterEnabled = true; // default to enabled on error
+        }
+
+        if (!masterEnabled) return;
+
         // Check target declaration first (immutable — target owner's choice)
         await checkTargetDeclaration();
 

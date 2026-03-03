@@ -320,9 +320,8 @@ document.getElementById('btn-panel').addEventListener('click', async () => {
 // ------------------------------------------------------------------ helpers
 
 function escHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function showMessage(text, type) {

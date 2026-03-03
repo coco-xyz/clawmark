@@ -33,9 +33,8 @@ function showToast(text, type = 'success') {
 // ------------------------------------------------------------------ helpers
 
 function escHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function parseConfig(config) {
@@ -126,7 +125,11 @@ function showAccountLoggedIn(user) {
 
     const avatarEl = document.getElementById('account-avatar');
     if (user.picture) {
-        avatarEl.innerHTML = `<img src="${escHtml(user.picture)}" alt="">`;
+        avatarEl.textContent = '';
+        const img = document.createElement('img');
+        img.src = user.picture;
+        img.alt = '';
+        avatarEl.appendChild(img);
     } else {
         avatarEl.textContent = (user.name || user.email || 'U').charAt(0).toUpperCase();
     }
