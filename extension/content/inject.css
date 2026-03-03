@@ -234,6 +234,13 @@
     flex-shrink: 0;
 }
 
+#clawmark-input-overlay .cm-dispatch-fallback {
+    opacity: 0.6;
+    border-top: 1px solid #333;
+    margin-top: 2px;
+    padding-top: 5px;
+}
+
 /* ---- Toast notification ---- */
 #clawmark-toast {
     position: fixed;
