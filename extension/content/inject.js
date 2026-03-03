@@ -67,6 +67,7 @@
 
     chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'sync') return;
+        if (!masterEnabled) return;
         if (changes.jsInjectionEnabled || changes.disabledSites) {
             const gen = ++toggleGeneration;
             checkInjectionEnabled().then(enabled => {
@@ -437,7 +438,7 @@
 
     function escHtml(s) {
         if (!s) return '';
-        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
     }
 
     function hideInputOverlay() {
