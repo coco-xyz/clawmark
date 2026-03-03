@@ -211,9 +211,17 @@ async function loadAnnotationStats() {
         commentCountEl.textContent = counts.comments;
         issueCountEl.textContent = counts.issues;
 
+        if (counts.error) {
+            emptyAnnotationsEl.style.display = 'block';
+            recentEl.innerHTML = '';
+            return;
+        }
+
         if (counts.total === 0) {
             emptyAnnotationsEl.style.display = 'block';
             recentEl.innerHTML = '';
+            // Clear badge when no annotations
+            chrome.action.setBadgeText({ text: '' });
             return;
         }
 

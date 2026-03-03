@@ -9,7 +9,8 @@
         "storage",
         "identity",
         "contextMenus",
-        "sidePanel"
+        "sidePanel",
+        "tabs"
     ],
     "host_permissions": [
         "<all_urls>"

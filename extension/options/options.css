@@ -606,3 +606,118 @@ label {
     font-size: 12px;
     color: var(--text-muted);
 }
+
+/* ---- Phase 2: Welcome Page ---- */
+#welcome-section {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 32px;
+    background: var(--bg);
+}
+
+.welcome-card {
+    max-width: 480px;
+    width: 100%;
+    text-align: center;
+    padding: 48px 40px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.welcome-icon {
+    font-size: 56px;
+    margin-bottom: 16px;
+    line-height: 1;
+}
+
+.welcome-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0 0 12px;
+}
+
+.welcome-desc {
+    font-size: 15px;
+    color: var(--text-muted);
+    margin: 0 0 6px;
+}
+
+.welcome-sub {
+    font-size: 13px;
+    color: var(--text-muted);
+    opacity: 0.7;
+    margin: 0 0 28px;
+}
+
+.welcome-actions {
+    margin-bottom: 24px;
+}
+
+.btn-large {
+    padding: 12px 28px;
+    font-size: 15px;
+    border-radius: 10px;
+    width: 100%;
+    justify-content: center;
+}
+
+.btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text);
+}
+
+.welcome-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 20px 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.welcome-divider::before,
+.welcome-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.welcome-advanced {
+    margin-bottom: 20px;
+}
+
+#welcome-advanced-panel {
+    margin-top: 12px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-align: left;
+}
+
+.welcome-skip {
+    font-size: 12px;
+    margin: 0;
+}
+
+.welcome-skip a {
+    color: var(--text-muted);
+    text-decoration: none;
+}
+
+.welcome-skip a:hover {
+    color: var(--accent);
+}

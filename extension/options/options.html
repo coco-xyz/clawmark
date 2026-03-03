@@ -35,13 +35,37 @@
     </nav>
 
     <main class="content">
+        <!-- Welcome Section (shown on first install via ?welcome=1) -->
+        <section id="welcome-section" style="display:none;">
+            <div class="welcome-card">
+                <div class="welcome-icon">🦀</div>
+                <h1 class="welcome-title">欢迎使用 ClawMark</h1>
+                <p class="welcome-desc">标注任何网页 — 评论、提 Issue、截图标注</p>
+                <p class="welcome-sub">无需配置，登录即可开始使用</p>
+                <div class="welcome-actions">
+                    <button class="btn btn-primary btn-large" id="btn-welcome-login">🔑 Google 一键登录</button>
+                </div>
+                <div class="welcome-divider">
+                    <span>或</span>
+                </div>
+                <div class="welcome-advanced" id="welcome-advanced-toggle">
+                    <button class="btn btn-ghost" id="btn-show-advanced">⚙️ 高级设置（自定义 Server URL）</button>
+                    <div id="welcome-advanced-panel" style="display:none;">
+                        <p class="help-text">默认服务器：<code>api.coco.xyz/clawmark</code></p>
+                        <button class="btn btn-secondary" id="btn-go-connection">打开连接设置</button>
+                    </div>
+                </div>
+                <p class="welcome-skip"><a href="#" id="btn-welcome-skip">跳过，直接进入设置 →</a></p>
+            </div>
+        </section>
+
         <!-- Overview Tab -->
         <section class="tab-panel active" id="tab-overview">
             <h1>Overview</h1>
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-value" id="stat-total">—</div>
-                    <div class="stat-label">Total Annotations</div>
+                    <div class="stat-label">当前页面标注</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-value" id="stat-comments">—</div>

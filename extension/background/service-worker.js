@@ -277,7 +277,13 @@ async function uploadImage(dataUrl) {
 
 // --------------------------------------------------------- context menu
 
-chrome.runtime.onInstalled.addListener(() => {
+// ------------------------------------------------------------------ Welcome page on install
+
+chrome.runtime.onInstalled.addListener((details) => {
+    if (details.reason === 'install') {
+        chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html?welcome=1') });
+    }
+
     chrome.contextMenus.create({
         id: 'clawmark-comment',
         title: 'ClawMark: Comment on selection',
@@ -449,7 +455,7 @@ async function handleMessage(message, sender) {
                 const issues = items.filter(i => i.type === 'issue').length;
                 return { comments, issues, total: items.length, recent: items.slice(0, 3) };
             } catch {
-                return { comments: 0, issues: 0, total: 0, recent: [] };
+                return { error: true, comments: 0, issues: 0, total: 0, recent: [] };
             }
         }
 
@@ -507,3 +513,38 @@ async function checkTargetInjection(url) {
         return { js_injection: true };
     }
 }
+
+// ------------------------------------------------------------------ Badge updater (Phase 2)
+
+async function updateBadgeForTab(tabId, url) {
+    if (!url || url.startsWith('chrome') || url.startsWith('chrome-extension')) {
+        await chrome.action.setBadgeText({ tabId, text: '' });
+        return;
+    }
+    try {
+        const result = await getItemsByUrl(url);
+        const total = (result.items || []).length;
+        if (total > 0) {
+            const label = total > 99 ? '99+' : String(total);
+            await chrome.action.setBadgeText({ tabId, text: label });
+            await chrome.action.setBadgeBackgroundColor({ tabId, color: '#5865f2' });
+        } else {
+            await chrome.action.setBadgeText({ tabId, text: '' });
+        }
+    } catch {
+        await chrome.action.setBadgeText({ tabId, text: '' });
+    }
+}
+
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+    try {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab?.url) await updateBadgeForTab(tabId, tab.url);
+    } catch {}
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete' && tab?.url) {
+        await updateBadgeForTab(tabId, tab.url);
+    }
+});
