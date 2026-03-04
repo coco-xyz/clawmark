@@ -15,14 +15,20 @@
 
 set -euo pipefail
 
-ENV="${1:-test}"
+ENV="${1:-}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 log()  { echo "▶ $*"; }
 info() { echo "  $*"; }
+warn() { echo "⚠ $*" >&2; }
 err()  { echo "✗ $*" >&2; exit 1; }
+
+if [[ -z "$ENV" ]]; then
+  ENV="test"
+  warn "No environment specified — defaulting to 'test'. Use: $0 <test|production>"
+fi
 
 # ── Environment config ────────────────────────────────────────────────────────
 
@@ -62,6 +68,7 @@ cat > extension/config.js << CONFIGEOF
 const ClawMarkConfig = {
     DEFAULT_SERVER: '${SERVER_URL}',
     DASHBOARD_URL: '${DASHBOARD_URL}',
+    GOOGLE_CLIENT_ID: '530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com',
     ENV: '${ENV}',
 };
 
