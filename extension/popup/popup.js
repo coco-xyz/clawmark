@@ -65,17 +65,19 @@ masterToggle.addEventListener('change', async () => {
     showMessage(enabled ? 'ClawMark enabled' : 'ClawMark paused', 'success');
 });
 
-// ------------------------------------------------------------------ gear -> dashboard
+// ------------------------------------------------------------------ gear -> dashboard (standalone website)
 
-gearBtn.addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
+function openDashboard(hash) {
+    const base = (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.DASHBOARD_URL)
+        || 'https://labs.coco.xyz/clawmark/dash/';
+    const url = hash ? base + '#' + hash : base;
+    chrome.tabs.create({ url });
     window.close();
-});
+}
 
-settingsLink.addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
-    window.close();
-});
+gearBtn.addEventListener('click', () => openDashboard());
+
+settingsLink.addEventListener('click', () => openDashboard('account'));
 
 // ------------------------------------------------------------------ auth
 
@@ -189,10 +191,7 @@ function formatTargetName(type, config) {
     }
 }
 
-document.getElementById('btn-more-targets').addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
-    window.close();
-});
+document.getElementById('btn-more-targets').addEventListener('click', () => openDashboard('delivery'));
 
 // ------------------------------------------------------------------ annotation stats
 
