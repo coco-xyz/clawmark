@@ -152,17 +152,13 @@ class AdapterRegistry {
             return;
         }
 
-        // Inherit token from default channel config if not provided.
-        // This is safe because dynamic targets are still GitHub repos the user
-        // explicitly configured — we just reuse the PAT from the static config
-        // rather than requiring each rule to carry its own token.
+        // Token inheritance REMOVED (data isolation Phase 1).
+        // Each user rule must carry its own token. If missing, fail with a clear error.
         if (target_type === 'github-issue' && !target_config.token) {
-            for (const [, adapter] of this.channels) {
-                if (adapter.type === 'github-issue' && adapter.token) {
-                    target_config.token = adapter.token;
-                    break;
-                }
-            }
+            throw new Error(
+                `GitHub issue dispatch for "${target_config.repo || 'unknown'}" is missing a token. ` +
+                `Each routing rule must include its own PAT — token inheritance from static config has been removed for data isolation.`
+            );
         }
 
         const channelName = `dynamic-${target_type}-${Date.now()}`;
@@ -251,14 +247,13 @@ class AdapterRegistry {
         // Copy config to avoid mutating caller's object (M3)
         const config = { ...target_config };
 
-        // Inherit token from default channel for github-issue
+        // Token inheritance REMOVED (data isolation Phase 1).
+        // Each user rule must carry its own token.
         if (target_type === 'github-issue' && !config.token) {
-            for (const [, adapter] of this.channels) {
-                if (adapter.type === 'github-issue' && adapter.token) {
-                    config.token = adapter.token;
-                    break;
-                }
-            }
+            throw new Error(
+                `GitHub issue dispatch for "${config.repo || 'unknown'}" is missing a token. ` +
+                `Each routing rule must include its own PAT.`
+            );
         }
 
         const channelName = `dynamic-${target_type}-${Date.now()}`;
