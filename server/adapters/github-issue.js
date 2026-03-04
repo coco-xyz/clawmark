@@ -107,19 +107,43 @@ class GitHubIssueAdapter {
             if (sanitized) labels.push(sanitized);
         }
 
+        // Create issue WITHOUT labels — labels require label-management permission
+        // which may not be available on the user's token. Issue creation is critical;
+        // labels are best-effort.
         const data = {
             title,
             body,
-            labels,
             assignees: this.assignees,
         };
 
-        const result = await this._apiRequest('POST', `/repos/${this.repo}/issues`, data);
+        let result;
+        try {
+            result = await this._apiRequest('POST', `/repos/${this.repo}/issues`, data);
+        } catch (err) {
+            // If issue creation itself fails, try once more without assignees
+            // (assignee permission can also 422 on repos the user doesn't admin)
+            if (/4(03|22)/.test(err.message) && this.assignees.length > 0) {
+                console.warn(`[github-issue] Retrying without assignees: ${err.message}`);
+                delete data.assignees;
+                result = await this._apiRequest('POST', `/repos/${this.repo}/issues`, data);
+            } else {
+                throw err;
+            }
+        }
 
         // Track mapping for status sync (persisted to DB when available)
         const itemId = item.id || item.item?.id;
         if (itemId && result.number) {
             this._setMapping(itemId, result.number, result.html_url);
+        }
+
+        // Best-effort: add labels separately (non-critical — 403 = token lacks label permission)
+        if (labels.length > 0 && result.number) {
+            try {
+                await this._apiRequest('POST', `/repos/${this.repo}/issues/${result.number}/labels`, { labels });
+            } catch (err) {
+                console.warn(`[github-issue] Labels skipped for #${result.number}: ${err.message}`);
+            }
         }
 
         return { status: 'created', issue_number: result.number, url: result.html_url };
