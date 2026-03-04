@@ -617,6 +617,7 @@ async function _refreshVersionCache(currentVersion) {
  * Compare semver strings. Returns >0 if a > b, <0 if a < b, 0 if equal.
  */
 function compareVersions(a, b) {
+    if (!a || !b) return 0;
     const pa = a.split('.').map(Number);
     const pb = b.split('.').map(Number);
     for (let i = 0; i < Math.max(pa.length, pb.length); i++) {

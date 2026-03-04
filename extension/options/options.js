@@ -110,7 +110,7 @@ function renderTopPages(topUrls) {
             <span class="activity-type">\ud83d\udcc4</span>
             <div class="activity-body">
                 <div class="activity-title">${escHtml(page.source_title || page.source_url)}</div>
-                <div class="activity-meta">${page.count} annotation${page.count !== 1 ? 's' : ''}</div>
+                <div class="activity-meta">${Number(page.count) || 0} annotation${Number(page.count) !== 1 ? 's' : ''}</div>
             </div>`;
         listEl.appendChild(el);
     }
@@ -798,7 +798,7 @@ async function loadAbout() {
     try {
         const result = await chrome.runtime.sendMessage({ type: 'CHECK_VERSION' });
         const latestEl = document.getElementById('about-latest-version');
-        if (result.latestVersion && result.latestVersion !== manifest.version) {
+        if (result.hasUpdate) {
             latestEl.textContent = result.latestVersion;
             latestEl.style.color = '#f59e0b';
         } else if (result.latestVersion) {
