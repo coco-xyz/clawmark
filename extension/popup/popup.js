@@ -190,7 +190,7 @@ function formatTargetName(type, config) {
 }
 
 document.getElementById('btn-more-targets').addEventListener('click', () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html#delivery') });
+    chrome.runtime.openOptionsPage();
     window.close();
 });
 
@@ -375,15 +375,18 @@ async function checkVersion() {
 // ------------------------------------------------------------------ init
 
 async function init() {
+    // Phase 1: render UI immediately from local storage (no network)
     await loadAuth();
     await loadMasterToggle();
 
-    if (isLoggedIn && masterToggle.checked) {
-        loadPageData();
-    }
-
-    // Non-blocking version check
-    checkVersion();
+    // Phase 2: start network calls after the popup has painted
+    // Use setTimeout(0) to yield to the renderer first
+    setTimeout(() => {
+        if (isLoggedIn && masterToggle.checked) {
+            loadPageData();
+        }
+        checkVersion();
+    }, 0);
 }
 
 init();
