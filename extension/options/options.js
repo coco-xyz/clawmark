@@ -11,15 +11,25 @@
 const navItems = document.querySelectorAll('.nav-item');
 const tabPanels = document.querySelectorAll('.tab-panel');
 
+function switchTab(tab) {
+    navItems.forEach(n => n.classList.remove('active'));
+    tabPanels.forEach(p => p.classList.remove('active'));
+    const navItem = document.querySelector(`.nav-item[data-tab="${tab}"]`);
+    if (navItem) navItem.classList.add('active');
+    const panel = document.getElementById(`tab-${tab}`);
+    if (panel) panel.classList.add('active');
+    location.hash = tab;
+}
+
 navItems.forEach(item => {
-    item.addEventListener('click', () => {
-        const tab = item.dataset.tab;
-        navItems.forEach(n => n.classList.remove('active'));
-        tabPanels.forEach(p => p.classList.remove('active'));
-        item.classList.add('active');
-        document.getElementById(`tab-${tab}`).classList.add('active');
-    });
+    item.addEventListener('click', () => switchTab(item.dataset.tab));
 });
+
+// Restore tab from URL hash on load
+const hashTab = location.hash.slice(1);
+if (hashTab && document.getElementById(`tab-${hashTab}`)) {
+    switchTab(hashTab);
+}
 
 // ------------------------------------------------------------------ toast
 
