@@ -718,6 +718,26 @@ document.getElementById('btn-toggle-all-sites')?.addEventListener('click', async
 function loadAbout() {
     const manifest = chrome.runtime.getManifest();
     document.getElementById('about-version').textContent = manifest.version;
+
+    // Fetch latest release version from GitHub
+    fetch('https://api.github.com/repos/coco-xyz/clawmark/releases/latest')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            const el = document.getElementById('about-latest-version');
+            if (data && data.tag_name) {
+                const latest = data.tag_name.replace(/^v/, '');
+                el.textContent = latest;
+                if (latest !== manifest.version) {
+                    el.style.color = '#f59e0b';
+                    el.textContent = `${latest} (update available)`;
+                }
+            } else {
+                el.textContent = '—';
+            }
+        })
+        .catch(() => {
+            document.getElementById('about-latest-version').textContent = '—';
+        });
 }
 
 // ------------------------------------------------------------------ Init
