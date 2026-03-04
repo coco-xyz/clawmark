@@ -42,16 +42,9 @@ const DATA_DIR = path.resolve(
 );
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 
-// Auth config — invite-code map  { code: displayName }
-// Sourced from config.auth.codes; may be overridden by CLAWMARK_INVITE_CODES_JSON env var.
-let VALID_CODES = (config.auth && config.auth.codes) || {};
-if (process.env.CLAWMARK_INVITE_CODES_JSON) {
-    try {
-        VALID_CODES = JSON.parse(process.env.CLAWMARK_INVITE_CODES_JSON);
-    } catch {
-        console.warn('[!] Could not parse CLAWMARK_INVITE_CODES_JSON — ignoring');
-    }
-}
+// Auth config — invite codes REMOVED (data isolation Phase 1, Kevin directive).
+// Empty object retained only to prevent runtime errors if any dead code references it.
+const VALID_CODES = {};
 
 // Webhook config
 const WEBHOOK = (config.webhook) || {};
@@ -276,19 +269,14 @@ async function sendWebhook(event, payload) {
 
 // ------------------------------------------------------------------- auth
 
-// Verify invite code — returns { valid: bool, userName?: string }
+// Verify invite code — REMOVED (data isolation Phase 1).
+// Returns 410 Gone — invite code mechanism fully removed per Kevin directive.
 const verifyLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many attempts, try again later' } });
 app.post('/verify', verifyLimiter, (req, res) => {
-    const { code } = req.body;
-    if (code && VALID_CODES[code]) {
-        res.json({ valid: true, userName: VALID_CODES[code] });
-    } else {
-        res.json({ valid: false });
-    }
+    res.status(410).json({ error: 'Invite codes have been removed. Use Google OAuth to sign in.' });
 });
 
-// Mount OAuth auth routes — shares VALID_CODES with apikey endpoint
-app.locals.VALID_CODES = VALID_CODES;
+// Mount OAuth auth routes
 app.use('/api/v2/auth', authRouter);
 
 // -------------------------------------------------------------- discussion helpers
@@ -646,32 +634,43 @@ function handleGetItemsFull(req, res) {
 // Register routes — both with and without :app prefix
 //   /items                    → default app
 //   /api/clawmark/:app/items  → named app (multi-tenant)
+//
+// DEPRECATED: V1 routes lack authentication and bypass data isolation.
+// Use /api/v2/ endpoints instead. Sunset date: 2026-06-01.
 
-// Flat routes (default app)
-app.get('/items',              apiReadLimiter, handleGetItems);
-app.post('/items',             apiWriteLimiter, handleCreateItem);
-app.get('/items-full',         apiReadLimiter, handleGetItemsFull);
-app.get('/items/:id',          apiReadLimiter, handleGetItem);
-app.post('/items/:id/messages', apiWriteLimiter, handleAddMessage);
-app.post('/items/:id/assign',  apiWriteLimiter, handleAssignItem);
-app.post('/items/:id/resolve', apiWriteLimiter, handleResolveItem);
-app.post('/items/:id/verify',  apiWriteLimiter, handleVerifyItem);
-app.post('/items/:id/reopen',  apiWriteLimiter, handleReopenItem);
-app.post('/items/:id/close',   apiWriteLimiter, handleCloseItem);
-app.post('/items/:id/respond', apiWriteLimiter, handleRespondToItem);
+// Deprecation middleware for V1 routes
+function v1Deprecated(req, res, next) {
+    res.set('Deprecation', 'true');
+    res.set('Sunset', 'Sat, 01 Jun 2026 00:00:00 GMT');
+    res.set('Link', '</api/v2/>; rel="successor-version"');
+    next();
+}
 
-// Namespaced routes (multi-app)
-app.get('/api/clawmark/:app/items',              apiReadLimiter, handleGetItems);
-app.post('/api/clawmark/:app/items',             apiWriteLimiter, handleCreateItem);
-app.get('/api/clawmark/:app/items-full',         apiReadLimiter, handleGetItemsFull);
-app.get('/api/clawmark/:app/items/:id',          apiReadLimiter, handleGetItem);
-app.post('/api/clawmark/:app/items/:id/messages', apiWriteLimiter, handleAddMessage);
-app.post('/api/clawmark/:app/items/:id/assign',  apiWriteLimiter, handleAssignItem);
-app.post('/api/clawmark/:app/items/:id/resolve', apiWriteLimiter, handleResolveItem);
-app.post('/api/clawmark/:app/items/:id/verify',  apiWriteLimiter, handleVerifyItem);
-app.post('/api/clawmark/:app/items/:id/reopen',  apiWriteLimiter, handleReopenItem);
-app.post('/api/clawmark/:app/items/:id/close',   apiWriteLimiter, handleCloseItem);
-app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, handleRespondToItem);
+// Flat routes (default app) — DEPRECATED
+app.get('/items',              apiReadLimiter, v1Deprecated, handleGetItems);
+app.post('/items',             apiWriteLimiter, v1Deprecated, handleCreateItem);
+app.get('/items-full',         apiReadLimiter, v1Deprecated, handleGetItemsFull);
+app.get('/items/:id',          apiReadLimiter, v1Deprecated, handleGetItem);
+app.post('/items/:id/messages', apiWriteLimiter, v1Deprecated, handleAddMessage);
+app.post('/items/:id/assign',  apiWriteLimiter, v1Deprecated, handleAssignItem);
+app.post('/items/:id/resolve', apiWriteLimiter, v1Deprecated, handleResolveItem);
+app.post('/items/:id/verify',  apiWriteLimiter, v1Deprecated, handleVerifyItem);
+app.post('/items/:id/reopen',  apiWriteLimiter, v1Deprecated, handleReopenItem);
+app.post('/items/:id/close',   apiWriteLimiter, v1Deprecated, handleCloseItem);
+app.post('/items/:id/respond', apiWriteLimiter, v1Deprecated, handleRespondToItem);
+
+// Namespaced routes (multi-app) — DEPRECATED
+app.get('/api/clawmark/:app/items',              apiReadLimiter, v1Deprecated, handleGetItems);
+app.post('/api/clawmark/:app/items',             apiWriteLimiter, v1Deprecated, handleCreateItem);
+app.get('/api/clawmark/:app/items-full',         apiReadLimiter, v1Deprecated, handleGetItemsFull);
+app.get('/api/clawmark/:app/items/:id',          apiReadLimiter, v1Deprecated, handleGetItem);
+app.post('/api/clawmark/:app/items/:id/messages', apiWriteLimiter, v1Deprecated, handleAddMessage);
+app.post('/api/clawmark/:app/items/:id/assign',  apiWriteLimiter, v1Deprecated, handleAssignItem);
+app.post('/api/clawmark/:app/items/:id/resolve', apiWriteLimiter, v1Deprecated, handleResolveItem);
+app.post('/api/clawmark/:app/items/:id/verify',  apiWriteLimiter, v1Deprecated, handleVerifyItem);
+app.post('/api/clawmark/:app/items/:id/reopen',  apiWriteLimiter, v1Deprecated, handleReopenItem);
+app.post('/api/clawmark/:app/items/:id/close',   apiWriteLimiter, v1Deprecated, handleCloseItem);
+app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, v1Deprecated, handleRespondToItem);
 
 // ================================================================= V2 API
 //
@@ -680,7 +679,7 @@ app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, handleRespondT
 // Backward compatible — V1 routes above remain unchanged.
 // =================================================================
 
-// -- V2 auth middleware: accept JWT, API key, or invite code
+// -- V2 auth middleware: accept JWT or API key (invite codes deprecated)
 function v2Auth(req, res, next) {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -700,30 +699,36 @@ function v2Auth(req, res, next) {
         if (verifyJwt) {
             const payload = verifyJwt(token);
             if (payload) {
-                req.v2Auth = { type: 'jwt', user: payload.email, userId: payload.userId, role: payload.role };
+                // Resolve app_id from user's default app
+                const defaultApp = itemsDb.getOrCreateDefaultApp(payload.userId, payload.email);
+                req.v2Auth = {
+                    type: 'jwt',
+                    app_id: defaultApp ? defaultApp.id : null,
+                    user: payload.email,
+                    userId: payload.userId,
+                    role: payload.role,
+                };
                 return next();
             }
         }
 
         return res.status(401).json({ error: 'Invalid token' });
     }
-    // Invite code in body or query
-    const code = req.body?.code || req.query?.code;
-    if (code && VALID_CODES[code]) {
-        req.v2Auth = { type: 'invite', user: VALID_CODES[code] };
-        return next();
-    }
-    return res.status(401).json({ error: 'Authentication required (JWT, API key, or invite code)' });
+    return res.status(401).json({ error: 'Authentication required (JWT or API key)' });
 }
 
 // -- POST /api/v2/items — create item with full V2 schema
 app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
-    const { type, app_id, source_url, source_title, quote, quote_position,
+    const { type, source_url, source_title, quote, quote_position,
             screenshots, title, content, priority, tags, userName, version,
             selected_targets } = req.body;
 
     const user = req.v2Auth?.user || userName;
-    const resolvedAppId = req.v2Auth?.app_id || app_id || 'default';
+    // Always use server-resolved app_id from auth — never trust client-supplied app_id
+    const resolvedAppId = req.v2Auth?.app_id;
+    if (!resolvedAppId) {
+        return res.status(400).json({ error: 'Could not resolve app_id — ensure you are authenticated' });
+    }
     const doc = source_url || req.body.doc || '/';
 
     if (!user) return res.status(400).json({ error: 'Missing userName' });
@@ -791,8 +796,12 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
 
 // -- GET /api/v2/items — query with url/tag support
 app.get('/api/v2/items', apiReadLimiter, v2Auth, (req, res) => {
-    const { url, tag, doc, type, status, assignee, app_id } = req.query;
-    const resolvedAppId = app_id || 'default';
+    const { url, tag, doc, type, status, assignee } = req.query;
+    // Always use server-resolved app_id from auth — never trust client-supplied app_id
+    const resolvedAppId = req.v2Auth?.app_id;
+    if (!resolvedAppId) {
+        return res.status(400).json({ error: 'Could not resolve app_id — ensure you are authenticated' });
+    }
 
     // Attach compact dispatch summary to each item
     function attachDispatches(items) {
@@ -825,6 +834,10 @@ app.get('/api/v2/items', apiReadLimiter, v2Auth, (req, res) => {
 app.get('/api/v2/items/:id', apiReadLimiter, v2Auth, (req, res) => {
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    // Enforce app_id scoping: user can only access items in their app
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     // Parse JSON fields for client convenience
     if (typeof item.tags === 'string') item.tags = JSON.parse(item.tags || '[]');
     if (typeof item.screenshots === 'string') item.screenshots = JSON.parse(item.screenshots || '[]');
@@ -847,6 +860,9 @@ app.post('/api/v2/items/:id/tags', apiWriteLimiter, v2Auth, (req, res) => {
     const { add, remove } = req.body;
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
 
     let tags = typeof item.tags === 'string' ? JSON.parse(item.tags || '[]') : (item.tags || []);
 
@@ -870,6 +886,9 @@ app.post('/api/v2/items/:id/messages', apiWriteLimiter, v2Auth, (req, res) => {
 
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
 
     const user = req.v2Auth?.user || userName;
     const result = itemsDb.addMessage({
@@ -884,6 +903,11 @@ app.post('/api/v2/items/:id/messages', apiWriteLimiter, v2Auth, (req, res) => {
 
 // -- POST /api/v2/items/:id/resolve
 app.post('/api/v2/items/:id/resolve', apiWriteLimiter, v2Auth, (req, res) => {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.resolveItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.resolved', { id: req.params.id });
@@ -894,6 +918,11 @@ app.post('/api/v2/items/:id/resolve', apiWriteLimiter, v2Auth, (req, res) => {
 app.post('/api/v2/items/:id/assign', apiWriteLimiter, v2Auth, (req, res) => {
     const { assignee } = req.body;
     if (!assignee) return res.status(400).json({ error: 'Missing assignee' });
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.assignItem(req.params.id, assignee);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.assigned', { id: req.params.id, assignee });
@@ -902,6 +931,11 @@ app.post('/api/v2/items/:id/assign', apiWriteLimiter, v2Auth, (req, res) => {
 
 // -- POST /api/v2/items/:id/close
 app.post('/api/v2/items/:id/close', apiWriteLimiter, v2Auth, (req, res) => {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.closeItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.closed', { id: req.params.id });
@@ -910,28 +944,30 @@ app.post('/api/v2/items/:id/close', apiWriteLimiter, v2Auth, (req, res) => {
 
 // -- POST /api/v2/items/:id/reopen
 app.post('/api/v2/items/:id/reopen', apiWriteLimiter, v2Auth, (req, res) => {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.reopenItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
 });
 
 // -- GET /api/v2/urls — list all annotated URLs for an app
-app.get('/api/v2/urls', apiReadLimiter, (req, res) => {
-    const app_id = req.query.app_id || 'default';
+app.get('/api/v2/urls', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) {
+        return res.status(400).json({ error: 'Could not resolve app_id — ensure you are authenticated' });
+    }
     const urls = itemsDb.getDistinctUrls(app_id);
     res.json({ urls });
 });
 
-// -- POST /api/v2/auth/apikey — now handled by auth module (mounted at /api/v2/auth)
-// Legacy endpoint kept as redirect for backward compatibility
+// -- POST /api/v2/auth/apikey-legacy — DEPRECATED (data isolation Phase 1)
+// Invite codes are no longer supported. Returns 410 Gone.
 app.post('/api/v2/auth/apikey-legacy', apiWriteLimiter, (req, res) => {
-    const { code, name, app_id } = req.body;
-    if (!code || !VALID_CODES[code]) {
-        return res.status(401).json({ error: 'Valid invite code required to create API key' });
-    }
-    const created_by = VALID_CODES[code];
-    const key = itemsDb.createApiKey({ app_id: app_id || 'default', name, created_by });
-    res.json({ success: true, ...key });
+    res.status(410).json({ error: 'Invite codes are deprecated. Use JWT auth via /api/v2/auth/apikey.' });
 });
 
 // -- GET /api/v2/adapters — list adapter channels and their status
@@ -946,6 +982,11 @@ app.get('/api/v2/adapters', (req, res) => {
 
 // -- GET /api/v2/distributions/:item_id — get dispatch log for an item
 app.get('/api/v2/distributions/:item_id', apiReadLimiter, v2Auth, (req, res) => {
+    // Verify item belongs to caller's app
+    const item = itemsDb.getItem(req.params.item_id);
+    if (item && req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const log = itemsDb.getDispatchLog(req.params.item_id);
     const parsed = log.map(entry => {
         try { entry.target_config = redactConfig(JSON.parse(entry.target_config)); } catch {
@@ -958,6 +999,11 @@ app.get('/api/v2/distributions/:item_id', apiReadLimiter, v2Auth, (req, res) => 
 
 // -- POST /api/v2/distributions/:item_id/retry — retry failed dispatches for an item
 app.post('/api/v2/distributions/:item_id/retry', apiWriteLimiter, v2Auth, async (req, res) => {
+    // Verify item belongs to caller's app
+    const item = itemsDb.getItem(req.params.item_id);
+    if (item && req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const log = itemsDb.getDispatchLog(req.params.item_id);
     const failed = log.filter(e => e.status === 'failed' || e.status === 'exhausted');
     if (failed.length === 0) {
@@ -981,7 +1027,8 @@ app.post('/api/v2/distributions/:item_id/retry', apiWriteLimiter, v2Auth, async 
 
 // -- GET /api/v2/routing/rules — list rules (for current user or all if admin)
 app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
-    const user = req.query.user || req.v2Auth?.user;
+    // Always use auth-resolved user identity — never trust client-supplied user param
+    const user = req.v2Auth?.user;
     const parseRuleConfig = (rule) => {
         if (typeof rule.target_config === 'string') {
             try { rule.target_config = JSON.parse(rule.target_config); } catch {}
@@ -999,10 +1046,9 @@ app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
 
 // -- POST /api/v2/routing/rules — create a routing rule
 app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
-    const { rule_type, pattern, target_type, target_config, priority, userName } = req.body;
-    // Use authenticated identity first to match GET /rules which resolves user from auth.
-    // Prevents mismatch where rules are stored under popup userName but queried by auth user.
-    const user = req.v2Auth?.user || userName;
+    const { rule_type, pattern, target_type, target_config, priority } = req.body;
+    // Always use auth-resolved user identity — never trust client-supplied userName
+    const user = req.v2Auth?.user;
 
     if (!user) return res.status(400).json({ error: 'Missing userName' });
     if (!rule_type) return res.status(400).json({ error: 'Missing rule_type' });
@@ -1025,9 +1071,16 @@ app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
     res.json({ success: true, rule });
 });
 
-// -- PUT /api/v2/routing/rules/:id — update a routing rule
+// -- PUT /api/v2/routing/rules/:id — update a routing rule (ownership check)
 app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
     const { rule_type, pattern, target_type, target_config, priority, enabled } = req.body;
+
+    // Ownership check: verify the rule belongs to this user
+    const existing = itemsDb.getUserRule(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Rule not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to modify this rule' });
+    }
 
     const updated = itemsDb.updateUserRule(req.params.id, {
         rule_type, pattern, target_type, target_config, priority, enabled,
@@ -1040,8 +1093,15 @@ app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
     res.json({ success: true, rule: updated });
 });
 
-// -- DELETE /api/v2/routing/rules/:id — delete a routing rule
+// -- DELETE /api/v2/routing/rules/:id — delete a routing rule (ownership check)
 app.delete('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    // Ownership check: verify the rule belongs to this user
+    const existing = itemsDb.getUserRule(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Rule not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to delete this rule' });
+    }
+
     const result = itemsDb.deleteUserRule(req.params.id);
     if (!result.success) return res.status(404).json({ error: 'Rule not found' });
     res.json({ success: true });
@@ -1050,8 +1110,9 @@ app.delete('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
 // -- POST /api/v2/routing/resolve — test routing resolution (dry run)
 // Returns ALL matching targets so the extension can show dispatch preview.
 app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => {
-    const { source_url, userName, type, priority, tags } = req.body;
-    const user = req.v2Auth?.user || userName;
+    const { source_url, type, priority, tags } = req.body;
+    // Always use auth-resolved user identity
+    const user = req.v2Auth?.user;
 
     // Fetch target declaration
     let declaration = null;
@@ -1125,7 +1186,7 @@ app.post('/api/v2/items/:id/classify', aiLimiter, v2Auth, async (req, res) => {
     }
 
     // Ownership check — user can only classify items in their app scope
-    const userAppId = req.body.app_id || req.v2Auth?.app_id || 'default';
+    const userAppId = req.v2Auth?.app_id;
     if (item.app_id !== userAppId) {
         return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
     }
@@ -1165,7 +1226,7 @@ app.get('/api/v2/items/by-classification/:classification', apiReadLimiter, v2Aut
     if (!VALID_CLASSIFICATIONS.includes(req.params.classification)) {
         return res.status(400).json({ error: `Invalid classification. Must be one of: ${VALID_CLASSIFICATIONS.join(', ')}` });
     }
-    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const app_id = req.v2Auth?.app_id;
     const items = itemsDb.getItemsByClassification({ app_id, classification: req.params.classification });
     res.json({ items });
 });
@@ -1183,7 +1244,7 @@ app.post('/api/v2/items/:id/generate-tags', aiLimiter, v2Auth, async (req, res) 
     }
 
     // Ownership check — user can only tag items in their app scope
-    const userAppId = req.body?.app_id || req.v2Auth?.app_id || 'default';
+    const userAppId = req.v2Auth?.app_id;
     if (item.app_id !== userAppId) {
         return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
     }
@@ -1228,14 +1289,14 @@ app.post('/api/v2/items/:id/generate-tags', aiLimiter, v2Auth, async (req, res) 
 
 // -- GET /api/v2/analytics/summary — dashboard overview stats
 app.get('/api/v2/analytics/summary', apiReadLimiter, v2Auth, (req, res) => {
-    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const app_id = req.v2Auth?.app_id;
     const summary = itemsDb.getAnalyticsSummary(app_id);
     res.json(summary);
 });
 
 // -- GET /api/v2/analytics/trends — time-series annotation volume
 app.get('/api/v2/analytics/trends', apiReadLimiter, v2Auth, (req, res) => {
-    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const app_id = req.v2Auth?.app_id;
     const period = ['day', 'week', 'month'].includes(req.query.period) ? req.query.period : 'day';
     const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
     const group_by = ['classification', 'type', 'status', 'total'].includes(req.query.group_by) ? req.query.group_by : 'total';
@@ -1246,7 +1307,7 @@ app.get('/api/v2/analytics/trends', apiReadLimiter, v2Auth, (req, res) => {
 
 // -- GET /api/v2/analytics/hot-topics — currently trending topics
 app.get('/api/v2/analytics/hot-topics', apiReadLimiter, v2Auth, (req, res) => {
-    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const app_id = req.v2Auth?.app_id;
     const hours = Math.max(1, Math.min(720, parseInt(req.query.hours, 10) || 24));
     const threshold = Math.max(1, Math.min(100, parseInt(req.query.threshold, 10) || 2));
 
@@ -1261,7 +1322,7 @@ app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
         return res.status(503).json({ error: 'AI clustering not configured (missing API key)' });
     }
 
-    const app_id = req.query.app_id || req.v2Auth?.app_id || 'default';
+    const app_id = req.v2Auth?.app_id;
     const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 7));
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
 
@@ -1288,6 +1349,9 @@ app.post('/api/v2/items/:id/analyze', aiLimiter, v2Auth, async (req, res) => {
 
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
 
     let screenshots = item.screenshots;
     if (typeof screenshots === 'string') {
@@ -1849,7 +1913,7 @@ app.listen(PORT, () => {
     console.log(`[+] ClawMark V2 server running on port ${PORT}`);
     console.log(`    data dir  : ${DATA_DIR}`);
     console.log(`    adapters  : ${Object.keys(registry.getStatus()).length} channel(s)`);
-    console.log(`    auth      : ${Object.keys(VALID_CODES).length} invite code(s)`);
+    console.log(`    auth      : JWT + API key (invite codes deprecated)`);
     console.log(`    api v2    : /api/v2/*`);
 
     // Start dispatch retry worker (every 30s, exponential backoff per entry)

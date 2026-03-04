@@ -252,6 +252,16 @@ label {
     text-align: center;
 }
 
+.stat-card.clickable {
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.stat-card.clickable:hover {
+    border-color: var(--accent);
+    background: rgba(88,101,242,0.08);
+}
+
 .stat-value {
     font-size: 28px;
     font-weight: 700;
