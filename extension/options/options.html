@@ -63,26 +63,26 @@
         <section class="tab-panel active" id="tab-overview">
             <h1>Overview</h1>
             <div class="stats-grid">
-                <div class="stat-card">
+                <div class="stat-card clickable" data-action="all">
                     <div class="stat-value" id="stat-total">—</div>
-                    <div class="stat-label">当前页面标注</div>
+                    <div class="stat-label">Total Annotations</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card clickable" data-action="comments">
                     <div class="stat-value" id="stat-comments">—</div>
                     <div class="stat-label">Comments</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card clickable" data-action="issues">
                     <div class="stat-value" id="stat-issues">—</div>
                     <div class="stat-label">Issues</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card clickable" data-action="rules">
                     <div class="stat-value" id="stat-rules">—</div>
                     <div class="stat-label">Delivery Rules</div>
                 </div>
             </div>
-            <h2>Recent Activity</h2>
+            <h2 id="activity-heading">Top Annotated Pages</h2>
             <div class="activity-list" id="activity-list">
-                <div class="empty-state">No recent activity</div>
+                <div class="empty-state">Loading...</div>
             </div>
         </section>
 
