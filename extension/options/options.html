@@ -35,13 +35,37 @@
     </nav>
 
     <main class="content">
+        <!-- Welcome Section (shown on first install via ?welcome=1) -->
+        <section id="welcome-section" style="display:none;">
+            <div class="welcome-card">
+                <div class="welcome-icon">🦀</div>
+                <h1 class="welcome-title">欢迎使用 ClawMark</h1>
+                <p class="welcome-desc">标注任何网页 — 评论、提 Issue、截图标注</p>
+                <p class="welcome-sub">无需配置，登录即可开始使用</p>
+                <div class="welcome-actions">
+                    <button class="btn btn-primary btn-large" id="btn-welcome-login">🔑 Google 一键登录</button>
+                </div>
+                <div class="welcome-divider">
+                    <span>或</span>
+                </div>
+                <div class="welcome-advanced" id="welcome-advanced-toggle">
+                    <button class="btn btn-ghost" id="btn-show-advanced">⚙️ 高级设置（自定义 Server URL）</button>
+                    <div id="welcome-advanced-panel" style="display:none;">
+                        <p class="help-text">默认服务器：<code>api.coco.xyz/clawmark</code></p>
+                        <button class="btn btn-secondary" id="btn-go-connection">打开连接设置</button>
+                    </div>
+                </div>
+                <p class="welcome-skip"><a href="#" id="btn-welcome-skip">跳过，直接进入设置 →</a></p>
+            </div>
+        </section>
+
         <!-- Overview Tab -->
         <section class="tab-panel active" id="tab-overview">
             <h1>Overview</h1>
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-value" id="stat-total">—</div>
-                    <div class="stat-label">Total Annotations</div>
+                    <div class="stat-label">当前页面标注</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-value" id="stat-comments">—</div>
@@ -202,13 +226,36 @@
         <section class="tab-panel" id="tab-sites">
             <h1>Site Management</h1>
             <div class="card">
-                <h3>Disabled Sites</h3>
-                <p class="help-text">ClawMark annotation overlay is disabled on these sites.</p>
+                <h3>工作模式</h3>
+                <p class="help-text">选择 ClawMark 在哪些网站上生效。</p>
+                <div class="mode-toggle-group" id="site-mode-group">
+                    <label class="mode-option">
+                        <input type="radio" name="site-mode" value="blacklist" id="mode-blacklist">
+                        <span class="mode-label">
+                            <strong>黑名单模式</strong>（默认）
+                            <span class="mode-desc">在所有网站启用，以下列表中的除外</span>
+                        </span>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="site-mode" value="whitelist" id="mode-whitelist">
+                        <span class="mode-label">
+                            <strong>白名单模式</strong>
+                            <span class="mode-desc">仅在以下列表中的网站启用</span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+            <div class="card">
+                <h3 id="site-list-title">已禁用的网站</h3>
+                <p class="help-text" id="site-list-desc">列表中的网站将禁用 ClawMark 标注功能。</p>
                 <div class="toolbar">
-                    <button class="btn btn-secondary" id="btn-enable-all">Enable All</button>
+                    <input type="text" class="input" id="site-add-input" placeholder="添加域名，如 example.com" style="flex:1;margin-right:8px;">
+                    <button class="btn btn-primary" id="btn-add-site">添加</button>
+                    <div style="flex:1"></div>
+                    <button class="btn btn-secondary" id="btn-toggle-all-sites">全部启用</button>
                 </div>
                 <ul class="site-list" id="site-list">
-                    <li class="empty-state">No disabled sites</li>
+                    <li class="empty-state">列表为空</li>
                 </ul>
             </div>
         </section>
@@ -225,7 +272,7 @@
                 <h3>Links</h3>
                 <ul class="link-list">
                     <li><a href="https://github.com/coco-xyz/clawmark/issues" target="_blank">Report an Issue</a></li>
-                    <li><a href="https://labs.coco.xyz/clawmark/privacy-policy" target="_blank">Privacy Policy</a></li>
+                    <li><a href="https://labs.coco.xyz/clawmark/privacy/" target="_blank">Privacy Policy</a></li>
                     <li><a href="https://github.com/coco-xyz/clawmark/blob/main/CHANGELOG.md" target="_blank">Changelog</a></li>
                 </ul>
             </div>
