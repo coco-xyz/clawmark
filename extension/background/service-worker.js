@@ -414,10 +414,6 @@ async function handleMessage(message, sender) {
                 tags: message.tags,
             });
 
-        // Global stats (all pages, all time) — issue #170
-        case 'GET_GLOBAL_STATS':
-            return apiRequest('GET', '/stats');
-
         // Routing rules CRUD
         case 'GET_ROUTING_RULES':
             return apiRequest('GET', '/api/v2/routing/rules');
@@ -463,11 +459,29 @@ async function handleMessage(message, sender) {
             }
         }
 
-        case 'OPEN_OPTIONS_TAB': {
-            const url = chrome.runtime.getURL(`options/options.html#${message.tab || 'overview'}`);
-            chrome.tabs.create({ url });
-            return { success: true };
+        // Global analytics summary for dashboard overview
+        case 'GET_ANALYTICS_SUMMARY': {
+            try {
+                return await apiRequest('GET', '/api/v2/analytics/summary');
+            } catch {
+                return { error: true };
+            }
         }
+
+        // Get all items (optional type filter) for dashboard list view
+        case 'GET_ALL_ITEMS': {
+            try {
+                const params = new URLSearchParams();
+                if (message.itemType) params.set('type', message.itemType);
+                const qs = params.toString();
+                return await apiRequest('GET', `/api/v2/items${qs ? '?' + qs : ''}`);
+            } catch {
+                return { error: true, items: [] };
+            }
+        }
+
+        case 'CHECK_VERSION':
+            return checkForUpdate();
 
         default:
             return { error: `Unknown message type: ${message.type}` };
@@ -522,6 +536,95 @@ async function checkTargetInjection(url) {
     } catch {
         return { js_injection: true };
     }
+}
+
+// ------------------------------------------------------------------ Version check (GitLab #2)
+//
+// Performance-critical: NEVER block popup on network. Return cached data
+// immediately; refresh in background with a short timeout.
+
+const VERSION_CHECK_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const VERSION_FETCH_TIMEOUT = 5000; // 5 seconds — abort if GitHub is slow/blocked
+
+async function checkForUpdate() {
+    const currentVersion = chrome.runtime.getManifest().version;
+    const noUpdate = { hasUpdate: false, currentVersion, latestVersion: currentVersion, downloadUrl: '' };
+
+    // Always return cached result immediately if available (even if stale)
+    let cached = null;
+    try {
+        const { versionCache } = await chrome.storage.local.get('versionCache');
+        if (versionCache?.data) {
+            cached = versionCache;
+            // Cache is fresh — return without network call
+            if (Date.now() - versionCache.ts < VERSION_CHECK_CACHE_TTL) {
+                return versionCache.data;
+            }
+        }
+    } catch { /* proceed */ }
+
+    // Cache is stale or missing — fetch with timeout, but return stale data
+    // immediately if we have it. The fetch refreshes the cache for next time.
+    const staleResult = cached?.data || noUpdate;
+
+    // Fire-and-forget background refresh (don't await)
+    _refreshVersionCache(currentVersion).catch(() => {});
+
+    return staleResult;
+}
+
+/** Background version check with AbortController timeout. */
+async function _refreshVersionCache(currentVersion) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), VERSION_FETCH_TIMEOUT);
+
+    try {
+        const res = await fetch(
+            'https://api.github.com/repos/coco-xyz/clawmark/releases/latest',
+            {
+                headers: { 'Accept': 'application/vnd.github.v3+json' },
+                signal: controller.signal,
+            }
+        );
+        clearTimeout(timer);
+
+        if (!res.ok) return;
+
+        const release = await res.json();
+        const latestTag = (release.tag_name || '').replace(/^v/, '');
+
+        let downloadUrl = '';
+        for (const asset of (release.assets || [])) {
+            if (asset.name && asset.name.endsWith('.zip')) {
+                downloadUrl = asset.browser_download_url;
+                break;
+            }
+        }
+        if (!downloadUrl) {
+            downloadUrl = release.html_url || 'https://github.com/coco-xyz/clawmark/releases/latest';
+        }
+
+        const hasUpdate = compareVersions(latestTag, currentVersion) > 0;
+        const data = { hasUpdate, currentVersion, latestVersion: latestTag, downloadUrl };
+        await chrome.storage.local.set({ versionCache: { data, ts: Date.now() } });
+    } catch {
+        clearTimeout(timer);
+        // Timeout or network error — silently ignore, keep stale cache
+    }
+}
+
+/**
+ * Compare semver strings. Returns >0 if a > b, <0 if a < b, 0 if equal.
+ */
+function compareVersions(a, b) {
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const na = pa[i] || 0;
+        const nb = pb[i] || 0;
+        if (na !== nb) return na - nb;
+    }
+    return 0;
 }
 
 // ------------------------------------------------------------------ Badge updater (Phase 2)

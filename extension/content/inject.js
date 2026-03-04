@@ -717,24 +717,8 @@
                 <span class="cm-target-method">saved</span>
             </label>`;
 
-            // If no delivery rules matched, prompt user to add one
-            if (resolvedTargets.length === 0) {
-                html += `<div class="cm-dispatch-hint" style="margin-top:6px;font-size:11px;color:#888;cursor:pointer;"
-                    title="Open delivery rules settings">
-                    \u2795 Add a delivery rule to send annotations to GitHub, Jira, Email, etc.
-                </div>`;
-            }
-
             targetsEl.innerHTML = html;
             previewEl.style.display = 'block';
-
-            // Attach click handler for the "add delivery" hint
-            const hint = targetsEl.querySelector('.cm-dispatch-hint');
-            if (hint) {
-                hint.addEventListener('click', () => {
-                    chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS_TAB', tab: 'delivery' });
-                });
-            }
         } catch {
             // Even on error, show the fallback
             targetsEl.innerHTML = `<label class="cm-dispatch-target cm-dispatch-fallback">
