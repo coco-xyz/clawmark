@@ -8,3 +8,4 @@ dist/
 .env
 config.json
 *.zip
+extension/config.js
