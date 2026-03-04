@@ -787,11 +787,21 @@ function handleTabParam() {
     if (!tab) return;
     const navItem = document.querySelector(`.nav-item[data-tab="${tab}"]`);
     if (navItem) navItem.click();
-    // Handle login=1 trigger
+    // Handle login=1 trigger — only if not already logged in
     if (params.get('login') === '1') {
-        setTimeout(() => {
+        // Clean URL to prevent re-triggering on refresh
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('login');
+        history.replaceState(null, '', cleanUrl.toString());
+
+        // Only auto-click login if user is not already authenticated
+        chrome.runtime.sendMessage({ type: 'GET_AUTH_STATE' }).then(state => {
+            if (!state.authToken || !state.authUser) {
+                document.getElementById('btn-google-login')?.click();
+            }
+        }).catch(() => {
             document.getElementById('btn-google-login')?.click();
-        }, 300);
+        });
     }
 }
 
