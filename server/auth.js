@@ -279,6 +279,15 @@ function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpi
         if (!resolvedAppId || resolvedAppId === 'default') {
             const defaultApp = db.getOrCreateDefaultApp(userId, created_by);
             resolvedAppId = defaultApp.id;
+        } else {
+            // Ownership validation: verify the user owns this app
+            const app = db.getApp(resolvedAppId);
+            if (!app) {
+                return res.status(404).json({ error: 'App not found' });
+            }
+            if (app.user_id !== userId) {
+                return res.status(403).json({ error: 'Not authorized to create keys for this app' });
+            }
         }
 
         try {
