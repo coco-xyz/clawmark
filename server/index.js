@@ -634,32 +634,43 @@ function handleGetItemsFull(req, res) {
 // Register routes — both with and without :app prefix
 //   /items                    → default app
 //   /api/clawmark/:app/items  → named app (multi-tenant)
+//
+// DEPRECATED: V1 routes lack authentication and bypass data isolation.
+// Use /api/v2/ endpoints instead. Sunset date: 2026-06-01.
 
-// Flat routes (default app)
-app.get('/items',              apiReadLimiter, handleGetItems);
-app.post('/items',             apiWriteLimiter, handleCreateItem);
-app.get('/items-full',         apiReadLimiter, handleGetItemsFull);
-app.get('/items/:id',          apiReadLimiter, handleGetItem);
-app.post('/items/:id/messages', apiWriteLimiter, handleAddMessage);
-app.post('/items/:id/assign',  apiWriteLimiter, handleAssignItem);
-app.post('/items/:id/resolve', apiWriteLimiter, handleResolveItem);
-app.post('/items/:id/verify',  apiWriteLimiter, handleVerifyItem);
-app.post('/items/:id/reopen',  apiWriteLimiter, handleReopenItem);
-app.post('/items/:id/close',   apiWriteLimiter, handleCloseItem);
-app.post('/items/:id/respond', apiWriteLimiter, handleRespondToItem);
+// Deprecation middleware for V1 routes
+function v1Deprecated(req, res, next) {
+    res.set('Deprecation', 'true');
+    res.set('Sunset', 'Sat, 01 Jun 2026 00:00:00 GMT');
+    res.set('Link', '</api/v2/>; rel="successor-version"');
+    next();
+}
 
-// Namespaced routes (multi-app)
-app.get('/api/clawmark/:app/items',              apiReadLimiter, handleGetItems);
-app.post('/api/clawmark/:app/items',             apiWriteLimiter, handleCreateItem);
-app.get('/api/clawmark/:app/items-full',         apiReadLimiter, handleGetItemsFull);
-app.get('/api/clawmark/:app/items/:id',          apiReadLimiter, handleGetItem);
-app.post('/api/clawmark/:app/items/:id/messages', apiWriteLimiter, handleAddMessage);
-app.post('/api/clawmark/:app/items/:id/assign',  apiWriteLimiter, handleAssignItem);
-app.post('/api/clawmark/:app/items/:id/resolve', apiWriteLimiter, handleResolveItem);
-app.post('/api/clawmark/:app/items/:id/verify',  apiWriteLimiter, handleVerifyItem);
-app.post('/api/clawmark/:app/items/:id/reopen',  apiWriteLimiter, handleReopenItem);
-app.post('/api/clawmark/:app/items/:id/close',   apiWriteLimiter, handleCloseItem);
-app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, handleRespondToItem);
+// Flat routes (default app) — DEPRECATED
+app.get('/items',              apiReadLimiter, v1Deprecated, handleGetItems);
+app.post('/items',             apiWriteLimiter, v1Deprecated, handleCreateItem);
+app.get('/items-full',         apiReadLimiter, v1Deprecated, handleGetItemsFull);
+app.get('/items/:id',          apiReadLimiter, v1Deprecated, handleGetItem);
+app.post('/items/:id/messages', apiWriteLimiter, v1Deprecated, handleAddMessage);
+app.post('/items/:id/assign',  apiWriteLimiter, v1Deprecated, handleAssignItem);
+app.post('/items/:id/resolve', apiWriteLimiter, v1Deprecated, handleResolveItem);
+app.post('/items/:id/verify',  apiWriteLimiter, v1Deprecated, handleVerifyItem);
+app.post('/items/:id/reopen',  apiWriteLimiter, v1Deprecated, handleReopenItem);
+app.post('/items/:id/close',   apiWriteLimiter, v1Deprecated, handleCloseItem);
+app.post('/items/:id/respond', apiWriteLimiter, v1Deprecated, handleRespondToItem);
+
+// Namespaced routes (multi-app) — DEPRECATED
+app.get('/api/clawmark/:app/items',              apiReadLimiter, v1Deprecated, handleGetItems);
+app.post('/api/clawmark/:app/items',             apiWriteLimiter, v1Deprecated, handleCreateItem);
+app.get('/api/clawmark/:app/items-full',         apiReadLimiter, v1Deprecated, handleGetItemsFull);
+app.get('/api/clawmark/:app/items/:id',          apiReadLimiter, v1Deprecated, handleGetItem);
+app.post('/api/clawmark/:app/items/:id/messages', apiWriteLimiter, v1Deprecated, handleAddMessage);
+app.post('/api/clawmark/:app/items/:id/assign',  apiWriteLimiter, v1Deprecated, handleAssignItem);
+app.post('/api/clawmark/:app/items/:id/resolve', apiWriteLimiter, v1Deprecated, handleResolveItem);
+app.post('/api/clawmark/:app/items/:id/verify',  apiWriteLimiter, v1Deprecated, handleVerifyItem);
+app.post('/api/clawmark/:app/items/:id/reopen',  apiWriteLimiter, v1Deprecated, handleReopenItem);
+app.post('/api/clawmark/:app/items/:id/close',   apiWriteLimiter, v1Deprecated, handleCloseItem);
+app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, v1Deprecated, handleRespondToItem);
 
 // ================================================================= V2 API
 //
@@ -1060,9 +1071,16 @@ app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
     res.json({ success: true, rule });
 });
 
-// -- PUT /api/v2/routing/rules/:id — update a routing rule
+// -- PUT /api/v2/routing/rules/:id — update a routing rule (ownership check)
 app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
     const { rule_type, pattern, target_type, target_config, priority, enabled } = req.body;
+
+    // Ownership check: verify the rule belongs to this user
+    const existing = itemsDb.getUserRule(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Rule not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to modify this rule' });
+    }
 
     const updated = itemsDb.updateUserRule(req.params.id, {
         rule_type, pattern, target_type, target_config, priority, enabled,
@@ -1075,8 +1093,15 @@ app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
     res.json({ success: true, rule: updated });
 });
 
-// -- DELETE /api/v2/routing/rules/:id — delete a routing rule
+// -- DELETE /api/v2/routing/rules/:id — delete a routing rule (ownership check)
 app.delete('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    // Ownership check: verify the rule belongs to this user
+    const existing = itemsDb.getUserRule(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Rule not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to delete this rule' });
+    }
+
     const result = itemsDb.deleteUserRule(req.params.id);
     if (!result.success) return res.status(404).json({ error: 'Rule not found' });
     res.json({ success: true });
