@@ -282,7 +282,8 @@ async function uploadImage(dataUrl) {
 
 chrome.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install') {
-        chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html?welcome=1') });
+        const dashUrl = ClawMarkConfig.DASHBOARD_URL || 'https://labs.coco.xyz/clawmark/dash/';
+        chrome.tabs.create({ url: dashUrl + '#welcome' });
     }
 
     chrome.contextMenus.create({
