@@ -459,6 +459,27 @@ async function handleMessage(message, sender) {
             }
         }
 
+        // Global analytics summary for dashboard overview
+        case 'GET_ANALYTICS_SUMMARY': {
+            try {
+                return await apiRequest('GET', '/api/v2/analytics/summary');
+            } catch {
+                return { error: true };
+            }
+        }
+
+        // Get all items (optional type filter) for dashboard list view
+        case 'GET_ALL_ITEMS': {
+            try {
+                const params = new URLSearchParams();
+                if (message.itemType) params.set('type', message.itemType);
+                const qs = params.toString();
+                return await apiRequest('GET', `/api/v2/items${qs ? '?' + qs : ''}`);
+            } catch {
+                return { error: true, items: [] };
+            }
+        }
+
         default:
             return { error: `Unknown message type: ${message.type}` };
     }
