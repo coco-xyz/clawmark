@@ -414,6 +414,10 @@ async function handleMessage(message, sender) {
                 tags: message.tags,
             });
 
+        // Global stats (all pages, all time) — issue #170
+        case 'GET_GLOBAL_STATS':
+            return apiRequest('GET', '/stats');
+
         // Routing rules CRUD
         case 'GET_ROUTING_RULES':
             return apiRequest('GET', '/api/v2/routing/rules');
