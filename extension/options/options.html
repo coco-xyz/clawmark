@@ -13,23 +13,26 @@
             <span class="sidebar-title">ClawMark</span>
         </div>
         <ul class="sidebar-nav">
+            <li class="nav-section-header">概览</li>
             <li class="nav-item active" data-tab="overview">
                 <span class="nav-icon">&#x1f4ca;</span> Overview
             </li>
+            <li class="nav-section-header">我的设置</li>
             <li class="nav-item" data-tab="account">
-                <span class="nav-icon">&#x1f464;</span> Account
+                <span class="nav-icon">&#x1f464;</span> 账号
             </li>
             <li class="nav-item" data-tab="connection">
-                <span class="nav-icon">&#x1f517;</span> Connection
+                <span class="nav-icon">&#x1f517;</span> 连接
             </li>
             <li class="nav-item" data-tab="delivery">
-                <span class="nav-icon">&#x1f4ee;</span> Delivery Rules
+                <span class="nav-icon">&#x1f4ee;</span> 投递规则
             </li>
             <li class="nav-item" data-tab="sites">
-                <span class="nav-icon">&#x1f310;</span> Site Management
+                <span class="nav-icon">&#x1f310;</span> 站点管理
             </li>
+            <li class="nav-section-header">关于</li>
             <li class="nav-item" data-tab="about">
-                <span class="nav-icon">&#x2139;&#xfe0f;</span> About
+                <span class="nav-icon">&#x2139;&#xfe0f;</span> 项目信息
             </li>
         </ul>
     </nav>
@@ -62,27 +65,55 @@
         <!-- Overview Tab -->
         <section class="tab-panel active" id="tab-overview">
             <h1>Overview</h1>
+            <p class="help-text" id="overview-subtitle">全局统计 — 所有页面</p>
             <div class="stats-grid">
-                <div class="stat-card clickable" data-action="all">
+                <div class="stat-card">
                     <div class="stat-value" id="stat-total">—</div>
-                    <div class="stat-label">Total Annotations</div>
+                    <div class="stat-label">标注总数</div>
                 </div>
-                <div class="stat-card clickable" data-action="comments">
+                <div class="stat-card">
                     <div class="stat-value" id="stat-comments">—</div>
                     <div class="stat-label">Comments</div>
                 </div>
-                <div class="stat-card clickable" data-action="issues">
+                <div class="stat-card">
                     <div class="stat-value" id="stat-issues">—</div>
                     <div class="stat-label">Issues</div>
                 </div>
-                <div class="stat-card clickable" data-action="rules">
+                <div class="stat-card">
                     <div class="stat-value" id="stat-rules">—</div>
-                    <div class="stat-label">Delivery Rules</div>
+                    <div class="stat-label">投递规则数</div>
                 </div>
             </div>
-            <h2 id="activity-heading">Top Annotated Pages</h2>
+
+            <!-- Matching delivery rules card -->
+            <div class="card overview-info-card" id="card-matching-rules">
+                <div class="overview-card-header">
+                    <h3>匹配的投递规则</h3>
+                    <span class="overview-card-page-url" id="matching-rules-url"></span>
+                </div>
+                <div id="matching-rules-content">
+                    <div class="empty-state">正在检测当前页面 URL...</div>
+                </div>
+            </div>
+
+            <!-- Site enabled quick toggle card -->
+            <div class="card overview-info-card" id="card-site-toggle">
+                <div class="overview-card-header">
+                    <h3>此站点启用</h3>
+                    <span class="overview-card-page-url" id="site-toggle-url"></span>
+                </div>
+                <div class="overview-site-toggle-row">
+                    <div class="overview-site-toggle-desc" id="site-toggle-desc">检测中...</div>
+                    <label class="toggle-switch" id="site-toggle-label">
+                        <input type="checkbox" id="site-toggle-checkbox">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <h2>Recent Activity</h2>
             <div class="activity-list" id="activity-list">
-                <div class="empty-state">Loading...</div>
+                <div class="empty-state">No recent activity</div>
             </div>
         </section>
 
@@ -267,9 +298,18 @@
                 <h3>ClawMark</h3>
                 <p>Annotate, comment, and track issues on any webpage.</p>
                 <p>Version: <strong id="about-version">—</strong></p>
+                <p>Latest Release: <strong id="about-latest-version">checking...</strong></p>
             </div>
             <div class="card">
-                <h3>Links</h3>
+                <h3>Project</h3>
+                <ul class="link-list">
+                    <li><a href="https://labs.coco.xyz/clawmark/" target="_blank">Official Website</a></li>
+                    <li><a href="https://github.com/coco-xyz/clawmark" target="_blank">GitHub Repository</a></li>
+                    <li><a href="https://github.com/coco-xyz/clawmark/releases" target="_blank">Releases</a></li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Help</h3>
                 <ul class="link-list">
                     <li><a href="https://github.com/coco-xyz/clawmark/issues" target="_blank">Report an Issue</a></li>
                     <li><a href="https://labs.coco.xyz/clawmark/privacy/" target="_blank">Privacy Policy</a></li>

@@ -205,7 +205,7 @@ class LinearAdapter {
             lines.push('', `**Tags:** ${tags.join(', ')}`);
         }
 
-        lines.push('', '---', '*Created by ClawMark*');
+        lines.push('', '---', '*Created by [ClawMark](https://github.com/coco-xyz/clawmark) — Annotate any web page · [Website](https://labs.coco.xyz/clawmark/)*');
         return lines.join('\n');
     }
 

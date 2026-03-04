@@ -27,7 +27,83 @@
 
 - 发版流程 — release.sh 脚本 + MR/issue 模板
 
----
+## [0.6.2] — 2026-03-04
+
+### 新增
+
+- About 面板 — 项目卡片 + GitHub API 拉取最新版本 + 橙色徽章（#165, #166）
+- 配置面板重组 + 全局统计数据展示（#167, #170, #177）
+
+### 修复
+
+- 阻止 Google OAuth 在页面刷新时重复触发
+- Adapter 页脚添加品牌链接（#171, #172）
+- Fallback 投递提示 + 管理链接跳转到正确标签页（#173, #174, #175）
+
+### 文档
+
+- 重构 README — 介绍、托管 vs 自部署、链接更新（#168, #169）
+
+## [0.6.1] — 2026-03-04
+
+### 新增
+
+- Phase 1 — Dashboard + Popup 全新设计（#150, #158）
+- Phase 1.5 — 标注窗口覆盖层优化（#150）
+- Phase 2 — 欢迎页 + 徽章计数
+- Phase 3 打磨 — 错误 UX、加载进度条、快捷键提示、站点模式切换
+- 投递地址 fallback + 可见分发目标（#147）
+
+### 修复
+
+- 事件监听器清理 + 自定义标签双重提交 + 尺寸上限
+- 工具栏定位及文字标注输入问题（#143, #144）
+- 解决 review 反馈 — P1/P2/P3 问题修复
+
+### 文档
+
+- ClawMark UX 大改版 PRD（#150）+ 多次更新
+
+## [0.6.0] — 2026-03-02
+
+### 新增
+
+- 多目标分发框架（#93, #108）
+- Slack 和 Email adapters（#94, #107）
+- Linear、Jira、HxA Connect adapters（#95, #110）
+- 智能分发预览 + 状态展示（#115, #129）
+- 截图模式可拖拽标注层模型（#111, #131）
+- 截图 AI 视觉分析（#117, #137）
+- 扩展 popup 投递设置面板
+
+### 修复
+
+- 转义分发目标标签中的 HTML 以防止 XSS（#115, #130）
+- 优先使用认证身份而非 body userName，修复规则可见性 bug（#116, #128）
+- 默认服务器 URL 设为 api.coco.xyz/clawmark
+
+## [0.3.5] — 2026-03-01
+
+### 新增
+
+- Google OAuth 登录 + JWT 认证（#64）
+- 扩展添加 Google OAuth 登录（#67）
+- 应用管理 — 自助 App + AppKey 创建（#65）
+- 端点管理 UI 和 API（#66）
+- 组织/团队管理 + RBAC 权限体系（#68）
+- 截图标注 + 图片粘贴（#69, #70）
+
+### 修复
+
+- Google OAuth 安全加固 + /auth/google 测试
+- 路由规则 PUT 响应中 target_config 解析修复
+- 修复 v0.3.0 路由及认证关键 bug
+- org_id 索引创建顺序修正
+
+### 其他
+
+- 设置 Google OAuth Client ID
+- 产品路线图文档
 
 ## [0.5.0] — 2026-03-01
 
@@ -147,8 +223,13 @@
 - JSON body 大小限制（512KB）
 - 不存在 item 的状态操作返回 404
 
+[0.6.4]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.4
+[0.6.2]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.2
+[0.6.1]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.1
+[0.6.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.0
 [0.5.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.5.0
 [0.4.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.4.0
+[0.3.5]: https://github.com/coco-xyz/clawmark/releases/tag/v0.3.5
 [0.3.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.3.0
 [0.2.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.2.0
 [0.1.0]: https://github.com/coco-xyz/clawmark/commits/0c02d6b

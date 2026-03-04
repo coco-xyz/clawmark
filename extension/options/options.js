@@ -15,20 +15,21 @@ function switchTab(tab) {
     navItems.forEach(n => n.classList.remove('active'));
     tabPanels.forEach(p => p.classList.remove('active'));
     const navItem = document.querySelector(`.nav-item[data-tab="${tab}"]`);
-    if (navItem) navItem.classList.add('active');
     const panel = document.getElementById(`tab-${tab}`);
-    if (panel) panel.classList.add('active');
-    location.hash = tab;
+    if (navItem && panel) {
+        navItem.classList.add('active');
+        panel.classList.add('active');
+    }
 }
 
 navItems.forEach(item => {
     item.addEventListener('click', () => switchTab(item.dataset.tab));
 });
 
-// Restore tab from URL hash on load
-const hashTab = location.hash.slice(1);
-if (hashTab && document.getElementById(`tab-${hashTab}`)) {
-    switchTab(hashTab);
+// Support deep-linking via URL hash (e.g. options.html#delivery)
+if (window.location.hash) {
+    const tab = window.location.hash.slice(1);
+    if (document.getElementById(`tab-${tab}`)) switchTab(tab);
 }
 
 // ------------------------------------------------------------------ toast
@@ -68,103 +69,249 @@ function formatTarget(type, config) {
     }
 }
 
+// Module-level rules cache — shared between loadOverview and loadRules
+let allRules = [];
+let editingRuleId = null;
+
 // ------------------------------------------------------------------ Overview
 
 async function loadOverview() {
-    // Rules count
+    // --- Delivery Rules count
     try {
         const rules = await chrome.runtime.sendMessage({ type: 'GET_ROUTING_RULES' });
-        document.getElementById('stat-rules').textContent = (rules.rules || []).length;
+        allRules = rules.rules || [];
+        document.getElementById('stat-rules').textContent = allRules.length;
     } catch {
         document.getElementById('stat-rules').textContent = '—';
     }
 
-    // Global stats from server
+    // --- Global stats (issue #170): all pages, all time via /stats API
     try {
-        const summary = await chrome.runtime.sendMessage({ type: 'GET_ANALYTICS_SUMMARY' });
-        if (summary && !summary.error) {
-            document.getElementById('stat-total').textContent = summary.total || 0;
-            const commentCount = (summary.byType || []).find(t => t.type === 'comment')?.count || 0;
-            const issueCount = (summary.byType || []).find(t => t.type === 'issue')?.count || 0;
-            document.getElementById('stat-comments').textContent = commentCount;
-            document.getElementById('stat-issues').textContent = issueCount;
+        const result = await chrome.runtime.sendMessage({ type: 'GET_GLOBAL_STATS' });
+        const rows = result.stats || [];
+        // rows is: [{ type, status, count }, ...]
+        let totalAnnotations = 0;
+        let totalComments = 0;
+        let totalIssues = 0;
+        for (const row of rows) {
+            const n = row.count || 0;
+            totalAnnotations += n;
+            if (row.type === 'comment') totalComments += n;
+            if (row.type === 'issue') totalIssues += n;
+        }
+        document.getElementById('stat-total').textContent = totalAnnotations;
+        document.getElementById('stat-comments').textContent = totalComments;
+        document.getElementById('stat-issues').textContent = totalIssues;
+    } catch {
+        document.getElementById('stat-total').textContent = '—';
+        document.getElementById('stat-comments').textContent = '—';
+        document.getElementById('stat-issues').textContent = '—';
+    }
 
-            // Render top annotated pages
-            renderTopPages(summary.topUrls || []);
+    // --- Recent activity: fetch from current active tab if available
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.url && !tab.url.startsWith('chrome')) {
+            const counts = await chrome.runtime.sendMessage({ type: 'GET_ANNOTATION_COUNT', url: tab.url });
+            const listEl = document.getElementById('activity-list');
+            if (counts.recent && counts.recent.length > 0) {
+                listEl.innerHTML = '';
+                for (const item of counts.recent) {
+                    const icon = item.type === 'issue' ? '\ud83d\udc1b' : '\ud83d\udcac';
+                    const time = item.created_at ? new Date(item.created_at).toLocaleString() : '';
+                    const el = document.createElement('div');
+                    el.className = 'activity-item';
+                    el.innerHTML = `
+                        <span class="activity-type">${icon}</span>
+                        <div class="activity-body">
+                            <div class="activity-title">${escHtml(item.title || item.content || '(untitled)')}</div>
+                            <div class="activity-meta">${escHtml(time)}</div>
+                        </div>`;
+                    listEl.appendChild(el);
+                }
+            }
         }
     } catch { /* non-critical */ }
+
+    // --- New info cards: matching rules + site toggle
+    await loadOverviewInfoCards();
 }
 
-function renderTopPages(topUrls) {
-    const listEl = document.getElementById('activity-list');
-    document.getElementById('activity-heading').textContent = 'Top Annotated Pages';
-    if (topUrls.length === 0) {
-        listEl.innerHTML = '<div class="empty-state">No annotations yet</div>';
-        return;
-    }
-    listEl.innerHTML = '';
-    for (const page of topUrls) {
-        const el = document.createElement('div');
-        el.className = 'activity-item';
-        el.innerHTML = `
-            <span class="activity-type">\ud83d\udcc4</span>
-            <div class="activity-body">
-                <div class="activity-title">${escHtml(page.source_title || page.source_url)}</div>
-                <div class="activity-meta">${page.count} annotation${page.count !== 1 ? 's' : ''}</div>
-            </div>`;
-        listEl.appendChild(el);
-    }
-}
-
-async function loadItemsList(typeFilter) {
-    const heading = document.getElementById('activity-heading');
-    heading.textContent = typeFilter === 'comment' ? 'All Comments' : typeFilter === 'issue' ? 'All Issues' : 'All Annotations';
-
-    const listEl = document.getElementById('activity-list');
-    listEl.innerHTML = '<div class="empty-state">Loading...</div>';
+/**
+ * Load the two new overview info cards:
+ * 1. Matching delivery rules for the current page URL
+ * 2. Site enabled quick toggle
+ */
+async function loadOverviewInfoCards() {
+    let currentUrl = null;
+    let currentHostname = null;
 
     try {
-        const msg = { type: 'GET_ALL_ITEMS' };
-        if (typeFilter) msg.itemType = typeFilter;
-        const result = await chrome.runtime.sendMessage(msg);
-        const items = result.items || [];
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.url && !tab.url.startsWith('chrome')) {
+            currentUrl = tab.url;
+            try { currentHostname = new URL(currentUrl).hostname; } catch { /* ignore */ }
+        }
+    } catch { /* ignore */ }
 
-        if (items.length === 0) {
-            listEl.innerHTML = '<div class="empty-state">No items found</div>';
-            return;
+    // --- Card 1: Matching delivery rules
+    const matchingUrlEl = document.getElementById('matching-rules-url');
+    const matchingContentEl = document.getElementById('matching-rules-content');
+
+    if (matchingUrlEl) matchingUrlEl.textContent = currentHostname || '(无活动页面)';
+
+    if (matchingContentEl) {
+        if (!currentUrl || allRules.length === 0) {
+            matchingContentEl.innerHTML = '<div class="empty-state">无匹配规则</div>';
+        } else {
+            const matching = allRules.filter(rule => {
+                if (rule.rule_type === 'default') return true;
+                if (rule.rule_type === 'url_pattern' && rule.pattern) {
+                    return matchesUrlPattern(currentUrl, rule.pattern);
+                }
+                return false;
+            });
+
+            if (matching.length === 0) {
+                matchingContentEl.innerHTML = '<div class="empty-state">当前页面无匹配规则</div>';
+            } else {
+                matchingContentEl.innerHTML = '';
+                for (const rule of matching) {
+                    const patternText = rule.rule_type === 'default' ? '(default)' : (rule.pattern || '—');
+                    const targetText = formatTarget(rule.target_type, rule.target_config);
+                    const item = document.createElement('div');
+                    item.className = 'matching-rule-item';
+                    item.innerHTML = `
+                        <div class="matching-rule-info">
+                            <div class="matching-rule-pattern">${escHtml(patternText)}</div>
+                            <div class="matching-rule-target">${escHtml(targetText)}</div>
+                        </div>
+                        <button class="matching-rule-edit-btn" data-rule-id="${escHtml(rule.id || '')}">编辑</button>`;
+                    item.querySelector('.matching-rule-edit-btn').addEventListener('click', () => {
+                        // Switch to delivery rules tab and open edit modal
+                        switchTab('delivery');
+                        const ruleObj = allRules.find(r => r.id === rule.id);
+                        if (ruleObj) setTimeout(() => openRuleModal(ruleObj), 50);
+                    });
+                    matchingContentEl.appendChild(item);
+                }
+            }
+        }
+    }
+
+    // --- Card 2: Site enabled quick toggle
+    const siteToggleUrlEl = document.getElementById('site-toggle-url');
+    const siteToggleDescEl = document.getElementById('site-toggle-desc');
+    const siteToggleCheckbox = document.getElementById('site-toggle-checkbox');
+    const siteToggleLabel = document.getElementById('site-toggle-label');
+
+    if (siteToggleUrlEl) siteToggleUrlEl.textContent = currentHostname || '(无活动页面)';
+
+    if (!currentHostname) {
+        if (siteToggleDescEl) siteToggleDescEl.textContent = '无活动页面';
+        if (siteToggleCheckbox) siteToggleCheckbox.disabled = true;
+        if (siteToggleLabel) siteToggleLabel.style.opacity = '0.4';
+        return;
+    }
+
+    try {
+        const setting = await chrome.runtime.sendMessage({ type: 'GET_INJECTION_SETTING' });
+        const siteList = setting.disabledSites || [];
+        const siteMode = setting.siteMode || 'blacklist';
+
+        // In blacklist mode: site is ENABLED if NOT in list
+        // In whitelist mode: site is ENABLED if IN list
+        let isEnabled;
+        if (siteMode === 'whitelist') {
+            isEnabled = siteList.includes(currentHostname);
+        } else {
+            isEnabled = !siteList.includes(currentHostname);
         }
 
-        listEl.innerHTML = '';
-        for (const item of items.slice(0, 50)) {
-            const icon = item.type === 'issue' ? '\ud83d\udc1b' : '\ud83d\udcac';
-            const time = item.created_at ? new Date(item.created_at).toLocaleString() : '';
-            const el = document.createElement('div');
-            el.className = 'activity-item';
-            el.innerHTML = `
-                <span class="activity-type">${icon}</span>
-                <div class="activity-body">
-                    <div class="activity-title">${escHtml(item.title || item.content || '(untitled)')}</div>
-                    <div class="activity-meta">${escHtml(item.source_title || item.source_url || '')}${time ? ' \u00b7 ' + escHtml(time) : ''}</div>
-                </div>`;
-            listEl.appendChild(el);
+        if (siteToggleCheckbox) {
+            siteToggleCheckbox.checked = isEnabled;
+            siteToggleCheckbox.disabled = false;
+
+            // Remove old listener by cloning
+            const newCheckbox = siteToggleCheckbox.cloneNode(true);
+            siteToggleCheckbox.parentNode.replaceChild(newCheckbox, siteToggleCheckbox);
+
+            newCheckbox.addEventListener('change', async () => {
+                const nowEnabled = newCheckbox.checked;
+                try {
+                    const fresh = await chrome.runtime.sendMessage({ type: 'GET_INJECTION_SETTING' });
+                    let list = [...(fresh.disabledSites || [])];
+                    const mode = fresh.siteMode || 'blacklist';
+
+                    if (mode === 'whitelist') {
+                        // whitelist: enabled = in list; disabled = not in list
+                        if (nowEnabled) {
+                            if (!list.includes(currentHostname)) list.push(currentHostname);
+                        } else {
+                            list = list.filter(s => s !== currentHostname);
+                        }
+                    } else {
+                        // blacklist: enabled = not in list; disabled = in list
+                        if (nowEnabled) {
+                            list = list.filter(s => s !== currentHostname);
+                        } else {
+                            if (!list.includes(currentHostname)) list.push(currentHostname);
+                        }
+                    }
+
+                    await chrome.runtime.sendMessage({
+                        type: 'SET_INJECTION_SETTING',
+                        disabledSites: list,
+                        siteMode: mode,
+                    });
+
+                    if (siteToggleDescEl) {
+                        siteToggleDescEl.textContent = nowEnabled
+                            ? `${currentHostname} 已启用`
+                            : `${currentHostname} 已禁用`;
+                    }
+                    showToast(nowEnabled ? `已为 ${currentHostname} 启用` : `已为 ${currentHostname} 禁用`);
+                } catch (err) {
+                    showToast('保存失败', 'error');
+                    newCheckbox.checked = !nowEnabled; // revert
+                }
+            });
+        }
+
+        if (siteToggleDescEl) {
+            siteToggleDescEl.textContent = isEnabled
+                ? `${currentHostname} 已启用`
+                : `${currentHostname} 已禁用`;
         }
     } catch {
-        listEl.innerHTML = '<div class="empty-state">Failed to load items</div>';
+        if (siteToggleDescEl) siteToggleDescEl.textContent = '无法读取站点设置';
     }
 }
 
-// Stat card click handlers
-document.querySelectorAll('.stat-card.clickable').forEach(card => {
-    card.addEventListener('click', () => {
-        const action = card.dataset.action;
-        if (action === 'rules') {
-            document.querySelector('[data-tab="delivery"]').click();
-            return;
-        }
-        const typeFilter = action === 'comments' ? 'comment' : action === 'issues' ? 'issue' : null;
-        loadItemsList(typeFilter);
-    });
-});
+/**
+ * Simple URL pattern matcher supporting glob-style wildcards.
+ * Supports: exact match, wildcard *, and ** (multi-segment wildcard).
+ * Examples: "github.com/**", "*.example.com", "docs.example.com/api/*"
+ */
+function matchesUrlPattern(url, pattern) {
+    try {
+        // Build a regex from the glob pattern
+        // Escape regex special chars except * which we handle specially
+        const regexStr = pattern
+            .replace(/[.+?^${}()|[\]\\]/g, '\\$&') // escape special chars
+            .replace(/\\\*\\\*/g, '<<<DOUBLESTAR>>>') // protect **
+            .replace(/\*/g, '[^/]*') // single * = any char except /
+            .replace(/<<<DOUBLESTAR>>>/g, '.*'); // ** = anything
+        const regex = new RegExp(`^https?://${regexStr}`, 'i');
+        if (regex.test(url)) return true;
+        // Also try matching just the hostname+path portion
+        const noProto = url.replace(/^https?:\/\//, '');
+        const regexNoProto = new RegExp(`^${regexStr}`, 'i');
+        return regexNoProto.test(noProto);
+    } catch {
+        return false;
+    }
+}
 
 // ------------------------------------------------------------------ Account
 
@@ -288,9 +435,6 @@ document.getElementById('btn-save-connection').addEventListener('click', async (
 document.getElementById('btn-test-connection').addEventListener('click', testConnection);
 
 // ------------------------------------------------------------------ Delivery Rules
-
-let allRules = [];
-let editingRuleId = null;
 
 async function loadRules() {
     try {
@@ -785,6 +929,26 @@ document.getElementById('btn-toggle-all-sites')?.addEventListener('click', async
 function loadAbout() {
     const manifest = chrome.runtime.getManifest();
     document.getElementById('about-version').textContent = manifest.version;
+
+    // Fetch latest release version from GitHub
+    fetch('https://api.github.com/repos/coco-xyz/clawmark/releases/latest')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            const el = document.getElementById('about-latest-version');
+            if (data && data.tag_name) {
+                const latest = data.tag_name.replace(/^v/, '');
+                el.textContent = latest;
+                if (latest !== manifest.version) {
+                    el.style.color = '#f59e0b';
+                    el.textContent = `${latest} (update available)`;
+                }
+            } else {
+                el.textContent = '—';
+            }
+        })
+        .catch(() => {
+            document.getElementById('about-latest-version').textContent = '—';
+        });
 }
 
 // ------------------------------------------------------------------ Init
@@ -854,11 +1018,21 @@ function handleTabParam() {
     if (!tab) return;
     const navItem = document.querySelector(`.nav-item[data-tab="${tab}"]`);
     if (navItem) navItem.click();
-    // Handle login=1 trigger
+    // Handle login=1 trigger — only if not already logged in
     if (params.get('login') === '1') {
-        setTimeout(() => {
+        // Clean URL to prevent re-triggering on refresh
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('login');
+        history.replaceState(null, '', cleanUrl.toString());
+
+        // Only auto-click login if user is not already authenticated
+        chrome.runtime.sendMessage({ type: 'GET_AUTH_STATE' }).then(state => {
+            if (!state.authToken || !state.authUser) {
+                document.getElementById('btn-google-login')?.click();
+            }
+        }).catch(() => {
             document.getElementById('btn-google-login')?.click();
-        }, 300);
+        });
     }
 }
 

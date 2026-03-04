@@ -1230,7 +1230,7 @@ describe('LinearAdapter — description building', () => {
         assert.ok(desc.includes('ui'));
         assert.ok(desc.includes('regression'));
         assert.ok(desc.includes('Please fix ASAP'));
-        assert.ok(desc.includes('Created by ClawMark'));
+        assert.ok(desc.includes('ClawMark'));
     });
 
     it('handles missing optional fields', () => {
@@ -1241,7 +1241,7 @@ describe('LinearAdapter — description building', () => {
 
         const desc = adapter._buildDescription({}, {});
         assert.ok(desc.includes('normal'));
-        assert.ok(desc.includes('Created by ClawMark'));
+        assert.ok(desc.includes('ClawMark'));
     });
 
     it('handles string tags', () => {

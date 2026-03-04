@@ -1,30 +1,33 @@
 # ClawMark
 
-Annotate any web page. Report issues, leave comments, and track feedback — all from a Chrome extension.
+**Annotate any web page.** Select text, screenshot, or highlight — then route feedback to GitHub Issues, Lark, Telegram, Slack, or any webhook. One Chrome extension for comments, issues, and smart delivery.
 
-ClawMark lets you select text on any website, create annotations (comments or issues), and route them to the right place automatically. Annotations on a GitHub repo page go to that repo's issues. Annotations on a blog go wherever you configure.
+[![GitHub release](https://img.shields.io/github/v/release/coco-xyz/clawmark)](https://github.com/coco-xyz/clawmark/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Features
+## Why ClawMark
 
-- **Chrome Extension** — Select text → floating toolbar → comment or issue in one click
-- **Side Panel** — Browse all annotations for the current page, threaded discussions, tag filtering
-- **Smart Routing** — Annotations auto-route to the correct GitHub repo based on the page URL
-- **User Routing Rules** — Configure custom URL pattern → target mappings (glob-style: `github.com/org/*`, `*.example.com/**`)
-- **Multi-Adapter** — Route to GitHub Issues, Lark, Telegram, or any webhook
-- **API Key Auth** — Invite codes for onboarding, API keys for programmatic access
+- **One-click annotation** — Select text on any page → floating toolbar → comment or issue, done
+- **Smart routing** — Annotate a GitHub page? It auto-routes to that repo. A blog? Wherever you configure
+- **9 delivery targets** — GitHub Issues, Lark, Telegram, Slack, Email, Linear, Jira, HxA Connect, Webhook
+- **Dashboard** — Browse all annotations for any page, threaded discussions, tag filtering, site management
+- **Google login** — One-click sign in, no invite codes needed
+- **Open source** — Self-host the server, or use the hosted version
 
-## Install
+## Quick Start
 
-### Chrome Extension
+### Use the Hosted Version
 
-Download from [Releases](https://github.com/coco-xyz/clawmark/releases) or the Chrome Web Store (coming soon).
+The fastest way — no server setup needed:
 
-1. Download the `.zip` from the latest release
-2. Unzip, go to `chrome://extensions`, enable Developer Mode
-3. Click "Load unpacked" and select the `extension/` folder
-4. Click the extension icon → enter server URL and invite code
+1. Install the extension from [Releases](https://github.com/coco-xyz/clawmark/releases) (Chrome Web Store coming soon)
+2. Go to `chrome://extensions` → enable Developer Mode → Load unpacked → select `extension/`
+3. Click the extension icon → Sign in with Google
+4. Start annotating — annotations route to `api.coco.xyz/clawmark` by default
 
-### Server
+### Self-Host (Open Source)
+
+Run your own ClawMark server:
 
 ```bash
 git clone https://github.com/coco-xyz/clawmark.git
@@ -33,6 +36,8 @@ npm install
 cp config.example.json config.json   # edit: set auth codes, adapter config
 npm start                             # default port 3462
 ```
+
+Then point the extension to your server URL in Settings → Connection.
 
 ## How Routing Works
 
@@ -136,7 +141,7 @@ Chrome Extension (Manifest V3)
 ├── Content Script     — text selection, floating toolbar, input overlay
 ├── Service Worker     — API client, message routing
 ├── Side Panel         — item list, discussion threads, filters
-└── Popup              — server URL, auth config
+└── Options Page       — dashboard, account, delivery rules, site management
 
 Server (Express + SQLite)
 ├── V2 API             — items CRUD, tags, messages, auth
@@ -151,6 +156,13 @@ Server (Express + SQLite)
 npm test              # run all tests (Node.js built-in test runner)
 npm start             # start server
 ```
+
+## Links
+
+- **Website**: [labs.coco.xyz/clawmark](https://labs.coco.xyz/clawmark/)
+- **Releases**: [GitHub Releases](https://github.com/coco-xyz/clawmark/releases)
+- **Privacy Policy**: [labs.coco.xyz/clawmark/privacy](https://labs.coco.xyz/clawmark/privacy/)
+- **Issues**: [GitHub Issues](https://github.com/coco-xyz/clawmark/issues)
 
 ## License
 

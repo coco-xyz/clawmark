@@ -155,7 +155,7 @@ class EmailAdapter {
         lines.push('</div>');
 
         // Footer
-        lines.push('<p style="font-size:11px;color:#9ca3af;margin:12px 0 0;text-align:center;">Sent by ClawMark</p>');
+        lines.push('<p style="font-size:11px;color:#9ca3af;margin:12px 0 0;text-align:center;">Sent by <a href="https://github.com/coco-xyz/clawmark" style="color:#9ca3af;">ClawMark</a> — Annotate any web page · <a href="https://labs.coco.xyz/clawmark/" style="color:#9ca3af;">Website</a></p>');
         lines.push('</body></html>');
 
         return lines.join('\n');
