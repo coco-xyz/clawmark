@@ -69,6 +69,7 @@ function showLogin() {
 }
 
 function showApp(user) {
+    document.getElementById('welcome-screen').style.display = 'none';
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
 
