@@ -802,6 +802,35 @@
 
     // ----------------------------------------------------------- submit
 
+    function humanizeError(msg) {
+        if (!msg) return '提交失败，请稍后重试';
+        const m = msg.toLowerCase();
+        if (m.includes('network') || m.includes('fetch') || m.includes('failed to fetch') || m.includes('networkerror')) {
+            return '无法连接服务器，请检查网络连接';
+        }
+        if (m.includes('401') || m.includes('unauthorized') || m.includes('auth')) {
+            return '登录已过期，请重新登录';
+        }
+        if (m.includes('403') || m.includes('forbidden')) {
+            return '没有权限执行此操作';
+        }
+        if (m.includes('404')) {
+            return '资源不存在，请刷新后重试';
+        }
+        if (m.includes('500') || m.includes('server error') || m.includes('internal')) {
+            return '服务器错误，请稍后重试';
+        }
+        if (m.includes('timeout') || m.includes('timed out')) {
+            return '请求超时，请检查网络后重试';
+        }
+        if (m.includes('disconnected') || m.includes('disconnect')) {
+            return '无法连接服务器，请检查网络';
+        }
+        // P1-2: don't leak raw server errors to UI; log for debug only
+        console.debug('[ClawMark] submit error:', msg);
+        return '提交失败，请稍后重试';
+    }
+
     async function handleSubmit() {
         if (!inputOverlay) return;
         const textarea = inputOverlay.querySelector('textarea');
@@ -809,10 +838,11 @@
         if (!content && pendingImages.length === 0) return;
 
         const submitBtn = inputOverlay.querySelector('.cm-submit');
+        const progressBar = inputOverlay.querySelector('.cm-progress-bar');
         submitBtn.disabled = true;
-        submitBtn.textContent = '...';
+        submitBtn.textContent = pendingImages.length > 0 ? 'Uploading...' : 'Submitting...';
 
-        // Show progress bar
+        // Show progress bar (Phase 1.5 API)
         if (pendingImages.length > 0) {
             showProgressBar(false);
             setProgress(10);
@@ -897,13 +927,61 @@
             showToast(summary, 'success');
             resolvedTargets = [];
             hideInputOverlay();
+            maybeShowShortcutTip();
         } catch (err) {
-            showToast(`Error: ${err.message}`, 'error');
+            showToast(humanizeError(err.message), 'error');
         } finally {
             submitBtn.disabled = false;
             submitBtn.textContent = currentMode === 'issue' ? 'Create Issue' : 'Submit';
             hideProgressBar();
         }
+    }
+
+    // ----------------------------------------------------------- shortcut tip (Phase 3)
+
+    function maybeShowShortcutTip() {
+        // Show once after first successful annotation
+        const STORAGE_KEY = 'clawmark_shortcut_tip_shown';
+        chrome.storage.local.get([STORAGE_KEY], (result) => {
+            if (result[STORAGE_KEY]) return;
+            chrome.storage.local.set({ [STORAGE_KEY]: true });
+            showShortcutTip();
+        });
+    }
+
+    function showShortcutTip() {
+        const existing = document.getElementById('clawmark-shortcut-tip');
+        if (existing) return;
+
+        // P2-2: use userAgentData (non-deprecated) with platform fallback
+        const isMac = (navigator.userAgentData?.platform || navigator.platform || '').toUpperCase().includes('MAC');
+        const shortcut = isMac ? '⌘+Shift+X' : 'Ctrl+Shift+X';
+
+        const tip = document.createElement('div');
+        tip.id = 'clawmark-shortcut-tip';
+
+        // P1-1: use imperative DOM instead of innerHTML + template literal
+        const textSpan = document.createElement('span');
+        const iconText = document.createTextNode('💡 快捷键 ');
+        const kbd = document.createElement('kbd');
+        kbd.textContent = shortcut;
+        const trailText = document.createTextNode(' 可随时打开标注面板');
+        textSpan.appendChild(iconText);
+        textSpan.appendChild(kbd);
+        textSpan.appendChild(trailText);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'tip-close';
+        closeBtn.title = '关闭';
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', () => tip.remove());
+
+        tip.appendChild(textSpan);
+        tip.appendChild(closeBtn);
+        document.body.appendChild(tip);
+
+        // Auto-dismiss after 8s
+        setTimeout(() => { if (tip.parentNode) tip.remove(); }, 8000);
     }
 
     // ----------------------------------------------------------- toast
