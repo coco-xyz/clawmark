@@ -480,6 +480,9 @@ async function handleMessage(message, sender) {
             }
         }
 
+        case 'CHECK_VERSION':
+            return checkForUpdate();
+
         default:
             return { error: `Unknown message type: ${message.type}` };
     }
@@ -533,6 +536,72 @@ async function checkTargetInjection(url) {
     } catch {
         return { js_injection: true };
     }
+}
+
+// ------------------------------------------------------------------ Version check (GitLab #2)
+
+const VERSION_CHECK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+async function checkForUpdate() {
+    const currentVersion = chrome.runtime.getManifest().version;
+
+    // Return cached result if fresh (persists across service worker restarts)
+    try {
+        const { versionCache } = await chrome.storage.local.get('versionCache');
+        if (versionCache && Date.now() - versionCache.ts < VERSION_CHECK_CACHE_TTL) {
+            return versionCache.data;
+        }
+    } catch {
+        // Storage read failed — proceed with fresh check
+    }
+
+    try {
+        const res = await fetch(
+            'https://api.github.com/repos/coco-xyz/clawmark/releases/latest',
+            { headers: { 'Accept': 'application/vnd.github.v3+json' } }
+        );
+        if (!res.ok) {
+            return { hasUpdate: false, currentVersion, latestVersion: currentVersion, downloadUrl: '' };
+        }
+
+        const release = await res.json();
+        const latestTag = (release.tag_name || '').replace(/^v/, '');
+
+        // Find zip asset download URL
+        let downloadUrl = '';
+        for (const asset of (release.assets || [])) {
+            if (asset.name && asset.name.endsWith('.zip')) {
+                downloadUrl = asset.browser_download_url;
+                break;
+            }
+        }
+        // Fallback to release page
+        if (!downloadUrl) {
+            downloadUrl = release.html_url || 'https://github.com/coco-xyz/clawmark/releases/latest';
+        }
+
+        const hasUpdate = compareVersions(latestTag, currentVersion) > 0;
+
+        const data = { hasUpdate, currentVersion, latestVersion: latestTag, downloadUrl };
+        await chrome.storage.local.set({ versionCache: { data, ts: Date.now() } });
+        return data;
+    } catch {
+        return { hasUpdate: false, currentVersion, latestVersion: currentVersion, downloadUrl: '' };
+    }
+}
+
+/**
+ * Compare semver strings. Returns >0 if a > b, <0 if a < b, 0 if equal.
+ */
+function compareVersions(a, b) {
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const na = pa[i] || 0;
+        const nb = pb[i] || 0;
+        if (na !== nb) return na - nb;
+    }
+    return 0;
 }
 
 // ------------------------------------------------------------------ Badge updater (Phase 2)

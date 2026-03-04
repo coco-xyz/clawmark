@@ -415,6 +415,53 @@
 
         .message.success { color: #22c55e; }
         .message.error { color: #ef4444; }
+
+        /* ---- Update Banner ---- */
+
+        .update-banner {
+            display: none;
+            padding: 8px 16px;
+            background: rgba(88,101,242,0.12);
+            border-bottom: 1px solid #2a2a3e;
+            font-size: 12px;
+            color: #e0e0e0;
+        }
+
+        .update-banner.visible { display: flex; align-items: center; gap: 8px; }
+
+        .update-banner .update-text { flex: 1; }
+
+        .update-banner .update-version {
+            color: #7c8af2;
+            font-weight: 600;
+        }
+
+        .update-banner .update-link {
+            font-size: 11px;
+            padding: 3px 10px;
+            background: #5865f2;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+
+        .update-banner .update-link:hover { background: #4752c4; }
+
+        .update-banner .update-dismiss {
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 14px;
+            cursor: pointer;
+            padding: 0 2px;
+            line-height: 1;
+        }
+
+        .update-banner .update-dismiss:hover { color: #aaa; }
     </style>
 </head>
 <body>
@@ -428,6 +475,13 @@
             </label>
         </div>
         <button class="gear-btn" id="gear-btn" title="Open Dashboard">&#x2699;</button>
+    </div>
+
+    <!-- Update banner -->
+    <div class="update-banner" id="update-banner">
+        <span class="update-text">New version <span class="update-version" id="update-version"></span> available</span>
+        <a class="update-link" id="update-link" href="https://github.com/coco-xyz/clawmark/releases/latest" target="_blank" rel="noopener">Update</a>
+        <button class="update-dismiss" id="update-dismiss" title="Dismiss">&times;</button>
     </div>
 
     <!-- Disabled state (master toggle OFF) -->
