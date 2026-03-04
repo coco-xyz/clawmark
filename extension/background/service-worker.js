@@ -459,6 +459,12 @@ async function handleMessage(message, sender) {
             }
         }
 
+        case 'OPEN_OPTIONS_TAB': {
+            const url = chrome.runtime.getURL(`options/options.html#${message.tab || 'overview'}`);
+            chrome.tabs.create({ url });
+            return { success: true };
+        }
+
         default:
             return { error: `Unknown message type: ${message.type}` };
     }

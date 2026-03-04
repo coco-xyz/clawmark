@@ -190,7 +190,7 @@ function formatTargetName(type, config) {
 }
 
 document.getElementById('btn-more-targets').addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
+    chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html#delivery') });
     window.close();
 });
 

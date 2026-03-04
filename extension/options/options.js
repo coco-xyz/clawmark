@@ -11,15 +11,26 @@
 const navItems = document.querySelectorAll('.nav-item');
 const tabPanels = document.querySelectorAll('.tab-panel');
 
+function switchTab(tab) {
+    navItems.forEach(n => n.classList.remove('active'));
+    tabPanels.forEach(p => p.classList.remove('active'));
+    const navItem = document.querySelector(`.nav-item[data-tab="${tab}"]`);
+    const panel = document.getElementById(`tab-${tab}`);
+    if (navItem && panel) {
+        navItem.classList.add('active');
+        panel.classList.add('active');
+    }
+}
+
 navItems.forEach(item => {
-    item.addEventListener('click', () => {
-        const tab = item.dataset.tab;
-        navItems.forEach(n => n.classList.remove('active'));
-        tabPanels.forEach(p => p.classList.remove('active'));
-        item.classList.add('active');
-        document.getElementById(`tab-${tab}`).classList.add('active');
-    });
+    item.addEventListener('click', () => switchTab(item.dataset.tab));
 });
+
+// Support deep-linking via URL hash (e.g. options.html#delivery)
+if (window.location.hash) {
+    const tab = window.location.hash.slice(1);
+    if (document.getElementById(`tab-${tab}`)) switchTab(tab);
+}
 
 // ------------------------------------------------------------------ toast
 
