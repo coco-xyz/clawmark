@@ -381,8 +381,21 @@ rfTarget.addEventListener('change', () => {
     updateTargetFields(rfTarget.value);
 });
 
+// Mask a credential string: show only last 4 chars
+function maskSecret(val) {
+    if (!val) return '';
+    return val.length > 4 ? '••••' + val.slice(-4) : '••••';
+}
+
+// Sentinel for "unchanged" password fields
+const SECRET_UNCHANGED = '••••____UNCHANGED____';
+
 function updateTargetFields(targetType, existingConfig) {
     const cfg = existingConfig || {};
+    const isEdit = !!existingConfig;
+    // For password fields when editing: show masked placeholder, don't expose real value
+    const secretVal = (v) => isEdit && v ? SECRET_UNCHANGED : escHtml(v || '');
+    const secretPlaceholder = (v) => isEdit && v ? maskSecret(v) : '';
     let html = '';
     switch (targetType) {
         case 'github-issue':
@@ -393,21 +406,21 @@ function updateTargetFields(targetType, existingConfig) {
                 <input type="text" class="input" id="tc-labels" placeholder="clawmark, bug" value="${escHtml((cfg.labels || []).join(', '))}">`;
             break;
         case 'lark':
-            html = `<label>Webhook URL</label><input type="text" class="input" id="tc-webhook" placeholder="https://open.larksuite.com/..." value="${escHtml(cfg.webhook_url || '')}">`;
+            html = `<label>Webhook URL</label><input type="password" class="input" id="tc-webhook" data-secret="1" placeholder="${secretPlaceholder(cfg.webhook_url) || 'https://open.larksuite.com/...'}" value="${secretVal(cfg.webhook_url)}">`;
             break;
         case 'telegram':
             html = `
-                <label>Bot Token</label><input type="password" class="input" id="tc-bot-token" value="${escHtml(cfg.bot_token || '')}">
+                <label>Bot Token</label><input type="password" class="input" id="tc-bot-token" data-secret="1" placeholder="${secretPlaceholder(cfg.bot_token)}" value="${secretVal(cfg.bot_token)}">
                 <label>Chat ID</label><input type="text" class="input" id="tc-chat-id" value="${escHtml(cfg.chat_id || '')}">`;
             break;
         case 'webhook':
             html = `
                 <label>Webhook URL</label><input type="text" class="input" id="tc-url" value="${escHtml(cfg.url || '')}">
-                <label>Secret (optional)</label><input type="password" class="input" id="tc-secret" value="${escHtml(cfg.secret || '')}">`;
+                <label>Secret (optional)</label><input type="password" class="input" id="tc-secret" data-secret="1" placeholder="${secretPlaceholder(cfg.secret)}" value="${secretVal(cfg.secret)}">`;
             break;
         case 'slack':
             html = `
-                <label>Webhook URL</label><input type="text" class="input" id="tc-slack-webhook" value="${escHtml(cfg.webhook_url || '')}">
+                <label>Webhook URL</label><input type="password" class="input" id="tc-slack-webhook" data-secret="1" placeholder="${secretPlaceholder(cfg.webhook_url)}" value="${secretVal(cfg.webhook_url)}">
                 <label>Channel (optional)</label><input type="text" class="input" id="tc-slack-channel" value="${escHtml(cfg.channel || '')}">`;
             break;
         case 'email':
@@ -417,13 +430,13 @@ function updateTargetFields(targetType, existingConfig) {
                     <option value="resend"${(cfg.provider || 'resend') === 'resend' ? ' selected' : ''}>Resend</option>
                     <option value="sendgrid"${cfg.provider === 'sendgrid' ? ' selected' : ''}>SendGrid</option>
                 </select>
-                <label>API Key</label><input type="password" class="input" id="tc-email-apikey" value="${escHtml(cfg.api_key || '')}">
+                <label>API Key</label><input type="password" class="input" id="tc-email-apikey" data-secret="1" placeholder="${secretPlaceholder(cfg.api_key)}" value="${secretVal(cfg.api_key)}">
                 <label>From</label><input type="text" class="input" id="tc-email-from" value="${escHtml(cfg.from || '')}">
                 <label>To (comma-separated)</label><input type="text" class="input" id="tc-email-to" value="${escHtml((cfg.to || []).join(', '))}">`;
             break;
         case 'linear':
             html = `
-                <label>API Key</label><input type="password" class="input" id="tc-linear-apikey" value="${escHtml(cfg.api_key || '')}">
+                <label>API Key</label><input type="password" class="input" id="tc-linear-apikey" data-secret="1" placeholder="${secretPlaceholder(cfg.api_key)}" value="${secretVal(cfg.api_key)}">
                 <label>Team ID</label><input type="text" class="input" id="tc-linear-team" value="${escHtml(cfg.team_id || '')}">
                 <label>Assignee ID (optional)</label><input type="text" class="input" id="tc-linear-assignee" value="${escHtml(cfg.assignee_id || '')}">`;
             break;
@@ -431,7 +444,7 @@ function updateTargetFields(targetType, existingConfig) {
             html = `
                 <label>Domain</label><input type="text" class="input" id="tc-jira-domain" value="${escHtml(cfg.domain || '')}">
                 <label>Email</label><input type="text" class="input" id="tc-jira-email" value="${escHtml(cfg.email || '')}">
-                <label>API Token</label><input type="password" class="input" id="tc-jira-token" value="${escHtml(cfg.api_token || '')}">
+                <label>API Token</label><input type="password" class="input" id="tc-jira-token" data-secret="1" placeholder="${secretPlaceholder(cfg.api_token)}" value="${secretVal(cfg.api_token)}">
                 <label>Project Key</label><input type="text" class="input" id="tc-jira-project" value="${escHtml(cfg.project_key || '')}">
                 <label>Issue Type (optional)</label><input type="text" class="input" id="tc-jira-issuetype" value="${escHtml(cfg.issue_type || '')}">`;
             break;
@@ -439,73 +452,89 @@ function updateTargetFields(targetType, existingConfig) {
             html = `
                 <label>Hub URL</label><input type="text" class="input" id="tc-hxa-hub" value="${escHtml(cfg.hub_url || '')}">
                 <label>Agent ID</label><input type="text" class="input" id="tc-hxa-agent" value="${escHtml(cfg.agent_id || '')}">
-                <label>API Key (optional)</label><input type="password" class="input" id="tc-hxa-apikey" value="${escHtml(cfg.api_key || '')}">
+                <label>API Key (optional)</label><input type="password" class="input" id="tc-hxa-apikey" data-secret="1" placeholder="${secretPlaceholder(cfg.api_key)}" value="${secretVal(cfg.api_key)}">
                 <label>Thread ID (optional)</label><input type="text" class="input" id="tc-hxa-thread" value="${escHtml(cfg.thread_id || '')}">`;
             break;
     }
     targetFieldsEl.innerHTML = html;
+    // Clear sentinel on focus so user starts fresh
+    targetFieldsEl.querySelectorAll('[data-secret]').forEach(el => {
+        el.addEventListener('focus', () => {
+            if (el.value === SECRET_UNCHANGED) el.value = '';
+        }, { once: true });
+    });
+}
+
+// Get field value; return undefined if it's the unchanged sentinel (so server keeps existing)
+function fieldVal(id) {
+    const v = (document.getElementById(id)?.value || '').trim();
+    return v === SECRET_UNCHANGED ? undefined : v;
 }
 
 function getTargetConfig() {
     const type = rfTarget.value;
+    const omitUndefined = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
     switch (type) {
         case 'github-issue': {
-            const repo = (document.getElementById('tc-repo')?.value || '').trim();
-            const labelsRaw = (document.getElementById('tc-labels')?.value || '').trim();
+            const repo = fieldVal('tc-repo') || '';
+            const labelsRaw = fieldVal('tc-labels') || '';
             const labels = labelsRaw ? labelsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
             return { repo, labels, assignees: [] };
         }
         case 'lark':
-            return { webhook_url: (document.getElementById('tc-webhook')?.value || '').trim() };
+            return omitUndefined({ webhook_url: fieldVal('tc-webhook') });
         case 'telegram':
-            return { bot_token: (document.getElementById('tc-bot-token')?.value || '').trim(), chat_id: (document.getElementById('tc-chat-id')?.value || '').trim() };
+            return omitUndefined({ bot_token: fieldVal('tc-bot-token'), chat_id: fieldVal('tc-chat-id') || '' });
         case 'webhook': {
-            const url = (document.getElementById('tc-url')?.value || '').trim();
-            const secret = (document.getElementById('tc-secret')?.value || '').trim();
+            const url = fieldVal('tc-url') || '';
+            const secret = fieldVal('tc-secret');
             const cfg = { url };
-            if (secret) cfg.secret = secret;
+            if (secret !== undefined && secret) cfg.secret = secret;
             return cfg;
         }
         case 'slack': {
-            const wh = (document.getElementById('tc-slack-webhook')?.value || '').trim();
-            const ch = (document.getElementById('tc-slack-channel')?.value || '').trim();
-            const cfg = { webhook_url: wh };
+            const wh = fieldVal('tc-slack-webhook');
+            const ch = fieldVal('tc-slack-channel') || '';
+            const cfg = omitUndefined({ webhook_url: wh });
             if (ch) cfg.channel = ch;
             return cfg;
         }
         case 'email': {
             const provider = document.getElementById('tc-email-provider')?.value || 'resend';
-            const apiKey = (document.getElementById('tc-email-apikey')?.value || '').trim();
-            const from = (document.getElementById('tc-email-from')?.value || '').trim();
-            const toRaw = (document.getElementById('tc-email-to')?.value || '').trim();
+            const apiKey = fieldVal('tc-email-apikey');
+            const from = fieldVal('tc-email-from') || '';
+            const toRaw = fieldVal('tc-email-to') || '';
             const to = toRaw ? toRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
-            return { provider, api_key: apiKey, from, to };
+            const cfg = { provider, from, to };
+            if (apiKey !== undefined) cfg.api_key = apiKey;
+            return cfg;
         }
         case 'linear': {
-            const apiKey = (document.getElementById('tc-linear-apikey')?.value || '').trim();
-            const teamId = (document.getElementById('tc-linear-team')?.value || '').trim();
-            const assigneeId = (document.getElementById('tc-linear-assignee')?.value || '').trim();
-            const cfg = { api_key: apiKey, team_id: teamId };
+            const apiKey = fieldVal('tc-linear-apikey');
+            const teamId = fieldVal('tc-linear-team') || '';
+            const assigneeId = fieldVal('tc-linear-assignee') || '';
+            const cfg = omitUndefined({ api_key: apiKey });
+            cfg.team_id = teamId;
             if (assigneeId) cfg.assignee_id = assigneeId;
             return cfg;
         }
         case 'jira': {
-            const domain = (document.getElementById('tc-jira-domain')?.value || '').trim();
-            const email = (document.getElementById('tc-jira-email')?.value || '').trim();
-            const apiToken = (document.getElementById('tc-jira-token')?.value || '').trim();
-            const projectKey = (document.getElementById('tc-jira-project')?.value || '').trim();
-            const issueType = (document.getElementById('tc-jira-issuetype')?.value || '').trim();
-            const cfg = { domain, email, api_token: apiToken, project_key: projectKey };
+            const domain = fieldVal('tc-jira-domain') || '';
+            const email = fieldVal('tc-jira-email') || '';
+            const apiToken = fieldVal('tc-jira-token');
+            const projectKey = fieldVal('tc-jira-project') || '';
+            const issueType = fieldVal('tc-jira-issuetype') || '';
+            const cfg = omitUndefined({ domain, email, api_token: apiToken, project_key: projectKey });
             if (issueType) cfg.issue_type = issueType;
             return cfg;
         }
         case 'hxa-connect': {
-            const hubUrl = (document.getElementById('tc-hxa-hub')?.value || '').trim();
-            const agentId = (document.getElementById('tc-hxa-agent')?.value || '').trim();
-            const apiKey = (document.getElementById('tc-hxa-apikey')?.value || '').trim();
-            const threadId = (document.getElementById('tc-hxa-thread')?.value || '').trim();
+            const hubUrl = fieldVal('tc-hxa-hub') || '';
+            const agentId = fieldVal('tc-hxa-agent') || '';
+            const apiKey = fieldVal('tc-hxa-apikey');
+            const threadId = fieldVal('tc-hxa-thread') || '';
             const cfg = { hub_url: hubUrl, agent_id: agentId };
-            if (apiKey) cfg.api_key = apiKey;
+            if (apiKey !== undefined && apiKey) cfg.api_key = apiKey;
             if (threadId) cfg.thread_id = threadId;
             return cfg;
         }
