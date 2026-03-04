@@ -10,12 +10,13 @@
 
 'use strict';
 
+importScripts('../config.js');
+
 // ------------------------------------------------------------------ config
 
-const DEFAULT_SERVER = 'https://api.coco.xyz/clawmark';
-
-// Google OAuth client ID — set by server admin via CLAWMARK_GOOGLE_CLIENT_ID
-const GOOGLE_CLIENT_ID = '530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com';
+const DEFAULT_SERVER = ClawMarkConfig.DEFAULT_SERVER;
+const GOOGLE_CLIENT_ID = ClawMarkConfig.GOOGLE_CLIENT_ID
+    || '530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com';
 
 async function getConfig() {
     const result = await chrome.storage.sync.get({

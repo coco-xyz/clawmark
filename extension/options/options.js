@@ -279,7 +279,7 @@ async function testConnection() {
 document.getElementById('btn-save-connection').addEventListener('click', async () => {
     const config = await chrome.runtime.sendMessage({ type: 'GET_CONFIG' });
     const url = document.getElementById('opt-server-url').value.trim().replace(/\/$/, '');
-    config.serverUrl = url || 'https://api.coco.xyz/clawmark';
+    config.serverUrl = url || ClawMarkConfig.DEFAULT_SERVER;
     await chrome.runtime.sendMessage({ type: 'SAVE_CONFIG', config });
     showToast('Server URL saved');
     testConnection();

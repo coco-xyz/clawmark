@@ -10,7 +10,8 @@ const STORAGE_KEY_TOKEN = 'clawmark_token';
 const STORAGE_KEY_USER = 'clawmark_user';
 const STORAGE_KEY_SERVER = 'clawmark_server_url';
 
-const DEFAULT_SERVER = window.location.origin + '/clawmark';
+const DEFAULT_SERVER = import.meta.env.VITE_SERVER_URL
+    || (window.location.origin + '/clawmark');
 
 export function getServerUrl() {
     return localStorage.getItem(STORAGE_KEY_SERVER) || DEFAULT_SERVER;
