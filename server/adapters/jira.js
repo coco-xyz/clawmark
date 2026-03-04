@@ -246,7 +246,26 @@ class JiraAdapter {
         });
         nodes.push({
             type: 'paragraph',
-            content: [{ type: 'text', text: 'Created by ClawMark', marks: [{ type: 'em' }] }],
+            content: [
+                { type: 'text', text: 'Created by ', marks: [{ type: 'em' }] },
+                {
+                    type: 'text',
+                    text: 'ClawMark',
+                    marks: [
+                        { type: 'em' },
+                        { type: 'link', attrs: { href: 'https://github.com/coco-xyz/clawmark' } },
+                    ],
+                },
+                { type: 'text', text: ' — Annotate any web page · ', marks: [{ type: 'em' }] },
+                {
+                    type: 'text',
+                    text: 'Website',
+                    marks: [
+                        { type: 'em' },
+                        { type: 'link', attrs: { href: 'https://labs.coco.xyz/clawmark/' } },
+                    ],
+                },
+            ],
         });
 
         return {
