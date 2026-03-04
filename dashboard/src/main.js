@@ -32,22 +32,38 @@ async function init() {
         }
     }
 
+    const isWelcome = location.hash === '#welcome';
+
     if (isLoggedIn()) {
         // Verify token is still valid
         try {
             const { user } = await getMe();
             setAuth(localStorage.getItem('clawmark_token'), user);
+            if (isWelcome) location.hash = 'overview';
             showApp(user);
         } catch {
             clearAuth();
-            showLogin();
+            if (isWelcome) {
+                showWelcome();
+            } else {
+                showLogin();
+            }
         }
+    } else if (isWelcome) {
+        showWelcome();
     } else {
         showLogin();
     }
 }
 
+function showWelcome() {
+    document.getElementById('welcome-screen').style.display = 'flex';
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'none';
+}
+
 function showLogin() {
+    document.getElementById('welcome-screen').style.display = 'none';
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
 }
@@ -72,6 +88,10 @@ function showApp(user) {
 // ------------------------------------------------------------------ login
 
 document.getElementById('btn-login').addEventListener('click', () => {
+    startGoogleLogin();
+});
+
+document.getElementById('btn-welcome-login').addEventListener('click', () => {
     startGoogleLogin();
 });
 
