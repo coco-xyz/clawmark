@@ -347,6 +347,31 @@ async function loadPageData() {
     loadSiteToggle();
 }
 
+// ------------------------------------------------------------------ version check
+
+async function checkVersion() {
+    try {
+        const result = await chrome.runtime.sendMessage({ type: 'CHECK_VERSION' });
+        if (!result.hasUpdate) return;
+
+        const banner = document.getElementById('update-banner');
+        const versionEl = document.getElementById('update-version');
+        const linkEl = document.getElementById('update-link');
+        const dismissEl = document.getElementById('update-dismiss');
+
+        versionEl.textContent = 'v' + result.latestVersion;
+        linkEl.href = result.downloadUrl;
+
+        banner.classList.add('visible');
+
+        dismissEl.addEventListener('click', () => {
+            banner.classList.remove('visible');
+        }, { once: true });
+    } catch {
+        // Version check is non-critical — fail silently
+    }
+}
+
 // ------------------------------------------------------------------ init
 
 async function init() {
@@ -356,6 +381,9 @@ async function init() {
     if (isLoggedIn && masterToggle.checked) {
         loadPageData();
     }
+
+    // Non-blocking version check
+    checkVersion();
 }
 
 init();

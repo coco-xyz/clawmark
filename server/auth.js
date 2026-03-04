@@ -188,6 +188,9 @@ function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpi
             // Upsert user in database
             const user = db.upsertUser(googleUser);
 
+            // Ensure user has a default app (data isolation Phase 1)
+            const defaultApp = db.getOrCreateDefaultApp(user.id, user.email);
+
             // Sign JWT
             const token = signToken(user);
 
@@ -199,6 +202,7 @@ function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpi
                     name: user.name,
                     picture: user.picture,
                     role: user.role,
+                    default_app_id: defaultApp.id,
                 },
             });
         } catch (err) {
@@ -240,43 +244,58 @@ function initAuth({ db, jwtSecret, googleClientId, googleClientSecret, tokenExpi
     });
 
     /**
-     * POST /api/v2/auth/apikey — issue API key (JWT or invite code)
+     * POST /api/v2/auth/apikey — issue API key (JWT-only, invite codes deprecated)
      *
-     * Extends existing endpoint to also accept JWT auth.
      * Body: { name, app_id }
-     * Auth: Bearer JWT or invite code in body
+     * Auth: Bearer JWT required
+     *
+     * app_id is required — must reference a real app owned by the user.
+     * If omitted, falls back to the user's default app.
      */
     router.post('/apikey', (req, res) => {
-        const { name, app_id, code } = req.body;
+        const { name, app_id } = req.body;
         let created_by;
+        let userId;
 
-        // Try JWT first
+        // JWT auth only (invite codes removed)
         const authHeader = req.headers.authorization;
         if (authHeader && authHeader.startsWith('Bearer ')) {
             const token = authHeader.slice(7);
-            // Check if it's a JWT (not an API key)
             if (!token.startsWith('cmk_')) {
                 const payload = verifyJwt(token);
                 if (payload) {
                     created_by = payload.email;
+                    userId = payload.userId;
                 }
             }
         }
 
-        // Fall back to invite code
-        if (!created_by && code) {
-            const VALID_CODES = req.app.locals.VALID_CODES || {};
-            if (VALID_CODES[code]) {
-                created_by = VALID_CODES[code];
+        if (!created_by) {
+            return res.status(401).json({ error: 'Valid JWT required (invite codes are no longer supported)' });
+        }
+
+        // Resolve app_id: use provided app_id, or fall back to user's default app
+        let resolvedAppId = app_id;
+        if (!resolvedAppId || resolvedAppId === 'default') {
+            const defaultApp = db.getOrCreateDefaultApp(userId, created_by);
+            resolvedAppId = defaultApp.id;
+        } else {
+            // Ownership validation: verify the user owns this app
+            const app = db.getApp(resolvedAppId);
+            if (!app) {
+                return res.status(404).json({ error: 'App not found' });
+            }
+            if (app.user_id !== userId) {
+                return res.status(403).json({ error: 'Not authorized to create keys for this app' });
             }
         }
 
-        if (!created_by) {
-            return res.status(401).json({ error: 'Valid JWT or invite code required' });
+        try {
+            const key = db.createApiKey({ app_id: resolvedAppId, name, created_by });
+            res.json({ success: true, ...key });
+        } catch (err) {
+            res.status(400).json({ error: err.message });
         }
-
-        const key = db.createApiKey({ app_id: app_id || 'default', name, created_by });
-        res.json({ success: true, ...key });
     });
 
     return { router, verifyJwt };

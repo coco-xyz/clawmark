@@ -2,6 +2,31 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号采用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.4] — 2026-03-05
+
+### 新增
+
+- 数据隔离 Phase 1 — 每用户独立 app_id，不再共享 default (#188)
+- 数据隔离 Phase 2 — PUT/DELETE 路由规则 ownership check，POST /apikey app_id 归属校验 (#188)
+- V1 路由全部标记 Deprecated + Sunset 2026-06-01 (#188)
+- 版本检查 + 更新横幅 — popup 显示最新版本提示 (#2)
+- Dashboard Overview 全局统计 + 可点击钻取 (#7)
+
+### 修复
+
+- dispatch 权限 403 优雅降级 — labels 改为 best-effort 单独调用 (#189)
+- URL hash 持久化 — 刷新保持当前 tab (#9)
+- version check review feedback 修正
+
+### 文档
+
+- 数据隔离 + 交付授权技术设计文档
+- 技术设计中文翻译
+
+### 其他
+
+- 发版流程 — release.sh 脚本 + MR/issue 模板
+
 ## [0.6.2] — 2026-03-04
 
 ### 新增
@@ -198,6 +223,7 @@
 - JSON body 大小限制（512KB）
 - 不存在 item 的状态操作返回 404
 
+[0.6.4]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.4
 [0.6.2]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.2
 [0.6.1]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.1
 [0.6.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.0

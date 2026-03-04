@@ -142,6 +142,7 @@ function initDb(dataDir) {
             name        TEXT NOT NULL,
             description TEXT,
             org_id      TEXT,
+            is_default  INTEGER DEFAULT 0,
             created_at  TEXT NOT NULL,
             updated_at  TEXT NOT NULL
         );
@@ -212,6 +213,43 @@ function initDb(dataDir) {
     // org_id indexes (must run after migration adds the columns)
     db.exec(`CREATE INDEX IF NOT EXISTS idx_apps_org ON apps(org_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_user_rules_org ON user_rules(org_id)`);
+
+    // ----------------------------- schema migration: apps.is_default (data isolation Phase 1)
+    const appCols2 = db.pragma('table_info(apps)').map(c => c.name);
+    if (!appCols2.includes('is_default')) {
+        db.exec(`ALTER TABLE apps ADD COLUMN is_default INTEGER DEFAULT 0`);
+        console.log('[db] migrated: added column apps.is_default');
+    }
+    // UNIQUE constraint: only one default app per user.
+    // SQLite partial unique indexes require version >= 3.8.0; safe on Node better-sqlite3.
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_apps_user_default
+             ON apps(user_id) WHERE is_default = 1`);
+
+    // ----------------------------- schema migration: dispatch_log.app_id (data isolation Phase 1)
+    const dlColsP1 = db.pragma('table_info(dispatch_log)').map(c => c.name);
+    if (!dlColsP1.includes('app_id')) {
+        db.exec(`ALTER TABLE dispatch_log ADD COLUMN app_id TEXT`);
+        console.log('[db] migrated: added column dispatch_log.app_id');
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_dispatch_log_app ON dispatch_log(app_id)`);
+
+    // ----------------------------- data migration: clear legacy test data (data isolation Phase 1)
+    // Kevin directive: "don't do data migration — just clear the database and rebuild"
+    // Not yet in production; all existing data is test data. Clean slate approach.
+    {
+        const legacyItems = db.prepare(`SELECT COUNT(*) AS cnt FROM items WHERE app_id = 'default'`).get();
+        const legacyKeys = db.prepare(`SELECT COUNT(*) AS cnt FROM api_keys WHERE app_id = 'default'`).get();
+        const legacyApps = db.prepare(`SELECT COUNT(*) AS cnt FROM apps WHERE is_default = 0 OR is_default IS NULL`).get();
+
+        if (legacyItems.cnt > 0 || legacyKeys.cnt > 0) {
+            console.log(`[db] Phase 1 cleanup: clearing legacy test data (${legacyItems.cnt} items, ${legacyKeys.cnt} keys with app_id='default')`);
+            db.exec(`DELETE FROM items WHERE app_id = 'default'`);
+            db.exec(`DELETE FROM api_keys WHERE app_id = 'default'`);
+            db.exec(`DELETE FROM dispatch_log WHERE app_id IS NULL OR app_id = 'default'`);
+            db.exec(`DELETE FROM apps WHERE is_default = 0 OR is_default IS NULL`);
+            console.log('[db] Phase 1 cleanup: legacy test data cleared. Users will get fresh apps on next login.');
+        }
+    }
 
     // ----------------------------------------- schema: dispatch_log (v0.6.0 #93)
     db.exec(`
@@ -548,7 +586,10 @@ function initDb(dataDir) {
 
     // ---------------------------------------------------------- API key methods
 
-    function createApiKey({ app_id = 'default', name, created_by }) {
+    function createApiKey({ app_id, name, created_by }) {
+        if (!app_id || app_id === 'default') {
+            throw new Error('app_id is required and cannot be "default" — create or resolve a user-specific app first');
+        }
         const now = new Date().toISOString();
         const id = genId('key');
         const key = 'cmk_' + require('crypto').randomBytes(24).toString('hex');
@@ -702,12 +743,53 @@ function initDb(dataDir) {
 
     // ---------------------------------------------------------- app methods
 
+    /**
+     * Get or create the default app for a user. Uses a UNIQUE partial index
+     * on (user_id) WHERE is_default=1 to prevent race conditions.
+     *
+     * @param {string} userId  User's internal ID (from users table)
+     * @param {string} email   User's email (used for naming)
+     * @returns {object}       The default app row
+     */
+    function getOrCreateDefaultApp(userId, email) {
+        // Try to find existing default app first
+        const existing = db.prepare(
+            'SELECT * FROM apps WHERE user_id = ? AND is_default = 1'
+        ).get(userId);
+        if (existing) return existing;
+
+        // Create one — UNIQUE index on (user_id) WHERE is_default=1 prevents duplicates
+        const now = new Date().toISOString();
+        const id = genId('app');
+        try {
+            db.prepare(
+                `INSERT INTO apps (id, user_id, name, description, is_default, created_at, updated_at)
+                 VALUES (?, ?, ?, NULL, 1, ?, ?)`
+            ).run(id, userId, `${email}'s app`, now, now);
+
+            const app = db.prepare('SELECT * FROM apps WHERE id = ?').get(id);
+
+            // Auto-generate an AppKey for the new default app
+            createApiKey({ app_id: id, name: `${email}'s app key`, created_by: email });
+
+            return app;
+        } catch (err) {
+            // If UNIQUE constraint fires (race condition), another call won — just fetch theirs
+            if (err.code === 'SQLITE_CONSTRAINT_UNIQUE' || (err.message && err.message.includes('UNIQUE'))) {
+                return db.prepare(
+                    'SELECT * FROM apps WHERE user_id = ? AND is_default = 1'
+                ).get(userId);
+            }
+            throw err;
+        }
+    }
+
     function createApp({ user_id, name, description }) {
         const now = new Date().toISOString();
         const id = genId('app');
         db.prepare(
-            `INSERT INTO apps (id, user_id, name, description, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)`
+            `INSERT INTO apps (id, user_id, name, description, is_default, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 0, ?, ?)`
         ).run(id, user_id, name, description || null, now, now);
 
         // Auto-generate an AppKey for the new app
@@ -877,8 +959,8 @@ function initDb(dataDir) {
 
     const dispatchStmts = {
         insert: db.prepare(`
-            INSERT INTO dispatch_log (id, item_id, target_type, target_config, event, status, retries, method, created_at, updated_at)
-            VALUES (@id, @item_id, @target_type, @target_config, @event, @status, @retries, @method, @created_at, @updated_at)
+            INSERT INTO dispatch_log (id, item_id, app_id, target_type, target_config, event, status, retries, method, created_at, updated_at)
+            VALUES (@id, @item_id, @app_id, @target_type, @target_config, @event, @status, @retries, @method, @created_at, @updated_at)
         `),
         updateStatus: db.prepare(`
             UPDATE dispatch_log
@@ -895,11 +977,11 @@ function initDb(dataDir) {
         getById: db.prepare('SELECT * FROM dispatch_log WHERE id = ?'),
     };
 
-    function createDispatchEntry({ item_id, target_type, target_config, event, method }) {
+    function createDispatchEntry({ item_id, app_id, target_type, target_config, event, method }) {
         const now = new Date().toISOString();
         const id = genId('dsp');
         dispatchStmts.insert.run({
-            id, item_id, target_type,
+            id, item_id, app_id: app_id || null, target_type,
             target_config: typeof target_config === 'string' ? target_config : JSON.stringify(target_config),
             event: event || 'item.created',
             status: 'pending', retries: 0, method: method || null,
@@ -1243,6 +1325,7 @@ function initDb(dataDir) {
         deleteEndpoint,
         setEndpointDefault,
         // Apps
+        getOrCreateDefaultApp,
         createApp,
         getApp,
         getAppsByUser,
