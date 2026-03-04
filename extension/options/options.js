@@ -69,26 +69,50 @@ function formatTarget(type, config) {
     }
 }
 
+// Module-level rules cache — shared between loadOverview and loadRules
+let allRules = [];
+let editingRuleId = null;
+
 // ------------------------------------------------------------------ Overview
 
 async function loadOverview() {
+    // --- Delivery Rules count
     try {
         const rules = await chrome.runtime.sendMessage({ type: 'GET_ROUTING_RULES' });
-        document.getElementById('stat-rules').textContent = (rules.rules || []).length;
+        allRules = rules.rules || [];
+        document.getElementById('stat-rules').textContent = allRules.length;
     } catch {
         document.getElementById('stat-rules').textContent = '—';
     }
 
-    // Stats from recent tabs — we show aggregate counts from current tab as a starting point
+    // --- Global stats (issue #170): all pages, all time via /stats API
+    try {
+        const result = await chrome.runtime.sendMessage({ type: 'GET_GLOBAL_STATS' });
+        const rows = result.stats || [];
+        // rows is: [{ type, status, count }, ...]
+        let totalAnnotations = 0;
+        let totalComments = 0;
+        let totalIssues = 0;
+        for (const row of rows) {
+            const n = row.count || 0;
+            totalAnnotations += n;
+            if (row.type === 'comment') totalComments += n;
+            if (row.type === 'issue') totalIssues += n;
+        }
+        document.getElementById('stat-total').textContent = totalAnnotations;
+        document.getElementById('stat-comments').textContent = totalComments;
+        document.getElementById('stat-issues').textContent = totalIssues;
+    } catch {
+        document.getElementById('stat-total').textContent = '—';
+        document.getElementById('stat-comments').textContent = '—';
+        document.getElementById('stat-issues').textContent = '—';
+    }
+
+    // --- Recent activity: fetch from current active tab if available
     try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab?.url && !tab.url.startsWith('chrome')) {
             const counts = await chrome.runtime.sendMessage({ type: 'GET_ANNOTATION_COUNT', url: tab.url });
-            document.getElementById('stat-total').textContent = counts.total;
-            document.getElementById('stat-comments').textContent = counts.comments;
-            document.getElementById('stat-issues').textContent = counts.issues;
-
-            // Render recent activity
             const listEl = document.getElementById('activity-list');
             if (counts.recent && counts.recent.length > 0) {
                 listEl.innerHTML = '';
@@ -108,6 +132,185 @@ async function loadOverview() {
             }
         }
     } catch { /* non-critical */ }
+
+    // --- New info cards: matching rules + site toggle
+    await loadOverviewInfoCards();
+}
+
+/**
+ * Load the two new overview info cards:
+ * 1. Matching delivery rules for the current page URL
+ * 2. Site enabled quick toggle
+ */
+async function loadOverviewInfoCards() {
+    let currentUrl = null;
+    let currentHostname = null;
+
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.url && !tab.url.startsWith('chrome')) {
+            currentUrl = tab.url;
+            try { currentHostname = new URL(currentUrl).hostname; } catch { /* ignore */ }
+        }
+    } catch { /* ignore */ }
+
+    // --- Card 1: Matching delivery rules
+    const matchingUrlEl = document.getElementById('matching-rules-url');
+    const matchingContentEl = document.getElementById('matching-rules-content');
+
+    if (matchingUrlEl) matchingUrlEl.textContent = currentHostname || '(无活动页面)';
+
+    if (matchingContentEl) {
+        if (!currentUrl || allRules.length === 0) {
+            matchingContentEl.innerHTML = '<div class="empty-state">无匹配规则</div>';
+        } else {
+            const matching = allRules.filter(rule => {
+                if (rule.rule_type === 'default') return true;
+                if (rule.rule_type === 'url_pattern' && rule.pattern) {
+                    return matchesUrlPattern(currentUrl, rule.pattern);
+                }
+                return false;
+            });
+
+            if (matching.length === 0) {
+                matchingContentEl.innerHTML = '<div class="empty-state">当前页面无匹配规则</div>';
+            } else {
+                matchingContentEl.innerHTML = '';
+                for (const rule of matching) {
+                    const patternText = rule.rule_type === 'default' ? '(default)' : (rule.pattern || '—');
+                    const targetText = formatTarget(rule.target_type, rule.target_config);
+                    const item = document.createElement('div');
+                    item.className = 'matching-rule-item';
+                    item.innerHTML = `
+                        <div class="matching-rule-info">
+                            <div class="matching-rule-pattern">${escHtml(patternText)}</div>
+                            <div class="matching-rule-target">${escHtml(targetText)}</div>
+                        </div>
+                        <button class="matching-rule-edit-btn" data-rule-id="${escHtml(rule.id || '')}">编辑</button>`;
+                    item.querySelector('.matching-rule-edit-btn').addEventListener('click', () => {
+                        // Switch to delivery rules tab and open edit modal
+                        switchTab('delivery');
+                        const ruleObj = allRules.find(r => r.id === rule.id);
+                        if (ruleObj) setTimeout(() => openRuleModal(ruleObj), 50);
+                    });
+                    matchingContentEl.appendChild(item);
+                }
+            }
+        }
+    }
+
+    // --- Card 2: Site enabled quick toggle
+    const siteToggleUrlEl = document.getElementById('site-toggle-url');
+    const siteToggleDescEl = document.getElementById('site-toggle-desc');
+    const siteToggleCheckbox = document.getElementById('site-toggle-checkbox');
+    const siteToggleLabel = document.getElementById('site-toggle-label');
+
+    if (siteToggleUrlEl) siteToggleUrlEl.textContent = currentHostname || '(无活动页面)';
+
+    if (!currentHostname) {
+        if (siteToggleDescEl) siteToggleDescEl.textContent = '无活动页面';
+        if (siteToggleCheckbox) siteToggleCheckbox.disabled = true;
+        if (siteToggleLabel) siteToggleLabel.style.opacity = '0.4';
+        return;
+    }
+
+    try {
+        const setting = await chrome.runtime.sendMessage({ type: 'GET_INJECTION_SETTING' });
+        const siteList = setting.disabledSites || [];
+        const siteMode = setting.siteMode || 'blacklist';
+
+        // In blacklist mode: site is ENABLED if NOT in list
+        // In whitelist mode: site is ENABLED if IN list
+        let isEnabled;
+        if (siteMode === 'whitelist') {
+            isEnabled = siteList.includes(currentHostname);
+        } else {
+            isEnabled = !siteList.includes(currentHostname);
+        }
+
+        if (siteToggleCheckbox) {
+            siteToggleCheckbox.checked = isEnabled;
+            siteToggleCheckbox.disabled = false;
+
+            // Remove old listener by cloning
+            const newCheckbox = siteToggleCheckbox.cloneNode(true);
+            siteToggleCheckbox.parentNode.replaceChild(newCheckbox, siteToggleCheckbox);
+
+            newCheckbox.addEventListener('change', async () => {
+                const nowEnabled = newCheckbox.checked;
+                try {
+                    const fresh = await chrome.runtime.sendMessage({ type: 'GET_INJECTION_SETTING' });
+                    let list = [...(fresh.disabledSites || [])];
+                    const mode = fresh.siteMode || 'blacklist';
+
+                    if (mode === 'whitelist') {
+                        // whitelist: enabled = in list; disabled = not in list
+                        if (nowEnabled) {
+                            if (!list.includes(currentHostname)) list.push(currentHostname);
+                        } else {
+                            list = list.filter(s => s !== currentHostname);
+                        }
+                    } else {
+                        // blacklist: enabled = not in list; disabled = in list
+                        if (nowEnabled) {
+                            list = list.filter(s => s !== currentHostname);
+                        } else {
+                            if (!list.includes(currentHostname)) list.push(currentHostname);
+                        }
+                    }
+
+                    await chrome.runtime.sendMessage({
+                        type: 'SET_INJECTION_SETTING',
+                        disabledSites: list,
+                        siteMode: mode,
+                    });
+
+                    if (siteToggleDescEl) {
+                        siteToggleDescEl.textContent = nowEnabled
+                            ? `${currentHostname} 已启用`
+                            : `${currentHostname} 已禁用`;
+                    }
+                    showToast(nowEnabled ? `已为 ${currentHostname} 启用` : `已为 ${currentHostname} 禁用`);
+                } catch (err) {
+                    showToast('保存失败', 'error');
+                    newCheckbox.checked = !nowEnabled; // revert
+                }
+            });
+        }
+
+        if (siteToggleDescEl) {
+            siteToggleDescEl.textContent = isEnabled
+                ? `${currentHostname} 已启用`
+                : `${currentHostname} 已禁用`;
+        }
+    } catch {
+        if (siteToggleDescEl) siteToggleDescEl.textContent = '无法读取站点设置';
+    }
+}
+
+/**
+ * Simple URL pattern matcher supporting glob-style wildcards.
+ * Supports: exact match, wildcard *, and ** (multi-segment wildcard).
+ * Examples: "github.com/**", "*.example.com", "docs.example.com/api/*"
+ */
+function matchesUrlPattern(url, pattern) {
+    try {
+        // Build a regex from the glob pattern
+        // Escape regex special chars except * which we handle specially
+        const regexStr = pattern
+            .replace(/[.+?^${}()|[\]\\]/g, '\\$&') // escape special chars
+            .replace(/\\\*\\\*/g, '<<<DOUBLESTAR>>>') // protect **
+            .replace(/\*/g, '[^/]*') // single * = any char except /
+            .replace(/<<<DOUBLESTAR>>>/g, '.*'); // ** = anything
+        const regex = new RegExp(`^https?://${regexStr}`, 'i');
+        if (regex.test(url)) return true;
+        // Also try matching just the hostname+path portion
+        const noProto = url.replace(/^https?:\/\//, '');
+        const regexNoProto = new RegExp(`^${regexStr}`, 'i');
+        return regexNoProto.test(noProto);
+    } catch {
+        return false;
+    }
 }
 
 // ------------------------------------------------------------------ Account
@@ -232,9 +435,6 @@ document.getElementById('btn-save-connection').addEventListener('click', async (
 document.getElementById('btn-test-connection').addEventListener('click', testConnection);
 
 // ------------------------------------------------------------------ Delivery Rules
-
-let allRules = [];
-let editingRuleId = null;
 
 async function loadRules() {
     try {
