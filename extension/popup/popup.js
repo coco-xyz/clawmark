@@ -366,7 +366,7 @@ async function checkVersion() {
 
         dismissEl.addEventListener('click', () => {
             banner.classList.remove('visible');
-        });
+        }, { once: true });
     } catch {
         // Version check is non-critical — fail silently
     }

@@ -541,15 +541,19 @@ async function checkTargetInjection(url) {
 // ------------------------------------------------------------------ Version check (GitLab #2)
 
 const VERSION_CHECK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
-let _versionCache = null;
 
 async function checkForUpdate() {
-    // Return cached result if fresh
-    if (_versionCache && Date.now() - _versionCache.ts < VERSION_CHECK_CACHE_TTL) {
-        return _versionCache.data;
-    }
-
     const currentVersion = chrome.runtime.getManifest().version;
+
+    // Return cached result if fresh (persists across service worker restarts)
+    try {
+        const { versionCache } = await chrome.storage.local.get('versionCache');
+        if (versionCache && Date.now() - versionCache.ts < VERSION_CHECK_CACHE_TTL) {
+            return versionCache.data;
+        }
+    } catch {
+        // Storage read failed — proceed with fresh check
+    }
 
     try {
         const res = await fetch(
@@ -579,7 +583,7 @@ async function checkForUpdate() {
         const hasUpdate = compareVersions(latestTag, currentVersion) > 0;
 
         const data = { hasUpdate, currentVersion, latestVersion: latestTag, downloadUrl };
-        _versionCache = { data, ts: Date.now() };
+        await chrome.storage.local.set({ versionCache: { data, ts: Date.now() } });
         return data;
     } catch {
         return { hasUpdate: false, currentVersion, latestVersion: currentVersion, downloadUrl: '' };
