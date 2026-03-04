@@ -536,3 +536,87 @@ label {
 .link-list li { padding: 6px 0; }
 .link-list a { color: var(--accent); text-decoration: none; font-size: 13px; }
 .link-list a:hover { text-decoration: underline; }
+
+/* ---- Welcome Screen ---- */
+
+#welcome-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 32px;
+}
+
+.welcome-card {
+    max-width: 480px;
+    width: 100%;
+    text-align: center;
+    padding: 48px 40px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.welcome-logo {
+    font-size: 56px;
+    margin-bottom: 16px;
+    line-height: 1;
+}
+
+.welcome-title {
+    font-size: 26px;
+    font-weight: 700;
+    color: #fff;
+    margin: 0 0 10px;
+}
+
+.welcome-subtitle {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin: 0 0 32px;
+}
+
+.welcome-steps {
+    list-style: none;
+    text-align: left;
+    margin: 0 0 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.welcome-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+.step-icon {
+    font-size: 24px;
+    line-height: 1;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.step-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.step-body strong {
+    font-size: 14px;
+    color: #fff;
+    font-weight: 600;
+}
+
+.step-body span {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
