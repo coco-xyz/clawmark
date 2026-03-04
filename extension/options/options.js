@@ -11,15 +11,25 @@
 const navItems = document.querySelectorAll('.nav-item');
 const tabPanels = document.querySelectorAll('.tab-panel');
 
+function switchTab(tab) {
+    navItems.forEach(n => n.classList.remove('active'));
+    tabPanels.forEach(p => p.classList.remove('active'));
+    const navItem = document.querySelector(`.nav-item[data-tab="${tab}"]`);
+    if (navItem) navItem.classList.add('active');
+    const panel = document.getElementById(`tab-${tab}`);
+    if (panel) panel.classList.add('active');
+    location.hash = tab;
+}
+
 navItems.forEach(item => {
-    item.addEventListener('click', () => {
-        const tab = item.dataset.tab;
-        navItems.forEach(n => n.classList.remove('active'));
-        tabPanels.forEach(p => p.classList.remove('active'));
-        item.classList.add('active');
-        document.getElementById(`tab-${tab}`).classList.add('active');
-    });
+    item.addEventListener('click', () => switchTab(item.dataset.tab));
 });
+
+// Restore tab from URL hash on load
+const hashTab = location.hash.slice(1);
+if (hashTab && document.getElementById(`tab-${hashTab}`)) {
+    switchTab(hashTab);
+}
 
 // ------------------------------------------------------------------ toast
 
@@ -61,6 +71,7 @@ function formatTarget(type, config) {
 // ------------------------------------------------------------------ Overview
 
 async function loadOverview() {
+    // Rules count
     try {
         const rules = await chrome.runtime.sendMessage({ type: 'GET_ROUTING_RULES' });
         document.getElementById('stat-rules').textContent = (rules.rules || []).length;
@@ -68,36 +79,92 @@ async function loadOverview() {
         document.getElementById('stat-rules').textContent = '—';
     }
 
-    // Stats from recent tabs — we show aggregate counts from current tab as a starting point
+    // Global stats from server
     try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab?.url && !tab.url.startsWith('chrome')) {
-            const counts = await chrome.runtime.sendMessage({ type: 'GET_ANNOTATION_COUNT', url: tab.url });
-            document.getElementById('stat-total').textContent = counts.total;
-            document.getElementById('stat-comments').textContent = counts.comments;
-            document.getElementById('stat-issues').textContent = counts.issues;
+        const summary = await chrome.runtime.sendMessage({ type: 'GET_ANALYTICS_SUMMARY' });
+        if (summary && !summary.error) {
+            document.getElementById('stat-total').textContent = summary.total || 0;
+            const commentCount = (summary.byType || []).find(t => t.type === 'comment')?.count || 0;
+            const issueCount = (summary.byType || []).find(t => t.type === 'issue')?.count || 0;
+            document.getElementById('stat-comments').textContent = commentCount;
+            document.getElementById('stat-issues').textContent = issueCount;
 
-            // Render recent activity
-            const listEl = document.getElementById('activity-list');
-            if (counts.recent && counts.recent.length > 0) {
-                listEl.innerHTML = '';
-                for (const item of counts.recent) {
-                    const icon = item.type === 'issue' ? '\ud83d\udc1b' : '\ud83d\udcac';
-                    const time = item.created_at ? new Date(item.created_at).toLocaleString() : '';
-                    const el = document.createElement('div');
-                    el.className = 'activity-item';
-                    el.innerHTML = `
-                        <span class="activity-type">${icon}</span>
-                        <div class="activity-body">
-                            <div class="activity-title">${escHtml(item.title || item.content || '(untitled)')}</div>
-                            <div class="activity-meta">${escHtml(time)}</div>
-                        </div>`;
-                    listEl.appendChild(el);
-                }
-            }
+            // Render top annotated pages
+            renderTopPages(summary.topUrls || []);
         }
     } catch { /* non-critical */ }
 }
+
+function renderTopPages(topUrls) {
+    const listEl = document.getElementById('activity-list');
+    document.getElementById('activity-heading').textContent = 'Top Annotated Pages';
+    if (topUrls.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">No annotations yet</div>';
+        return;
+    }
+    listEl.innerHTML = '';
+    for (const page of topUrls) {
+        const el = document.createElement('div');
+        el.className = 'activity-item';
+        el.innerHTML = `
+            <span class="activity-type">\ud83d\udcc4</span>
+            <div class="activity-body">
+                <div class="activity-title">${escHtml(page.source_title || page.source_url)}</div>
+                <div class="activity-meta">${page.count} annotation${page.count !== 1 ? 's' : ''}</div>
+            </div>`;
+        listEl.appendChild(el);
+    }
+}
+
+async function loadItemsList(typeFilter) {
+    const heading = document.getElementById('activity-heading');
+    heading.textContent = typeFilter === 'comment' ? 'All Comments' : typeFilter === 'issue' ? 'All Issues' : 'All Annotations';
+
+    const listEl = document.getElementById('activity-list');
+    listEl.innerHTML = '<div class="empty-state">Loading...</div>';
+
+    try {
+        const msg = { type: 'GET_ALL_ITEMS' };
+        if (typeFilter) msg.itemType = typeFilter;
+        const result = await chrome.runtime.sendMessage(msg);
+        const items = result.items || [];
+
+        if (items.length === 0) {
+            listEl.innerHTML = '<div class="empty-state">No items found</div>';
+            return;
+        }
+
+        listEl.innerHTML = '';
+        for (const item of items.slice(0, 50)) {
+            const icon = item.type === 'issue' ? '\ud83d\udc1b' : '\ud83d\udcac';
+            const time = item.created_at ? new Date(item.created_at).toLocaleString() : '';
+            const el = document.createElement('div');
+            el.className = 'activity-item';
+            el.innerHTML = `
+                <span class="activity-type">${icon}</span>
+                <div class="activity-body">
+                    <div class="activity-title">${escHtml(item.title || item.content || '(untitled)')}</div>
+                    <div class="activity-meta">${escHtml(item.source_title || item.source_url || '')}${time ? ' \u00b7 ' + escHtml(time) : ''}</div>
+                </div>`;
+            listEl.appendChild(el);
+        }
+    } catch {
+        listEl.innerHTML = '<div class="empty-state">Failed to load items</div>';
+    }
+}
+
+// Stat card click handlers
+document.querySelectorAll('.stat-card.clickable').forEach(card => {
+    card.addEventListener('click', () => {
+        const action = card.dataset.action;
+        if (action === 'rules') {
+            document.querySelector('[data-tab="delivery"]').click();
+            return;
+        }
+        const typeFilter = action === 'comments' ? 'comment' : action === 'issues' ? 'issue' : null;
+        loadItemsList(typeFilter);
+    });
+});
 
 // ------------------------------------------------------------------ Account
 
