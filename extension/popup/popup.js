@@ -193,6 +193,145 @@ function formatTargetName(type, config) {
 
 document.getElementById('btn-more-targets').addEventListener('click', () => openDashboard('delivery'));
 
+// ------------------------------------------------------------------ quick add rule (#202)
+
+const quickAddForm = document.getElementById('quick-add-form');
+const qaTargetType = document.getElementById('qa-target-type');
+const qaRepo = document.getElementById('qa-repo');
+const qaWebhookUrl = document.getElementById('qa-webhook-url');
+const qaToken = document.getElementById('qa-token');
+const qaPattern = document.getElementById('qa-pattern');
+const qaStatus = document.getElementById('qa-status');
+const qaSuggestion = document.getElementById('quick-add-suggestion');
+
+/**
+ * Extract GitHub owner/repo from a URL.
+ */
+function extractGitHubRepo(url) {
+    if (!url) return null;
+    const m = url.match(/github\.com\/([^/?#]+)\/([^/?#]+)/);
+    if (!m) return null;
+    const owner = m[1];
+    const repo = m[2].replace(/\.git$/, '');
+    const skip = ['settings', 'orgs', 'marketplace', 'explore', 'topics', 'trending',
+        'collections', 'events', 'sponsors', 'notifications', 'new', 'login', 'signup',
+        'features', 'security', 'pricing', 'enterprise'];
+    if (skip.includes(owner)) return null;
+    return { owner, repo };
+}
+
+document.getElementById('btn-quick-add').addEventListener('click', () => {
+    quickAddForm.style.display = quickAddForm.style.display === 'none' ? 'block' : 'none';
+    if (quickAddForm.style.display === 'block') {
+        autoPopulateQuickAdd();
+    }
+});
+
+function autoPopulateQuickAdd() {
+    const gh = extractGitHubRepo(currentUrl);
+    if (gh) {
+        qaTargetType.value = 'github-issue';
+        qaRepo.value = `${gh.owner}/${gh.repo}`;
+        qaPattern.value = `*github.com/${gh.owner}/${gh.repo}*`;
+        qaSuggestion.textContent = `Detected GitHub repo: ${gh.owner}/${gh.repo}`;
+        qaSuggestion.style.display = 'block';
+        updateQuickAddFields();
+    } else {
+        // Default: URL pattern for current domain
+        try {
+            const domain = new URL(currentUrl).hostname;
+            qaPattern.value = `*${domain}*`;
+        } catch {}
+        qaSuggestion.style.display = 'none';
+        updateQuickAddFields();
+    }
+}
+
+function updateQuickAddFields() {
+    const type = qaTargetType.value;
+    const isGitHub = type === 'github-issue';
+    document.getElementById('qa-repo-field').style.display = isGitHub ? 'block' : 'none';
+    document.getElementById('qa-token-field').style.display = isGitHub ? 'block' : 'none';
+    document.getElementById('qa-webhook-field').style.display = !isGitHub ? 'block' : 'none';
+}
+
+qaTargetType.addEventListener('change', () => {
+    updateQuickAddFields();
+    qaSuggestion.style.display = 'none';
+});
+
+document.getElementById('qa-cancel').addEventListener('click', () => {
+    quickAddForm.style.display = 'none';
+    qaStatus.textContent = '';
+});
+
+document.getElementById('qa-save').addEventListener('click', async () => {
+    const type = qaTargetType.value;
+    const pattern = qaPattern.value.trim();
+    if (!pattern) {
+        qaStatus.textContent = 'Pattern is required';
+        qaStatus.style.color = '#ef4444';
+        return;
+    }
+
+    let target_config = {};
+    if (type === 'github-issue') {
+        const repo = qaRepo.value.trim();
+        const token = qaToken.value.trim();
+        if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) {
+            qaStatus.textContent = 'Invalid repo format (owner/repo)';
+            qaStatus.style.color = '#ef4444';
+            return;
+        }
+        if (!token) {
+            qaStatus.textContent = 'GitHub token is required';
+            qaStatus.style.color = '#ef4444';
+            return;
+        }
+        target_config = { repo, token, labels: ['clawmark'], assignees: [] };
+    } else {
+        const url = qaWebhookUrl.value.trim();
+        if (!url) {
+            qaStatus.textContent = 'URL is required';
+            qaStatus.style.color = '#ef4444';
+            return;
+        }
+        target_config = type === 'telegram'
+            ? { bot_token: url.split('/').pop(), chat_id: '' }
+            : type === 'slack' ? { webhook_url: url }
+            : type === 'lark' ? { webhook_url: url }
+            : { url };
+    }
+
+    qaStatus.textContent = 'Saving...';
+    qaStatus.style.color = '#888';
+
+    try {
+        const result = await chrome.runtime.sendMessage({
+            type: 'CREATE_ROUTING_RULE',
+            data: {
+                rule_type: 'url_pattern',
+                pattern,
+                target_type: type,
+                target_config,
+                priority: 50,
+            },
+        });
+        if (result.error) throw new Error(result.error);
+        qaStatus.textContent = 'Rule created!';
+        qaStatus.style.color = '#22c55e';
+        // Refresh targets and hide form after a moment
+        setTimeout(() => {
+            quickAddForm.style.display = 'none';
+            qaStatus.textContent = '';
+            loadDeliveryTargets();
+        }, 1000);
+    } catch (err) {
+        qaStatus.textContent = `Failed: ${err.message}`;
+        qaStatus.style.color = '#ef4444';
+    }
+});
+
 // ------------------------------------------------------------------ annotation stats
 
 async function loadAnnotationStats() {

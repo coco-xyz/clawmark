@@ -216,6 +216,79 @@
 
         .target-footer button:hover { background: rgba(88,101,242,0.3); color: #fff; }
 
+        .quick-add-form {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 10px;
+            margin-top: 8px;
+        }
+        .quick-add-header {
+            font-size: 12px;
+            font-weight: 600;
+            color: #e0e0e0;
+            margin-bottom: 8px;
+        }
+        .quick-add-suggestion {
+            font-size: 11px;
+            color: #22c55e;
+            background: rgba(34,197,94,0.1);
+            border: 1px solid rgba(34,197,94,0.2);
+            border-radius: 4px;
+            padding: 6px 8px;
+            margin-bottom: 8px;
+        }
+        .quick-add-field { margin-bottom: 6px; }
+        .quick-add-field label {
+            display: block;
+            font-size: 10px;
+            color: #888;
+            margin-bottom: 2px;
+        }
+        .quick-add-field input, .quick-add-field select {
+            width: 100%;
+            padding: 4px 6px;
+            font-size: 11px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: #e0e0e0;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        .quick-add-field input:focus, .quick-add-field select:focus {
+            border-color: #5865f2;
+            outline: none;
+        }
+        .quick-add-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .quick-add-actions button {
+            flex: 1;
+            padding: 5px 8px;
+            font-size: 11px;
+            border-radius: 4px;
+            border: 1px solid #333;
+            background: transparent;
+            color: #aaa;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .quick-add-actions button.primary {
+            background: #5865f2;
+            border-color: #5865f2;
+            color: #fff;
+        }
+        .quick-add-actions button.primary:hover { background: #4752c4; }
+        .quick-add-actions button:hover { background: #222; }
+        .quick-add-status {
+            font-size: 11px;
+            margin-top: 4px;
+            min-height: 14px;
+        }
+
         .no-targets {
             font-size: 12px;
             color: #555;
@@ -521,6 +594,43 @@
             </div>
             <div class="target-footer">
                 <button id="btn-more-targets">Manage rules</button>
+                <button id="btn-quick-add">+ Add rule</button>
+            </div>
+            <!-- Quick add rule form (#202) -->
+            <div class="quick-add-form" id="quick-add-form" style="display:none">
+                <div class="quick-add-header">Add delivery rule</div>
+                <div class="quick-add-suggestion" id="quick-add-suggestion" style="display:none"></div>
+                <div class="quick-add-field">
+                    <label>Target type</label>
+                    <select id="qa-target-type">
+                        <option value="github-issue">GitHub Issue</option>
+                        <option value="webhook">Webhook</option>
+                        <option value="slack">Slack</option>
+                        <option value="telegram">Telegram</option>
+                        <option value="lark">Lark</option>
+                    </select>
+                </div>
+                <div class="quick-add-field" id="qa-repo-field">
+                    <label>Repository (owner/repo)</label>
+                    <input type="text" id="qa-repo" placeholder="owner/repo" />
+                </div>
+                <div class="quick-add-field" id="qa-webhook-field" style="display:none">
+                    <label>URL</label>
+                    <input type="text" id="qa-webhook-url" placeholder="https://..." />
+                </div>
+                <div class="quick-add-field" id="qa-token-field">
+                    <label>Token (PAT)</label>
+                    <input type="password" id="qa-token" placeholder="ghp_..." />
+                </div>
+                <div class="quick-add-field">
+                    <label>Match pattern</label>
+                    <input type="text" id="qa-pattern" placeholder="*github.com/owner/repo*" />
+                </div>
+                <div class="quick-add-actions">
+                    <button id="qa-cancel">Cancel</button>
+                    <button id="qa-save" class="primary">Save</button>
+                </div>
+                <div class="quick-add-status" id="qa-status"></div>
             </div>
         </div>
 
