@@ -153,8 +153,13 @@
                 <h1>Connection</h1>
                 <div class="card">
                     <h3>Server URL</h3>
-                    <p class="help-text">ClawMark server endpoint.</p>
-                    <input type="text" class="input" id="opt-server-url" readonly>
+                    <p class="help-text">ClawMark server endpoint. Change this to connect to a different server.</p>
+                    <div class="server-url-row">
+                        <input type="text" class="input" id="opt-server-url" placeholder="https://api.coco.xyz/clawmark">
+                        <button class="btn btn-primary" id="btn-save-server">Save</button>
+                        <button class="btn btn-secondary" id="btn-test-server">Test</button>
+                    </div>
+                    <button class="btn btn-link" id="btn-reset-server">Reset to default</button>
                     <div class="connection-status" id="connection-status">
                         <span class="status-dot" id="conn-dot"></span>
                         <span id="conn-text">Checking...</span>

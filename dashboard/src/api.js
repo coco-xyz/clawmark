@@ -17,6 +17,18 @@ export function getServerUrl() {
     return localStorage.getItem(STORAGE_KEY_SERVER) || DEFAULT_SERVER;
 }
 
+export function setServerUrl(url) {
+    if (url) {
+        localStorage.setItem(STORAGE_KEY_SERVER, url.replace(/\/+$/, ''));
+    } else {
+        localStorage.removeItem(STORAGE_KEY_SERVER);
+    }
+}
+
+export function getDefaultServerUrl() {
+    return DEFAULT_SERVER;
+}
+
 export function getToken() {
     return localStorage.getItem(STORAGE_KEY_TOKEN);
 }
@@ -125,6 +137,19 @@ export async function updateRoutingRule(id, data) {
 export async function deleteRoutingRule(id) {
     return apiFetch(`/api/v2/routing/rules/${id}`, {
         method: 'DELETE',
+    });
+}
+
+// ---- User Settings (per-user server-side storage)
+
+export async function getUserSettings() {
+    return apiFetch('/api/v2/user/settings');
+}
+
+export async function updateUserSettings(patch) {
+    return apiFetch('/api/v2/user/settings', {
+        method: 'PUT',
+        body: patch,
     });
 }
 

@@ -717,6 +717,24 @@ function v2Auth(req, res, next) {
     return res.status(401).json({ error: 'Authentication required (JWT or API key)' });
 }
 
+// -- GET /api/v2/user/settings — get current user's settings
+app.get('/api/v2/user/settings', apiReadLimiter, v2Auth, (req, res) => {
+    if (!req.v2Auth?.userId) return res.status(401).json({ error: 'JWT auth required' });
+    const settings = itemsDb.getUserSettings(req.v2Auth.userId);
+    res.json({ settings });
+});
+
+// -- PUT /api/v2/user/settings — update current user's settings (merge patch)
+app.put('/api/v2/user/settings', apiWriteLimiter, v2Auth, (req, res) => {
+    if (!req.v2Auth?.userId) return res.status(401).json({ error: 'JWT auth required' });
+    const patch = req.body;
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        return res.status(400).json({ error: 'Body must be a JSON object' });
+    }
+    const settings = itemsDb.updateUserSettings(req.v2Auth.userId, patch);
+    res.json({ settings });
+});
+
 // -- POST /api/v2/items — create item with full V2 schema
 app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
     const { type, source_url, source_title, quote, quote_position,

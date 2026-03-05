@@ -8,11 +8,12 @@
 'use strict';
 
 import {
-    isLoggedIn, getUser, setAuth, clearAuth, getServerUrl,
+    isLoggedIn, getUser, setAuth, clearAuth, getServerUrl, setServerUrl, getDefaultServerUrl,
     loginWithCode, getMe, checkHealth,
     getAnalyticsSummary, getItems,
     getRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule,
     checkLatestVersion,
+    getUserSettings, updateUserSettings,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -280,6 +281,13 @@ document.getElementById('btn-sign-out').addEventListener('click', () => {
 // ------------------------------------------------------------------ Connection
 
 async function loadConnection() {
+    // Try loading server URL from server-side user settings first
+    try {
+        const { settings } = await getUserSettings();
+        if (settings?.server_url) {
+            setServerUrl(settings.server_url);
+        }
+    } catch { /* fallback to localStorage */ }
     document.getElementById('opt-server-url').value = getServerUrl();
     await testConnection();
 }
@@ -306,6 +314,67 @@ async function testConnection() {
         versionEl.textContent = '\u2014';
     }
 }
+
+document.getElementById('btn-save-server').addEventListener('click', async () => {
+    const input = document.getElementById('opt-server-url');
+    const url = input.value.trim();
+    if (!url) {
+        showToast('Server URL cannot be empty', 'error');
+        return;
+    }
+    setServerUrl(url);
+    input.value = getServerUrl();
+    // Persist to server-side user settings
+    try {
+        await updateUserSettings({ server_url: getServerUrl() });
+    } catch { /* localStorage fallback already saved */ }
+    showToast('Server URL saved');
+    await testConnection();
+});
+
+document.getElementById('btn-test-server').addEventListener('click', async () => {
+    // Temporarily use the input value for testing without saving
+    const input = document.getElementById('opt-server-url');
+    const url = input.value.trim();
+    if (!url) {
+        showToast('Server URL cannot be empty', 'error');
+        return;
+    }
+    const dot = document.getElementById('conn-dot');
+    const text = document.getElementById('conn-text');
+    const versionEl = document.getElementById('server-version');
+    dot.classList.remove('connected');
+    text.textContent = 'Testing...';
+    try {
+        const res = await fetch(url.replace(/\/+$/, '') + '/health');
+        const health = await res.json();
+        if (health.status === 'ok') {
+            dot.classList.add('connected');
+            text.textContent = 'Connected';
+            versionEl.textContent = `Server v${health.version || '?'}`;
+            showToast('Connection successful');
+        } else {
+            text.textContent = 'Server error';
+            versionEl.textContent = '\u2014';
+            showToast('Server returned an error', 'error');
+        }
+    } catch {
+        text.textContent = 'Cannot reach server';
+        versionEl.textContent = '\u2014';
+        showToast('Cannot reach server', 'error');
+    }
+});
+
+document.getElementById('btn-reset-server').addEventListener('click', async () => {
+    setServerUrl(null);
+    document.getElementById('opt-server-url').value = getDefaultServerUrl();
+    // Clear server-side setting too
+    try {
+        await updateUserSettings({ server_url: null });
+    } catch { /* ignore */ }
+    showToast('Server URL reset to default');
+    await testConnection();
+});
 
 // ------------------------------------------------------------------ Delivery Rules
 
