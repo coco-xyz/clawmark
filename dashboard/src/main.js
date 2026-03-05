@@ -161,6 +161,30 @@ function formatTarget(type, config) {
     }
 }
 
+const DISPATCH_ICONS = {
+    'github-issue': '\ud83d\udc19', 'lark': '\ud83d\udc26', 'telegram': '\u2708\ufe0f',
+    'webhook': '\ud83d\udd17', 'slack': '\ud83d\udcac', 'email': '\u2709\ufe0f',
+    'linear': '\ud83d\udcca', 'jira': '\ud83c\udfaf', 'hxa-connect': '\ud83e\udd16',
+};
+
+const DISPATCH_STATUS_COLORS = {
+    'delivered': '#22c55e', 'pending': '#f59e0b', 'failed': '#ef4444', 'exhausted': '#dc2626',
+};
+
+function renderItemDispatches(dispatches) {
+    if (!dispatches || dispatches.length === 0) return '';
+    const badges = dispatches.map(d => {
+        const icon = DISPATCH_ICONS[d.target_type] || '\u27a1';
+        const color = DISPATCH_STATUS_COLORS[d.status] || '#888';
+        const label = d.target_type.replace(/-/g, ' ');
+        const link = d.external_url
+            ? ` <a href="${escHtml(d.external_url)}" target="_blank" class="dispatch-ext-link" title="Open">\u2197</a>`
+            : '';
+        return `<span class="item-dispatch-badge" style="border-color:${color}" title="${escHtml(label)} \u2014 ${d.status}">${icon}${link}</span>`;
+    }).join('');
+    return `<div class="item-dispatch-row">${badges}</div>`;
+}
+
 // ------------------------------------------------------------------ Overview
 
 async function loadOverview() {
@@ -228,16 +252,22 @@ async function loadItemsList(typeFilter) {
         for (const item of items.slice(0, 50)) {
             const icon = item.type === 'issue' ? '\ud83d\udc1b' : '\ud83d\udcac';
             const time = item.created_at ? new Date(item.created_at).toLocaleString() : '';
+            const sourceLabel = item.source_title || (item.source_url ? new URL(item.source_url).hostname + new URL(item.source_url).pathname.substring(0, 30) : '');
             const el = document.createElement('div');
             el.className = 'activity-item' + (item.source_url ? ' activity-item-link' : '');
             el.innerHTML = `
                 <span class="activity-type">${icon}</span>
                 <div class="activity-body">
                     <div class="activity-title">${escHtml(item.title || item.content || '(untitled)')}</div>
-                    <div class="activity-meta">${escHtml(item.source_title || item.source_url || '')}${time ? ' \u00b7 ' + escHtml(time) : ''}</div>
+                    ${sourceLabel ? `<div class="activity-source">\ud83d\udcc4 ${escHtml(sourceLabel)}</div>` : ''}
+                    ${renderItemDispatches(item.dispatches)}
+                    <div class="activity-meta">${time ? escHtml(time) : ''}</div>
                 </div>`;
             if (item.source_url) {
-                el.addEventListener('click', () => window.open(item.source_url, '_blank'));
+                el.addEventListener('click', (e) => {
+                    if (e.target.closest('.dispatch-ext-link')) return;
+                    window.open(item.source_url, '_blank');
+                });
             }
             listEl.appendChild(el);
         }

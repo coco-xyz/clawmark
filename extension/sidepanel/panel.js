@@ -188,6 +188,8 @@ function renderItems() {
         const time = formatTime(item.created_at);
         const priorityClass = ['high', 'critical'].includes(item.priority) ? item.priority : '';
 
+        const sourceHost = item.source_url ? (() => { try { return new URL(item.source_url).hostname; } catch { return ''; } })() : '';
+
         return `
             <div class="item-card" data-id="${item.id}">
                 <div class="item-header">
@@ -197,6 +199,7 @@ function renderItems() {
                 </div>
                 ${item.title ? `<div class="item-title">${escapeHtml(item.title)}</div>` : ''}
                 ${item.quote ? `<div class="item-quote">${escapeHtml(item.quote)}</div>` : ''}
+                ${sourceHost ? `<div class="item-source" title="${escapeHtml(item.source_url)}"><span class="source-icon">\ud83d\udcc4</span> ${escapeHtml(item.source_title || sourceHost)}</div>` : ''}
                 ${renderDispatchBadges(item.dispatches)}
                 <div class="item-meta">
                     <span>${item.created_by}</span>
@@ -216,6 +219,8 @@ function renderItems() {
 function renderThread(item) {
     const tags = typeof item.tags === 'string' ? JSON.parse(item.tags || '[]') : (item.tags || []);
 
+    const threadSourceHost = item.source_url ? (() => { try { return new URL(item.source_url).hostname; } catch { return ''; } })() : '';
+
     threadHeader.innerHTML = `
         <div class="item-card" style="cursor:default;margin-bottom:0;">
             <div class="item-header">
@@ -224,6 +229,7 @@ function renderThread(item) {
             </div>
             ${item.title ? `<div class="item-title">${escapeHtml(item.title)}</div>` : ''}
             ${item.quote ? `<div class="item-quote">${escapeHtml(item.quote)}</div>` : ''}
+            ${threadSourceHost ? `<div class="item-source"><span class="source-icon">\ud83d\udcc4</span> <a href="${escapeHtml(item.source_url)}" target="_blank" class="source-link">${escapeHtml(item.source_title || threadSourceHost)}</a></div>` : ''}
             ${tags.length > 0 ? `<div class="item-tags">${tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
             ${renderDispatchDetails(item.dispatches, item.id)}
         </div>
