@@ -10,7 +10,7 @@
 'use strict';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
-    || '530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com';
+    || 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
 
 export function getRedirectUri() {
     return window.location.origin + window.location.pathname;
