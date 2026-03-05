@@ -288,6 +288,16 @@
             margin-top: 4px;
             min-height: 14px;
         }
+        .qa-no-auth-hint {
+            font-size: 10px;
+            color: #f59e0b;
+            margin-top: 3px;
+        }
+        .qa-add-auth-link {
+            color: #5865f2;
+            cursor: pointer;
+        }
+        .qa-add-auth-link:hover { color: #7c8af2; }
 
         .no-targets {
             font-size: 12px;
@@ -610,17 +620,18 @@
                         <option value="lark">Lark</option>
                     </select>
                 </div>
-                <div class="quick-add-field" id="qa-repo-field">
+                <div class="quick-add-field" id="qa-auth-field">
+                    <label>Auth</label>
+                    <select id="qa-auth-id">
+                        <option value="">(loading...)</option>
+                    </select>
+                    <div class="qa-no-auth-hint" id="qa-no-auth-hint" style="display:none">
+                        No matching auth found. <span class="qa-add-auth-link" id="qa-add-auth-link">Add one in Dashboard</span>.
+                    </div>
+                </div>
+                <div class="quick-add-field" id="qa-repo-field" style="display:none">
                     <label>Repository (owner/repo)</label>
                     <input type="text" id="qa-repo" placeholder="owner/repo" />
-                </div>
-                <div class="quick-add-field" id="qa-webhook-field" style="display:none">
-                    <label>URL</label>
-                    <input type="text" id="qa-webhook-url" placeholder="https://..." />
-                </div>
-                <div class="quick-add-field" id="qa-token-field">
-                    <label>Token (PAT)</label>
-                    <input type="password" id="qa-token" placeholder="ghp_..." />
                 </div>
                 <div class="quick-add-field">
                     <label>Match pattern</label>

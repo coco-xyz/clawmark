@@ -429,6 +429,10 @@ async function handleMessage(message, sender) {
         case 'DELETE_ROUTING_RULE':
             return apiRequest('DELETE', `/api/v2/routing/rules/${message.id}`);
 
+        // Auth management
+        case 'GET_AUTHS':
+            return apiRequest('GET', '/api/v2/auths');
+
         // Retry failed dispatches for an item (#200)
         case 'RETRY_DISPATCHES':
             return apiRequest('POST', `/api/v2/distributions/${message.itemId}/retry`);
