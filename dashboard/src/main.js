@@ -93,14 +93,10 @@ function showApp(user) {
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
 
-    // Populate sidebar user
-    const userEl = document.getElementById('sidebar-user');
-    if (user) {
-        userEl.textContent = user.name || user.email || '';
-    }
+    // Populate sidebar account
+    loadSidebarAccount(user);
 
     loadOverview();
-    loadAccount();
     loadConnection();
     loadAuthsList();
     loadRules();
@@ -318,16 +314,16 @@ document.querySelectorAll('.stat-card.clickable').forEach(card => {
     });
 });
 
-// ------------------------------------------------------------------ Account
+// ------------------------------------------------------------------ Account (sidebar)
 
-function loadAccount() {
-    const user = getUser();
+function loadSidebarAccount(user) {
+    if (!user) user = getUser();
     if (!user) return;
 
-    document.getElementById('account-name').textContent = user.name || user.email || 'User';
-    document.getElementById('account-email').textContent = user.email || '';
+    document.getElementById('sidebar-account-name').textContent = user.name || user.email || 'User';
+    document.getElementById('sidebar-account-email').textContent = user.email || '';
 
-    const avatarEl = document.getElementById('account-avatar');
+    const avatarEl = document.getElementById('sidebar-avatar');
     if (user.picture) {
         avatarEl.textContent = '';
         const img = document.createElement('img');
