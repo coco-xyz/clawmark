@@ -17,6 +17,18 @@ export function getServerUrl() {
     return localStorage.getItem(STORAGE_KEY_SERVER) || DEFAULT_SERVER;
 }
 
+export function setServerUrl(url) {
+    if (url) {
+        localStorage.setItem(STORAGE_KEY_SERVER, url.replace(/\/+$/, ''));
+    } else {
+        localStorage.removeItem(STORAGE_KEY_SERVER);
+    }
+}
+
+export function getDefaultServerUrl() {
+    return DEFAULT_SERVER;
+}
+
 export function getToken() {
     return localStorage.getItem(STORAGE_KEY_TOKEN);
 }

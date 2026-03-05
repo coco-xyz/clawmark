@@ -8,7 +8,7 @@
 'use strict';
 
 import {
-    isLoggedIn, getUser, setAuth, clearAuth, getServerUrl,
+    isLoggedIn, getUser, setAuth, clearAuth, getServerUrl, setServerUrl, getDefaultServerUrl,
     loginWithCode, getMe, checkHealth,
     getAnalyticsSummary, getItems,
     getRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule,
@@ -306,6 +306,59 @@ async function testConnection() {
         versionEl.textContent = '\u2014';
     }
 }
+
+document.getElementById('btn-save-server').addEventListener('click', async () => {
+    const input = document.getElementById('opt-server-url');
+    const url = input.value.trim();
+    if (!url) {
+        showToast('Server URL cannot be empty', 'error');
+        return;
+    }
+    setServerUrl(url);
+    input.value = getServerUrl();
+    showToast('Server URL saved');
+    await testConnection();
+});
+
+document.getElementById('btn-test-server').addEventListener('click', async () => {
+    // Temporarily use the input value for testing without saving
+    const input = document.getElementById('opt-server-url');
+    const url = input.value.trim();
+    if (!url) {
+        showToast('Server URL cannot be empty', 'error');
+        return;
+    }
+    const dot = document.getElementById('conn-dot');
+    const text = document.getElementById('conn-text');
+    const versionEl = document.getElementById('server-version');
+    dot.classList.remove('connected');
+    text.textContent = 'Testing...';
+    try {
+        const res = await fetch(url.replace(/\/+$/, '') + '/health');
+        const health = await res.json();
+        if (health.status === 'ok') {
+            dot.classList.add('connected');
+            text.textContent = 'Connected';
+            versionEl.textContent = `Server v${health.version || '?'}`;
+            showToast('Connection successful');
+        } else {
+            text.textContent = 'Server error';
+            versionEl.textContent = '\u2014';
+            showToast('Server returned an error', 'error');
+        }
+    } catch {
+        text.textContent = 'Cannot reach server';
+        versionEl.textContent = '\u2014';
+        showToast('Cannot reach server', 'error');
+    }
+});
+
+document.getElementById('btn-reset-server').addEventListener('click', async () => {
+    setServerUrl(null);
+    document.getElementById('opt-server-url').value = getDefaultServerUrl();
+    showToast('Server URL reset to default');
+    await testConnection();
+});
 
 // ------------------------------------------------------------------ Delivery Rules
 
