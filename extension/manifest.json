@@ -31,8 +31,8 @@
                 "<all_urls>"
             ],
             "exclude_matches": [
-                "*://labs.coco.xyz/clawmark/dashboard/*",
-                "*://jessie.coco.site/clawmark-dashboard/*"
+                "*://labs.coco.xyz/clawmark/dashboard*",
+                "*://jessie.coco.site/clawmark-dashboard*"
             ],
             "js": [
                 "content/screenshot.js",
