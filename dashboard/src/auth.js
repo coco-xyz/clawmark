@@ -9,7 +9,8 @@
 
 'use strict';
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
+const GOOGLE_CLIENT_ID = (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.GOOGLE_CLIENT_ID)
+    || (import.meta.env && import.meta.env.VITE_GOOGLE_CLIENT_ID)
     || 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
 
 export function getRedirectUri() {
