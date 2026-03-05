@@ -916,15 +916,31 @@
 
             setProgress(100);
 
-            // Build informative toast with dispatch destinations
+            // Build informative toast with dispatch status (#200)
             const dispatched = response.dispatched || [];
-            const targetNames = dispatched.length > 0
-                ? dispatched.map(d => d.label || d.target_type).join(', ')
-                : resolvedTargets.map(t => formatTargetLabel(t)).join(', ');
-            const summary = targetNames
-                ? `Saved \u2192 ${targetNames}`
-                : 'Saved to ClawMark';
-            showToast(summary, 'success');
+            const sent = dispatched.filter(d => d.status === 'sent');
+            const failed = dispatched.filter(d => d.status === 'failed' || d.status === 'timeout');
+
+            if (failed.length > 0 && sent.length > 0) {
+                // Partial success
+                const sentNames = sent.map(d => d.label || d.target_type).join(', ');
+                const failedNames = failed.map(d => d.label || d.target_type).join(', ');
+                showToast(`已保存 \u2192 ${sentNames}\n\u26A0 投递失败: ${failedNames}`, 'warning');
+            } else if (failed.length > 0 && sent.length === 0) {
+                // All dispatches failed, but item was saved
+                const failedNames = failed.map(d => d.label || d.target_type).join(', ');
+                showToast(`已保存到 ClawMark\n\u274C 投递失败: ${failedNames}`, 'warning');
+            } else {
+                // All succeeded or no dispatches
+                const targetNames = sent.length > 0
+                    ? sent.map(d => d.label || d.target_type).join(', ')
+                    : resolvedTargets.map(t => formatTargetLabel(t)).join(', ');
+                const summary = targetNames
+                    ? `Saved \u2192 ${targetNames}`
+                    : 'Saved to ClawMark';
+                showToast(summary, 'success');
+            }
+
             resolvedTargets = [];
             hideInputOverlay();
             maybeShowShortcutTip();
@@ -988,10 +1004,17 @@
 
     function showToast(message, type = 'success') {
         if (!toast) return;
-        toast.textContent = message;
+        // Support multi-line messages (#200)
+        if (message.includes('\n')) {
+            toast.innerHTML = escHtml(message).replace(/\n/g, '<br>');
+        } else {
+            toast.textContent = message;
+        }
         toast.className = `visible ${type}`;
         clearTimeout(toast._timer);
-        toast._timer = setTimeout(() => toast.classList.remove('visible'), 3000);
+        // Show warnings longer so user can read failure details
+        const duration = type === 'warning' ? 5000 : 3000;
+        toast._timer = setTimeout(() => toast.classList.remove('visible'), duration);
     }
 
     // ----------------------------------------------------------- selection detection
