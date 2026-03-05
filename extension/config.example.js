@@ -11,7 +11,7 @@
 
 const ClawMarkConfig = {
     DEFAULT_SERVER: 'https://api.coco.xyz/clawmark',
-    DASHBOARD_URL: 'https://labs.coco.xyz/clawmark/dash/',
+    DASHBOARD_URL: 'https://labs.coco.xyz/clawmark/dashboard',
     GOOGLE_CLIENT_ID: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
     EXTENSION_ID: '',
     ENV: 'production',

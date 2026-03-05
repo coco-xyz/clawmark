@@ -39,7 +39,7 @@ case "$ENV" in
     ;;
   production)
     SERVER_URL="https://api.coco.xyz/clawmark"
-    DASHBOARD_URL="https://labs.coco.xyz/clawmark/dash/"
+    DASHBOARD_URL="https://labs.coco.xyz/clawmark/dashboard"
     ;;
   *)
     err "Unknown environment: $ENV (use 'test' or 'production')"
