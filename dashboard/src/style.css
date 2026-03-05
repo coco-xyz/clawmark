@@ -336,6 +336,41 @@ label {
 
 .activity-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
+.activity-source {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.item-dispatch-row {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.item-dispatch-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 12px;
+    padding: 1px 6px;
+    border: 1px solid;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.03);
+}
+
+.dispatch-ext-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 11px;
+}
+
+.dispatch-ext-link:hover { text-decoration: underline; }
+
 /* ---- Account ---- */
 
 .account-user {
