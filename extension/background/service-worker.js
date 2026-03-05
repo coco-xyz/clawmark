@@ -79,8 +79,8 @@ async function loginWithGoogle() {
             type: 'popup',
             width: 500,
             height: 650,
-            left: Math.round((screen.availWidth - 500) / 2),
-            top: Math.round((screen.availHeight - 650) / 2),
+            left: 200,
+            top: 100,
         }, (win) => {
             if (!win) { reject(new Error('Failed to open auth window')); return; }
             const windowId = win.id;
