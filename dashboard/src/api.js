@@ -45,15 +45,37 @@ export function getUser() {
 export function setAuth(token, user) {
     localStorage.setItem(STORAGE_KEY_TOKEN, token);
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
+    // Sync to extension (fire-and-forget)
+    pushAuthToExtension(token, user);
 }
 
 export function clearAuth() {
     localStorage.removeItem(STORAGE_KEY_TOKEN);
     localStorage.removeItem(STORAGE_KEY_USER);
+    // Sync logout to extension
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        try {
+            chrome.runtime.sendMessage(EXTENSION_ID, { type: 'LOGOUT' }, () => {});
+        } catch { /* ignore */ }
+    }
 }
 
 export function isLoggedIn() {
     return !!getToken();
+}
+
+/**
+ * Push auth token to the extension so it stays in sync.
+ */
+function pushAuthToExtension(token, user) {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+    try {
+        chrome.runtime.sendMessage(EXTENSION_ID, {
+            type: 'SET_AUTH_STATE',
+            authToken: token,
+            authUser: user,
+        }, () => { /* ignore response */ });
+    } catch { /* extension not installed */ }
 }
 
 /**

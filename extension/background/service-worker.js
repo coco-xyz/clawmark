@@ -340,6 +340,17 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         loginWithGoogle().then(sendResponse).catch(err => sendResponse({ error: err.message }));
         return true;
     }
+    if (message.type === 'SET_AUTH_STATE') {
+        // Dashboard pushes its token to the extension after login
+        if (message.authToken && message.authUser) {
+            setAuthState(message.authToken, message.authUser)
+                .then(() => sendResponse({ success: true }))
+                .catch(err => sendResponse({ error: err.message }));
+            return true;
+        }
+        sendResponse({ error: 'Missing authToken or authUser' });
+        return;
+    }
     if (message.type === 'LOGOUT') {
         logout().then(sendResponse).catch(err => sendResponse({ error: err.message }));
         return true;
