@@ -233,6 +233,13 @@ function initDb(dataDir) {
     }
     db.exec(`CREATE INDEX IF NOT EXISTS idx_dispatch_log_app ON dispatch_log(app_id)`);
 
+    // ----------------------------- schema migration: users.settings (per-user preferences)
+    const userCols = db.pragma('table_info(users)').map(c => c.name);
+    if (!userCols.includes('settings')) {
+        db.exec(`ALTER TABLE users ADD COLUMN settings TEXT DEFAULT '{}'`);
+        console.log('[db] migrated: added column users.settings');
+    }
+
     // ----------------------------- data migration: clear legacy test data (data isolation Phase 1)
     // Kevin directive: "don't do data migration — just clear the database and rebuild"
     // Not yet in production; all existing data is test data. Clean slate approach.
@@ -955,6 +962,22 @@ function initDb(dataDir) {
         return row ? row.role : null;
     }
 
+    // ------------------------------------------------- user settings (#199)
+
+    function getUserSettings(userId) {
+        const row = db.prepare('SELECT settings FROM users WHERE id = ?').get(userId);
+        if (!row || !row.settings) return {};
+        try { return JSON.parse(row.settings); } catch { return {}; }
+    }
+
+    function updateUserSettings(userId, patch) {
+        const current = getUserSettings(userId);
+        const merged = { ...current, ...patch };
+        db.prepare('UPDATE users SET settings = ? WHERE id = ?')
+            .run(JSON.stringify(merged), userId);
+        return merged;
+    }
+
     // ------------------------------------------------- dispatch log methods (#93)
 
     const dispatchStmts = {
@@ -1350,6 +1373,9 @@ function initDb(dataDir) {
         updateOrgMemberRole,
         getOrgMembers,
         getOrgMemberRole,
+        // User Settings
+        getUserSettings,
+        updateUserSettings,
     };
 }
 

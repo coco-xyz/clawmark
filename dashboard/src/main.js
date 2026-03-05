@@ -13,6 +13,7 @@ import {
     getAnalyticsSummary, getItems,
     getRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule,
     checkLatestVersion,
+    getUserSettings, updateUserSettings,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -280,6 +281,13 @@ document.getElementById('btn-sign-out').addEventListener('click', () => {
 // ------------------------------------------------------------------ Connection
 
 async function loadConnection() {
+    // Try loading server URL from server-side user settings first
+    try {
+        const { settings } = await getUserSettings();
+        if (settings?.server_url) {
+            setServerUrl(settings.server_url);
+        }
+    } catch { /* fallback to localStorage */ }
     document.getElementById('opt-server-url').value = getServerUrl();
     await testConnection();
 }
@@ -316,6 +324,10 @@ document.getElementById('btn-save-server').addEventListener('click', async () =>
     }
     setServerUrl(url);
     input.value = getServerUrl();
+    // Persist to server-side user settings
+    try {
+        await updateUserSettings({ server_url: getServerUrl() });
+    } catch { /* localStorage fallback already saved */ }
     showToast('Server URL saved');
     await testConnection();
 });
@@ -356,6 +368,10 @@ document.getElementById('btn-test-server').addEventListener('click', async () =>
 document.getElementById('btn-reset-server').addEventListener('click', async () => {
     setServerUrl(null);
     document.getElementById('opt-server-url').value = getDefaultServerUrl();
+    // Clear server-side setting too
+    try {
+        await updateUserSettings({ server_url: null });
+    } catch { /* ignore */ }
     showToast('Server URL reset to default');
     await testConnection();
 });

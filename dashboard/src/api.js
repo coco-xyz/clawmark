@@ -140,6 +140,19 @@ export async function deleteRoutingRule(id) {
     });
 }
 
+// ---- User Settings (per-user server-side storage)
+
+export async function getUserSettings() {
+    return apiFetch('/api/v2/user/settings');
+}
+
+export async function updateUserSettings(patch) {
+    return apiFetch('/api/v2/user/settings', {
+        method: 'PUT',
+        body: patch,
+    });
+}
+
 // ---- Version check (GitHub API, no auth needed)
 
 export async function checkLatestVersion() {
