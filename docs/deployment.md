@@ -167,6 +167,18 @@ curl http://localhost:3458/health
 # Returns: {"status":"ok","version":"2.0.0"}
 ```
 
+## CORS (Cross-Origin Dashboard)
+
+If the Dashboard is hosted on a different domain than the API (e.g., Dashboard on `labs.coco.xyz`, API on `api.coco.xyz`), add the Dashboard origin to `config.json`:
+
+```json
+{
+  "allowedOrigins": ["https://labs.coco.xyz"]
+}
+```
+
+Without this, the browser will block Dashboard → API requests with a CORS error ("Failed to fetch").
+
 ## Authentication
 
 ClawMark uses an invite code system. Configure codes in `config.json`:
