@@ -39,7 +39,7 @@ case "$ENV" in
     ;;
   production)
     SERVER_URL="https://api.coco.xyz/clawmark"
-    DASHBOARD_URL="https://labs.coco.xyz/clawmark/dash/"
+    DASHBOARD_URL="https://labs.coco.xyz/clawmark/dashboard"
     ;;
   *)
     err "Unknown environment: $ENV (use 'test' or 'production')"
@@ -68,7 +68,7 @@ cat > extension/config.js << CONFIGEOF
 const ClawMarkConfig = {
     DEFAULT_SERVER: '${SERVER_URL}',
     DASHBOARD_URL: '${DASHBOARD_URL}',
-    GOOGLE_CLIENT_ID: '530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com',
+    GOOGLE_CLIENT_ID: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
     EXTENSION_ID: 'blgnfnelakbffkgainibpeejlfbimikn',
     ENV: '${ENV}',
 };

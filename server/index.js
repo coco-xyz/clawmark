@@ -138,6 +138,23 @@ if (WEBHOOK.url && !config.distribution) {
 // ---------------------------------------------------------------------- express
 
 const app = express();
+
+// ---------------------------------------------------------------------- CORS
+const ALLOWED_ORIGINS = config.allowedOrigins || [];
+if (ALLOWED_ORIGINS.length) {
+    app.use((req, res, next) => {
+        const origin = req.headers.origin;
+        if (origin && ALLOWED_ORIGINS.includes(origin)) {
+            res.setHeader('Access-Control-Allow-Origin', origin);
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+            res.setHeader('Access-Control-Allow-Credentials', 'true');
+            if (req.method === 'OPTIONS') return res.sendStatus(204);
+        }
+        next();
+    });
+}
+
 app.use(express.json({ limit: '512kb' }));
 
 // Trust first proxy (for correct IP logging behind nginx/caddy)

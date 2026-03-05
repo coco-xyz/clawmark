@@ -16,7 +16,7 @@ importScripts('../config.js');
 
 const DEFAULT_SERVER = ClawMarkConfig.DEFAULT_SERVER;
 const GOOGLE_CLIENT_ID = ClawMarkConfig.GOOGLE_CLIENT_ID
-    || '530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com';
+    || 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
 
 async function getConfig() {
     const result = await chrome.storage.sync.get({
