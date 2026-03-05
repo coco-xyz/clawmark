@@ -181,6 +181,7 @@ function formatTargetName(type, config) {
     const cfg = typeof config === 'string' ? JSON.parse(config || '{}') : (config || {});
     switch (type) {
         case 'github-issue': return `GitHub: ${cfg.repo || '?'}`;
+        case 'gitlab-issue': return `GitLab: ${cfg.project_id || '?'}`;
         case 'lark': return 'Lark Webhook';
         case 'telegram': return `Telegram: ${cfg.chat_id || '?'}`;
         case 'slack': return `Slack: ${cfg.channel || 'webhook'}`;
@@ -209,6 +210,7 @@ let cachedAuths = [];
 // Map target types to compatible auth types (matches dashboard)
 const TARGET_AUTH_TYPES = {
     'github-issue': ['github-pat'],
+    'gitlab-issue': ['gitlab-pat'],
     'lark': ['lark-webhook'],
     'telegram': ['telegram-bot'],
     'webhook': ['webhook-secret'],
@@ -218,6 +220,13 @@ const TARGET_AUTH_TYPES = {
 /**
  * Extract GitHub owner/repo from a URL.
  */
+function extractGitLabProject(url) {
+    if (!url) return null;
+    const m = url.match(/(?:gitlab\.com|git\.coco\.xyz)\/([^/?#]+(?:\/[^/?#]+)+?)(?:\/-\/|\/(?:issues|merge_requests|tree|blob|raw|commits|pipelines)|\?|#|$)/);
+    if (!m) return null;
+    return { project_id: m[1].replace(/\.git$/, '') };
+}
+
 function extractGitHubRepo(url) {
     if (!url) return null;
     const m = url.match(/github\.com\/([^/?#]+)\/([^/?#]+)/);
@@ -274,11 +283,22 @@ document.getElementById('qa-add-auth-link').addEventListener('click', () => open
 
 function autoPopulateQuickAdd() {
     const gh = extractGitHubRepo(currentUrl);
+    const gl = extractGitLabProject(currentUrl);
     if (gh) {
         qaTargetType.value = 'github-issue';
         qaRepo.value = `${gh.owner}/${gh.repo}`;
         qaPattern.value = `*github.com/${gh.owner}/${gh.repo}*`;
         qaSuggestion.textContent = `Detected GitHub repo: ${gh.owner}/${gh.repo}`;
+        qaSuggestion.style.display = 'block';
+        updateQuickAddFields();
+    } else if (gl) {
+        qaTargetType.value = 'gitlab-issue';
+        qaRepo.value = gl.project_id;
+        try {
+            const domain = new URL(currentUrl).hostname;
+            qaPattern.value = `*${domain}/${gl.project_id}*`;
+        } catch { qaPattern.value = ''; }
+        qaSuggestion.textContent = `Detected GitLab project: ${gl.project_id}`;
         qaSuggestion.style.display = 'block';
         updateQuickAddFields();
     } else {
@@ -294,8 +314,10 @@ function autoPopulateQuickAdd() {
 
 function updateQuickAddFields() {
     const type = qaTargetType.value;
-    const isGitHub = type === 'github-issue';
-    document.getElementById('qa-repo-field').style.display = isGitHub ? 'block' : 'none';
+    const needsProject = type === 'github-issue' || type === 'gitlab-issue';
+    const repoLabel = document.querySelector('#qa-repo-field label');
+    if (repoLabel) repoLabel.textContent = type === 'gitlab-issue' ? 'Project (namespace/project or ID)' : 'Repository (owner/repo)';
+    document.getElementById('qa-repo-field').style.display = needsProject ? 'block' : 'none';
     populateAuthDropdown(type);
 }
 
@@ -334,6 +356,14 @@ document.getElementById('qa-save').addEventListener('click', async () => {
             return;
         }
         target_config = { repo, labels: ['clawmark'], assignees: [] };
+    } else if (type === 'gitlab-issue') {
+        const projectId = qaRepo.value.trim();
+        if (!projectId) {
+            qaStatus.textContent = 'Project ID is required';
+            qaStatus.style.color = '#ef4444';
+            return;
+        }
+        target_config = { project_id: projectId, labels: ['clawmark'], assignees: [] };
     }
 
     qaStatus.textContent = 'Saving...';
