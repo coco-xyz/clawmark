@@ -69,7 +69,7 @@ masterToggle.addEventListener('change', async () => {
 
 function openDashboard(hash) {
     const base = (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.DASHBOARD_URL)
-        || 'https://labs.coco.xyz/clawmark/dash/';
+        || 'https://labs.coco.xyz/clawmark/dashboard';
     const url = hash ? base + '#' + hash : base;
     chrome.tabs.create({ url });
     window.close();
