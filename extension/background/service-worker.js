@@ -290,7 +290,7 @@ async function uploadImage(dataUrl) {
 
 chrome.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install') {
-        const dashUrl = ClawMarkConfig.DASHBOARD_URL || 'https://labs.coco.xyz/clawmark/dash/';
+        const dashUrl = ClawMarkConfig.DASHBOARD_URL || 'https://labs.coco.xyz/clawmark/dashboard';
         chrome.tabs.create({ url: dashUrl + '#welcome' });
     }
 
@@ -538,12 +538,9 @@ async function handleMessage(message, sender) {
             return checkForUpdate();
 
         case 'OPEN_OPTIONS_PAGE': {
-            (async () => {
-                const cfg = await getConfig();
-                const base = cfg.serverUrl.replace(/\/+$/, '').replace(/\/api\/.*$/, '').replace(/\/clawmark\/?$/, '');
-                const hash = message.hash ? `#${message.hash}` : '';
-                chrome.tabs.create({ url: base + '/clawmark-dashboard/' + hash });
-            })();
+            const dashUrl = ClawMarkConfig.DASHBOARD_URL || 'https://labs.coco.xyz/clawmark/dashboard';
+            const hash = message.hash ? '#' + message.hash : '';
+            chrome.tabs.create({ url: dashUrl + hash });
             return { success: true };
         }
 
