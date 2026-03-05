@@ -254,14 +254,16 @@ async function sendWebhook(event, payload) {
             delete payload._selected_targets;
         }
 
-        // Inject auth credentials from user_auths into targets that reference an auth_id
+        // Inject auth credentials from user_auths into targets that reference an auth_id.
+        // Use spread to create a new object — the original target_config must stay clean
+        // because dispatchToTargets serializes it into dispatch_log.
         for (const t of filteredTargets) {
             if (t.matched_rule && t.matched_rule.auth_id) {
                 const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
                 if (auth) {
                     let creds;
                     try { creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials; } catch { creds = {}; }
-                    Object.assign(t.target_config, creds);
+                    t.target_config = { ...t.target_config, ...creds };
                 } else {
                     console.warn(`[routing] Auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
                 }
@@ -1313,6 +1315,15 @@ app.put('/api/v2/auths/:id', apiWriteLimiter, v2Auth, (req, res) => {
     }
 
     const { name, auth_type, credentials } = req.body;
+
+    if (auth_type) {
+        const validTypes = ['github-pat', 'lark-webhook', 'telegram-bot', 'slack-webhook',
+                             'email-api', 'linear-api', 'jira-api', 'hxa-api', 'webhook-secret'];
+        if (!validTypes.includes(auth_type)) {
+            return res.status(400).json({ error: `Invalid auth_type. Must be one of: ${validTypes.join(', ')}` });
+        }
+    }
+
     const updated = itemsDb.updateUserAuth(req.params.id, { name, auth_type, credentials });
     if (!updated) return res.status(404).json({ error: 'Auth not found' });
     res.json({ success: true, auth: parseAuthCreds(updated) });

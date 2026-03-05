@@ -440,8 +440,18 @@ const rfTarget = document.getElementById('opt-rf-target');
 const rfPriority = document.getElementById('opt-rf-priority');
 const targetFieldsEl = document.getElementById('opt-target-fields');
 
+// Credential keys that may exist inline in old target_config (pre-auth-management)
+const INLINE_CRED_KEYS = ['token', 'bot_token', 'webhook_url', 'secret', 'api_key', 'api_token'];
+let editingRuleOrigConfig = null; // preserve original config for inline credential migration
+
+function hasInlineCredentials(cfg) {
+    if (!cfg) return false;
+    return INLINE_CRED_KEYS.some(k => cfg[k]);
+}
+
 function openRuleModal(rule) {
     editingRuleId = rule ? rule.id : null;
+    editingRuleOrigConfig = rule ? parseConfig(rule.target_config) : null;
     document.getElementById('rule-modal-title').textContent = rule ? 'Edit Rule' : 'Add Rule';
     document.getElementById('rule-modal-save').textContent = rule ? 'Update Rule' : 'Save Rule';
 
@@ -454,7 +464,7 @@ function openRuleModal(rule) {
     rfPatternLabel.style.display = isDefault ? 'none' : 'block';
     rfPattern.style.display = isDefault ? 'none' : 'block';
 
-    updateTargetFields(rfTarget.value, rule ? parseConfig(rule.target_config) : null, rule ? rule.auth_id : null);
+    updateTargetFields(rfTarget.value, editingRuleOrigConfig, rule ? rule.auth_id : null);
     ruleModal.style.display = 'flex';
 }
 
@@ -519,7 +529,16 @@ function buildAuthSelector(targetType, selectedAuthId) {
 
 function updateTargetFields(targetType, existingConfig, selectedAuthId) {
     const cfg = existingConfig || {};
-    let html = buildAuthSelector(targetType, selectedAuthId);
+    let html = '';
+
+    // Warn if this rule has inline credentials but no auth assigned yet
+    if (editingRuleId && hasInlineCredentials(cfg) && !selectedAuthId) {
+        html += `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:0.85em;">
+            ⚠️ This rule has inline credentials. Please create an Auth in the Auth tab and select it here. Inline credentials will be preserved until you assign an auth.
+        </div>`;
+    }
+
+    html += buildAuthSelector(targetType, selectedAuthId);
     switch (targetType) {
         case 'github-issue':
             html += `
@@ -572,49 +591,66 @@ function fieldVal(id) {
 
 function getTargetConfig() {
     const type = rfTarget.value;
+    const authId = getSelectedAuthId();
+    let cfg;
     switch (type) {
         case 'github-issue': {
             const repo = fieldVal('tc-repo') || '';
             const labelsRaw = fieldVal('tc-labels') || '';
             const labels = labelsRaw ? labelsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
-            return { repo, labels, assignees: [] };
+            cfg = { repo, labels, assignees: [] };
+            break;
         }
         case 'lark':
-            return {};
+            cfg = {}; break;
         case 'telegram':
-            return { chat_id: fieldVal('tc-chat-id') || '' };
+            cfg = { chat_id: fieldVal('tc-chat-id') || '' }; break;
         case 'webhook':
-            return { url: fieldVal('tc-url') || '' };
+            cfg = { url: fieldVal('tc-url') || '' }; break;
         case 'slack': {
             const ch = fieldVal('tc-slack-channel') || '';
-            return ch ? { channel: ch } : {};
+            cfg = ch ? { channel: ch } : {};
+            break;
         }
         case 'email': {
             const toRaw = fieldVal('tc-email-to') || '';
             const to = toRaw ? toRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
-            return { to };
+            cfg = { to };
+            break;
         }
         case 'linear': {
-            const cfg = { team_id: fieldVal('tc-linear-team') || '' };
+            cfg = { team_id: fieldVal('tc-linear-team') || '' };
             const assigneeId = fieldVal('tc-linear-assignee') || '';
             if (assigneeId) cfg.assignee_id = assigneeId;
-            return cfg;
+            break;
         }
         case 'jira': {
-            const cfg = { project_key: fieldVal('tc-jira-project') || '' };
+            cfg = { project_key: fieldVal('tc-jira-project') || '' };
             const issueType = fieldVal('tc-jira-issuetype') || '';
             if (issueType) cfg.issue_type = issueType;
-            return cfg;
+            break;
         }
         case 'hxa-connect': {
-            const cfg = { hub_url: fieldVal('tc-hxa-hub') || '', agent_id: fieldVal('tc-hxa-agent') || '' };
+            cfg = { hub_url: fieldVal('tc-hxa-hub') || '', agent_id: fieldVal('tc-hxa-agent') || '' };
             const threadId = fieldVal('tc-hxa-thread') || '';
             if (threadId) cfg.thread_id = threadId;
-            return cfg;
+            break;
         }
         default:
-            return {};
+            cfg = {}; break;
     }
+
+    // Preserve inline credentials from old rules when no auth is selected.
+    // This prevents silently wiping credentials on edit-save of pre-migration rules.
+    if (!authId && editingRuleOrigConfig && hasInlineCredentials(editingRuleOrigConfig)) {
+        for (const k of INLINE_CRED_KEYS) {
+            if (editingRuleOrigConfig[k] && !(k in cfg)) {
+                cfg[k] = editingRuleOrigConfig[k];
+            }
+        }
+    }
+
+    return cfg;
 }
 
 function getSelectedAuthId() {
