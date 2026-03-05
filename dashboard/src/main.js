@@ -190,13 +190,16 @@ function renderTopPages(topUrls) {
     listEl.innerHTML = '';
     for (const page of topUrls) {
         const el = document.createElement('div');
-        el.className = 'activity-item';
+        el.className = 'activity-item' + (page.source_url ? ' activity-item-link' : '');
         el.innerHTML = `
             <span class="activity-type">\ud83d\udcc4</span>
             <div class="activity-body">
                 <div class="activity-title">${escHtml(page.source_title || page.source_url)}</div>
                 <div class="activity-meta">${Number(page.count) || 0} annotation${Number(page.count) !== 1 ? 's' : ''}</div>
             </div>`;
+        if (page.source_url) {
+            el.addEventListener('click', () => window.open(page.source_url, '_blank'));
+        }
         listEl.appendChild(el);
     }
 }
@@ -224,13 +227,16 @@ async function loadItemsList(typeFilter) {
             const icon = item.type === 'issue' ? '\ud83d\udc1b' : '\ud83d\udcac';
             const time = item.created_at ? new Date(item.created_at).toLocaleString() : '';
             const el = document.createElement('div');
-            el.className = 'activity-item';
+            el.className = 'activity-item' + (item.source_url ? ' activity-item-link' : '');
             el.innerHTML = `
                 <span class="activity-type">${icon}</span>
                 <div class="activity-body">
                     <div class="activity-title">${escHtml(item.title || item.content || '(untitled)')}</div>
                     <div class="activity-meta">${escHtml(item.source_title || item.source_url || '')}${time ? ' \u00b7 ' + escHtml(time) : ''}</div>
                 </div>`;
+            if (item.source_url) {
+                el.addEventListener('click', () => window.open(item.source_url, '_blank'));
+            }
             listEl.appendChild(el);
         }
     } catch {

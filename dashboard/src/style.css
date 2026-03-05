@@ -321,6 +321,8 @@ label {
 }
 
 .activity-item:last-child { border-bottom: none; }
+.activity-item-link { cursor: pointer; }
+.activity-item-link:hover { background: var(--bg-hover); }
 .activity-type { font-size: 16px; flex-shrink: 0; margin-top: 2px; }
 .activity-body { flex: 1; min-width: 0; }
 
