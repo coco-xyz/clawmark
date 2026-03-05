@@ -1136,11 +1136,10 @@ app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
         }
         return rule;
     };
-    if (user) {
-        const rules = itemsDb.getUserRules(user).map(parseRuleConfig);
-        return res.json({ rules });
+    if (!user) {
+        return res.status(401).json({ error: 'Authentication required' });
     }
-    const rules = itemsDb.getAllUserRules().map(parseRuleConfig);
+    const rules = itemsDb.getUserRules(user).map(parseRuleConfig);
     res.json({ rules });
 });
 
