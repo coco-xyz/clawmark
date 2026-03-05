@@ -160,6 +160,18 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_orgs_slug ON organizations(slug);
         CREATE INDEX IF NOT EXISTS idx_orgs_created_by ON organizations(created_by);
 
+        CREATE TABLE IF NOT EXISTS user_auths (
+            id          TEXT PRIMARY KEY,
+            user_name   TEXT NOT NULL,
+            name        TEXT NOT NULL,
+            auth_type   TEXT NOT NULL,
+            credentials TEXT NOT NULL DEFAULT '{}',
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_auths_user ON user_auths(user_name);
+        CREATE INDEX IF NOT EXISTS idx_user_auths_type ON user_auths(user_name, auth_type);
+
         CREATE TABLE IF NOT EXISTS org_members (
             id          TEXT PRIMARY KEY,
             org_id      TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -214,6 +226,14 @@ function initDb(dataDir) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_apps_org ON apps(org_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_user_rules_org ON user_rules(org_id)`);
 
+    // ----------------------------------------- schema migration: user_rules.auth_id
+    const ruleColsAuth = db.pragma('table_info(user_rules)').map(c => c.name);
+    if (!ruleColsAuth.includes('auth_id')) {
+        db.exec(`ALTER TABLE user_rules ADD COLUMN auth_id TEXT`);
+        console.log('[db] migrated: added column user_rules.auth_id');
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_user_rules_auth ON user_rules(auth_id)`);
+
     // ----------------------------- schema migration: apps.is_default (data isolation Phase 1)
     const appCols2 = db.pragma('table_info(apps)').map(c => c.name);
     if (!appCols2.includes('is_default')) {
@@ -226,12 +246,16 @@ function initDb(dataDir) {
              ON apps(user_id) WHERE is_default = 1`);
 
     // ----------------------------- schema migration: dispatch_log.app_id (data isolation Phase 1)
-    const dlColsP1 = db.pragma('table_info(dispatch_log)').map(c => c.name);
-    if (!dlColsP1.includes('app_id')) {
-        db.exec(`ALTER TABLE dispatch_log ADD COLUMN app_id TEXT`);
-        console.log('[db] migrated: added column dispatch_log.app_id');
+    // NOTE: dispatch_log table is created further below. Only migrate if it already exists.
+    const dlTableExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='dispatch_log'`).get();
+    if (dlTableExists) {
+        const dlColsP1 = db.pragma('table_info(dispatch_log)').map(c => c.name);
+        if (!dlColsP1.includes('app_id')) {
+            db.exec(`ALTER TABLE dispatch_log ADD COLUMN app_id TEXT`);
+            console.log('[db] migrated: added column dispatch_log.app_id');
+        }
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_dispatch_log_app ON dispatch_log(app_id)`);
     }
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_dispatch_log_app ON dispatch_log(app_id)`);
 
     // ----------------------------- schema migration: users.settings (per-user preferences)
     const userCols = db.pragma('table_info(users)').map(c => c.name);
@@ -252,7 +276,9 @@ function initDb(dataDir) {
             console.log(`[db] Phase 1 cleanup: clearing legacy test data (${legacyItems.cnt} items, ${legacyKeys.cnt} keys with app_id='default')`);
             db.exec(`DELETE FROM items WHERE app_id = 'default'`);
             db.exec(`DELETE FROM api_keys WHERE app_id = 'default'`);
-            db.exec(`DELETE FROM dispatch_log WHERE app_id IS NULL OR app_id = 'default'`);
+            if (dlTableExists) {
+                db.exec(`DELETE FROM dispatch_log WHERE app_id IS NULL OR app_id = 'default'`);
+            }
             db.exec(`DELETE FROM apps WHERE is_default = 0 OR is_default IS NULL`);
             console.log('[db] Phase 1 cleanup: legacy test data cleared. Users will get fresh apps on next login.');
         }
@@ -272,11 +298,13 @@ function initDb(dataDir) {
             external_id     TEXT,
             external_url    TEXT,
             method          TEXT,
+            app_id          TEXT,
             created_at      TEXT NOT NULL,
             updated_at      TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_dispatch_log_item ON dispatch_log(item_id);
         CREATE INDEX IF NOT EXISTS idx_dispatch_log_status ON dispatch_log(status);
+        CREATE INDEX IF NOT EXISTS idx_dispatch_log_app ON dispatch_log(app_id);
     `);
 
     // ----------------------------------------- schema migration: dispatch_log event column
@@ -377,8 +405,8 @@ function initDb(dataDir) {
     // ------------------------------------------------- user_rules statements
     const ruleStmts = {
         insertRule: db.prepare(`
-            INSERT INTO user_rules (id, user_name, rule_type, pattern, target_type, target_config, priority, enabled, created_at, updated_at)
-            VALUES (@id, @user_name, @rule_type, @pattern, @target_type, @target_config, @priority, @enabled, @created_at, @updated_at)
+            INSERT INTO user_rules (id, user_name, rule_type, pattern, target_type, target_config, priority, enabled, auth_id, created_at, updated_at)
+            VALUES (@id, @user_name, @rule_type, @pattern, @target_type, @target_config, @priority, @enabled, @auth_id, @created_at, @updated_at)
         `),
         getRulesByUser: db.prepare(
             'SELECT * FROM user_rules WHERE user_name = ? ORDER BY priority DESC, created_at ASC'
@@ -387,11 +415,33 @@ function initDb(dataDir) {
         updateRule: db.prepare(`
             UPDATE user_rules
             SET rule_type = @rule_type, pattern = @pattern, target_type = @target_type,
-                target_config = @target_config, priority = @priority, enabled = @enabled, updated_at = @updated_at
+                target_config = @target_config, priority = @priority, enabled = @enabled,
+                auth_id = @auth_id, updated_at = @updated_at
             WHERE id = @id
         `),
         deleteRule: db.prepare('DELETE FROM user_rules WHERE id = ?'),
         getAllRules: db.prepare('SELECT * FROM user_rules ORDER BY user_name, priority DESC'),
+    };
+
+    // ------------------------------------------------- user_auths statements
+    const authStmts = {
+        insertAuth: db.prepare(`
+            INSERT INTO user_auths (id, user_name, name, auth_type, credentials, created_at, updated_at)
+            VALUES (@id, @user_name, @name, @auth_type, @credentials, @created_at, @updated_at)
+        `),
+        getAuthsByUser: db.prepare(
+            'SELECT * FROM user_auths WHERE user_name = ? ORDER BY auth_type, created_at ASC'
+        ),
+        getAuthById: db.prepare('SELECT * FROM user_auths WHERE id = ?'),
+        updateAuth: db.prepare(`
+            UPDATE user_auths
+            SET name = @name, auth_type = @auth_type, credentials = @credentials, updated_at = @updated_at
+            WHERE id = @id
+        `),
+        deleteAuth: db.prepare('DELETE FROM user_auths WHERE id = ?'),
+        countRulesUsingAuth: db.prepare(
+            'SELECT COUNT(*) AS cnt FROM user_rules WHERE auth_id = ?'
+        ),
     };
 
     // ------------------------------------------------------------- public API
@@ -624,7 +674,7 @@ function initDb(dataDir) {
 
     // ----------------------------------------------------- user rules methods
 
-    function createUserRule({ user_name, rule_type, pattern, target_type, target_config, priority = 0, enabled = 1 }) {
+    function createUserRule({ user_name, rule_type, pattern, target_type, target_config, priority = 0, enabled = 1, auth_id = null }) {
         const now = new Date().toISOString();
         const id = genId('rule');
         ruleStmts.insertRule.run({
@@ -633,9 +683,10 @@ function initDb(dataDir) {
             target_type,
             target_config: typeof target_config === 'string' ? target_config : JSON.stringify(target_config),
             priority, enabled,
+            auth_id: auth_id || null,
             created_at: now, updated_at: now,
         });
-        return { id, user_name, rule_type, pattern, target_type, target_config, priority, enabled, created_at: now };
+        return { id, user_name, rule_type, pattern, target_type, target_config, priority, enabled, auth_id, created_at: now };
     }
 
     function getUserRules(user_name) {
@@ -660,6 +711,7 @@ function initDb(dataDir) {
                 : existing.target_config,
             priority: updates.priority ?? existing.priority,
             enabled: updates.enabled !== undefined ? (updates.enabled ? 1 : 0) : existing.enabled,
+            auth_id: updates.auth_id !== undefined ? (updates.auth_id || null) : (existing.auth_id || null),
             updated_at: now,
         };
         ruleStmts.updateRule.run(merged);
@@ -673,6 +725,55 @@ function initDb(dataDir) {
 
     function getAllUserRules() {
         return ruleStmts.getAllRules.all();
+    }
+
+    // ----------------------------------------------------- user auth methods
+
+    function createUserAuth({ user_name, name, auth_type, credentials }) {
+        const now = new Date().toISOString();
+        const id = genId('auth');
+        authStmts.insertAuth.run({
+            id, user_name, name,
+            auth_type,
+            credentials: typeof credentials === 'string' ? credentials : JSON.stringify(credentials),
+            created_at: now, updated_at: now,
+        });
+        return { id, user_name, name, auth_type, credentials, created_at: now, updated_at: now };
+    }
+
+    function getUserAuths(user_name) {
+        return authStmts.getAuthsByUser.all(user_name);
+    }
+
+    function getUserAuth(id) {
+        return authStmts.getAuthById.get(id) || null;
+    }
+
+    function updateUserAuth(id, updates) {
+        const existing = authStmts.getAuthById.get(id);
+        if (!existing) return null;
+        const now = new Date().toISOString();
+        const merged = {
+            id,
+            name: updates.name ?? existing.name,
+            auth_type: updates.auth_type ?? existing.auth_type,
+            credentials: updates.credentials
+                ? (typeof updates.credentials === 'string' ? updates.credentials : JSON.stringify(updates.credentials))
+                : existing.credentials,
+            updated_at: now,
+        };
+        authStmts.updateAuth.run(merged);
+        return authStmts.getAuthById.get(id);
+    }
+
+    function deleteUserAuth(id) {
+        // Check if any rules reference this auth
+        const usage = authStmts.countRulesUsingAuth.get(id);
+        if (usage && usage.cnt > 0) {
+            return { success: false, error: `Auth is used by ${usage.cnt} rule(s). Remove them first.` };
+        }
+        const result = authStmts.deleteAuth.run(id);
+        return { success: result.changes > 0 };
     }
 
     // ---------------------------------------------------- endpoint methods
@@ -1336,6 +1437,12 @@ function initDb(dataDir) {
         updateUserRule,
         deleteUserRule,
         getAllUserRules,
+        // User auths
+        createUserAuth,
+        getUserAuths,
+        getUserAuth,
+        updateUserAuth,
+        deleteUserAuth,
         // Users
         upsertUser,
         getUserById,
