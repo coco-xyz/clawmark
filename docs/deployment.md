@@ -1,3 +1,43 @@
+# Deployment Guide
+
+## COCO Environments
+
+ClawMark has two official environments. Extension builds are configured via `scripts/build.sh`.
+
+### Production
+
+| Component | URL |
+|-----------|-----|
+| API Server | `https://api.coco.xyz/clawmark` |
+| Dashboard | `https://labs.coco.xyz/clawmark/dashboard` |
+| Google OAuth Client ID | `530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com` |
+
+```bash
+./scripts/build.sh production
+```
+
+### Test
+
+| Component | URL |
+|-----------|-----|
+| API Server | `https://jessie.coco.site/clawmark` |
+| Dashboard | `https://jessie.coco.site/clawmark-dashboard/` |
+| Google OAuth Client ID | Same as production |
+
+```bash
+./scripts/build.sh test
+```
+
+### Build Output
+
+Each build generates `extension/config.js` (gitignored) and a zip file:
+- `clawmark-v{VERSION}-test.zip`
+- `clawmark-v{VERSION}-production.zip`
+
+Both zips are uploaded to GitHub Releases and hosted at `jessie.coco.site/`.
+
+---
+
 # Self-Hosted Deployment Guide
 
 ## Quick Start
