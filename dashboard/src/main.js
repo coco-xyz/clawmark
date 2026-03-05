@@ -102,7 +102,9 @@ function showApp(user) {
     const hash = location.hash.slice(1);
     if (['account', 'connection', 'auths'].includes(hash)) {
         switchTab('settings');
-    } else if (hash === 'sites' || hash === 'about') {
+    } else if (hash === 'about') {
+        switchTab('about');
+    } else if (hash === 'sites') {
         switchTab('overview');
     }
 }
@@ -300,7 +302,7 @@ document.querySelectorAll('.stat-card.clickable').forEach(card => {
     card.addEventListener('click', () => {
         const action = card.dataset.action;
         if (action === 'rules') {
-            document.querySelector('[data-tab="delivery"]').click();
+            document.querySelector('[data-tab="settings"]').click();
             return;
         }
         const typeFilter = action === 'comments' ? 'comment' : action === 'issues' ? 'issue' : null;
