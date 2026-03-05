@@ -153,6 +153,32 @@ export async function updateUserSettings(patch) {
     });
 }
 
+// ---- User Auths
+
+export async function getAuths() {
+    return apiFetch('/api/v2/auths');
+}
+
+export async function createAuth(data) {
+    return apiFetch('/api/v2/auths', {
+        method: 'POST',
+        body: data,
+    });
+}
+
+export async function updateAuth(id, data) {
+    return apiFetch(`/api/v2/auths/${id}`, {
+        method: 'PUT',
+        body: data,
+    });
+}
+
+export async function deleteAuth(id) {
+    return apiFetch(`/api/v2/auths/${id}`, {
+        method: 'DELETE',
+    });
+}
+
 // ---- Version check (GitHub API, no auth needed)
 
 export async function checkLatestVersion() {

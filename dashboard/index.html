@@ -89,6 +89,9 @@
                 <li class="nav-item" data-tab="connection">
                     <span class="nav-icon">&#x1f517;</span> Connection
                 </li>
+                <li class="nav-item" data-tab="auths">
+                    <span class="nav-icon">&#x1f511;</span> Auth
+                </li>
                 <li class="nav-item" data-tab="delivery">
                     <span class="nav-icon">&#x1f4ee;</span> Delivery Rules
                 </li>
@@ -168,6 +171,60 @@
                 <div class="card">
                     <h3>Server Version</h3>
                     <div id="server-version">&mdash;</div>
+                </div>
+            </section>
+
+            <!-- Auth Tab -->
+            <section class="tab-panel" id="tab-auths">
+                <h1>Auth</h1>
+                <p class="help-text">Manage authorization credentials. Each auth stores credentials (tokens, keys, secrets) that delivery rules reference when dispatching.</p>
+                <div class="toolbar">
+                    <button class="btn btn-primary" id="btn-add-auth">+ Add Auth</button>
+                </div>
+                <div class="rules-table-wrapper">
+                    <table class="rules-table" id="auths-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Credentials</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="auths-tbody"></tbody>
+                    </table>
+                    <div class="empty-state" id="auths-empty">No auths configured. Add one to use with delivery rules.</div>
+                </div>
+
+                <!-- Auth Form Modal -->
+                <div class="modal-overlay" id="auth-modal" style="display:none">
+                    <div class="modal">
+                        <div class="modal-header">
+                            <h3 id="auth-modal-title">Add Auth</h3>
+                            <button class="modal-close" id="auth-modal-close">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <label>Name</label>
+                            <input type="text" class="input" id="opt-auth-name" placeholder="e.g. GitHub - coco-xyz repos">
+                            <label>Auth Type</label>
+                            <select class="input" id="opt-auth-type">
+                                <option value="github-pat">GitHub PAT</option>
+                                <option value="lark-webhook">Lark Webhook</option>
+                                <option value="telegram-bot">Telegram Bot</option>
+                                <option value="slack-webhook">Slack Webhook</option>
+                                <option value="email-api">Email API</option>
+                                <option value="linear-api">Linear API</option>
+                                <option value="jira-api">Jira API</option>
+                                <option value="hxa-api">HxA Connect API</option>
+                                <option value="webhook-secret">Webhook Secret</option>
+                            </select>
+                            <div id="opt-auth-fields"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" id="auth-modal-cancel">Cancel</button>
+                            <button class="btn btn-primary" id="auth-modal-save">Save Auth</button>
+                        </div>
+                    </div>
                 </div>
             </section>
 
