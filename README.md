@@ -4,7 +4,7 @@
 
 Select text, capture a screenshot, or highlight anything on any page — then send it to GitHub Issues, Lark, Telegram, Slack, or any webhook. One Chrome extension for comments, issues, and smart delivery.
 
-[![Version](https://img.shields.io/badge/version-0.6.7-blue)](https://git.coco.xyz/hxanet/clawmark/-/releases)
+[![Version](https://img.shields.io/badge/version-0.6.9-blue)](https://git.coco.xyz/hxanet/clawmark/-/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
