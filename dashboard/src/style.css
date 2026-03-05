@@ -153,8 +153,45 @@ body {
     margin-top: auto;
 }
 
-.sidebar-user {
-    font-size: 12px;
+.sidebar-account {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sidebar-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.sidebar-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.sidebar-account-info {
+    min-width: 0;
+    flex: 1;
+}
+
+.sidebar-account-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sidebar-account-email {
+    font-size: 11px;
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
@@ -253,6 +290,8 @@ label {
 
 .btn-danger { background: rgba(239,68,68,0.15); color: var(--danger); }
 .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,0.25); }
+
+.btn-small { font-size: 12px; padding: 6px 0; width: 100%; margin-top: 8px; }
 
 .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); font-size: 12px; padding: 4px 10px; }
 .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.06); color: var(--text); border-color: var(--text-muted); }
@@ -377,33 +416,7 @@ label {
 
 .dispatch-ext-link:hover { text-decoration: underline; }
 
-/* ---- Account ---- */
-
-.account-user {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    margin-bottom: 16px;
-}
-
-.account-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: var(--accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    font-weight: 600;
-    color: #fff;
-    flex-shrink: 0;
-    overflow: hidden;
-}
-
-.account-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.account-name { font-size: 16px; font-weight: 500; color: #fff; }
-.account-email { font-size: 13px; color: var(--text-muted); }
+/* ---- Account (sidebar) ---- */
 
 /* ---- Connection ---- */
 
