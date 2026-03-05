@@ -234,6 +234,13 @@ function initDb(dataDir) {
     }
     db.exec(`CREATE INDEX IF NOT EXISTS idx_user_rules_auth ON user_rules(auth_id)`);
 
+    // ----------------------------------------- schema migration: dispatch_log.auth_id
+    const dispatchCols = db.pragma('table_info(dispatch_log)').map(c => c.name);
+    if (!dispatchCols.includes('auth_id')) {
+        db.exec(`ALTER TABLE dispatch_log ADD COLUMN auth_id TEXT`);
+        console.log('[db] migrated: added column dispatch_log.auth_id');
+    }
+
     // ----------------------------- schema migration: apps.is_default (data isolation Phase 1)
     const appCols2 = db.pragma('table_info(apps)').map(c => c.name);
     if (!appCols2.includes('is_default')) {
@@ -1083,8 +1090,8 @@ function initDb(dataDir) {
 
     const dispatchStmts = {
         insert: db.prepare(`
-            INSERT INTO dispatch_log (id, item_id, app_id, target_type, target_config, event, status, retries, method, created_at, updated_at)
-            VALUES (@id, @item_id, @app_id, @target_type, @target_config, @event, @status, @retries, @method, @created_at, @updated_at)
+            INSERT INTO dispatch_log (id, item_id, app_id, target_type, target_config, event, status, retries, method, auth_id, created_at, updated_at)
+            VALUES (@id, @item_id, @app_id, @target_type, @target_config, @event, @status, @retries, @method, @auth_id, @created_at, @updated_at)
         `),
         updateStatus: db.prepare(`
             UPDATE dispatch_log
@@ -1101,7 +1108,7 @@ function initDb(dataDir) {
         getById: db.prepare('SELECT * FROM dispatch_log WHERE id = ?'),
     };
 
-    function createDispatchEntry({ item_id, app_id, target_type, target_config, event, method }) {
+    function createDispatchEntry({ item_id, app_id, target_type, target_config, event, method, auth_id }) {
         const now = new Date().toISOString();
         const id = genId('dsp');
         dispatchStmts.insert.run({
@@ -1109,6 +1116,7 @@ function initDb(dataDir) {
             target_config: typeof target_config === 'string' ? target_config : JSON.stringify(target_config),
             event: event || 'item.created',
             status: 'pending', retries: 0, method: method || null,
+            auth_id: auth_id || null,
             created_at: now, updated_at: now,
         });
         return id;
