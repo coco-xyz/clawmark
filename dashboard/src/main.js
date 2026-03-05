@@ -149,6 +149,7 @@ function formatTarget(type, config) {
     const cfg = parseConfig(config);
     switch (type) {
         case 'github-issue': return `GitHub: ${cfg.repo || '?'}`;
+        case 'gitlab-issue': return `GitLab: ${cfg.project_id || '?'}`;
         case 'lark': return `Lark: ${(cfg.webhook_url || '').substring(0, 40)}`;
         case 'telegram': return `Telegram: ${cfg.chat_id || '?'}`;
         case 'webhook': return `Webhook: ${(cfg.url || '').substring(0, 40)}`;
@@ -162,7 +163,7 @@ function formatTarget(type, config) {
 }
 
 const DISPATCH_ICONS = {
-    'github-issue': '\ud83d\udc19', 'lark': '\ud83d\udc26', 'telegram': '\u2708\ufe0f',
+    'github-issue': '\ud83d\udc19', 'gitlab-issue': '\ud83e\udd4a', 'lark': '\ud83d\udc26', 'telegram': '\u2708\ufe0f',
     'webhook': '\ud83d\udd17', 'slack': '\ud83d\udcac', 'email': '\u2709\ufe0f',
     'linear': '\ud83d\udcca', 'jira': '\ud83c\udfaf', 'hxa-connect': '\ud83e\udd16',
 };
@@ -508,6 +509,7 @@ document.getElementById('btn-add-rule').addEventListener('click', () => openRule
 // Quick-add templates — open modal pre-filled with common setups
 const RULE_TEMPLATES = {
     github: { rule_type: 'default', target_type: 'github-issue', target_config: {} },
+    gitlab: { rule_type: 'default', target_type: 'gitlab-issue', target_config: {} },
     lark: { rule_type: 'default', target_type: 'lark', target_config: {} },
     telegram: { rule_type: 'default', target_type: 'telegram', target_config: {} },
     slack: { rule_type: 'default', target_type: 'slack', target_config: {} },
@@ -556,6 +558,7 @@ const SECRET_UNCHANGED = '••••____UNCHANGED____';
 // Map target types to compatible auth types
 const TARGET_AUTH_TYPES = {
     'github-issue': ['github-pat'],
+    'gitlab-issue': ['gitlab-pat'],
     'lark': ['lark-webhook'],
     'telegram': ['telegram-bot'],
     'webhook': ['webhook-secret'],
@@ -600,6 +603,15 @@ function updateTargetFields(targetType, existingConfig, selectedAuthId) {
                 <input type="text" class="input" id="tc-repo" placeholder="owner/repo" value="${escHtml(cfg.repo || '')}">
                 <label>Labels (comma-separated)</label>
                 <input type="text" class="input" id="tc-labels" placeholder="clawmark, bug" value="${escHtml((cfg.labels || []).join(', '))}">`;
+            break;
+        case 'gitlab-issue':
+            html += `
+                <label>Project (namespace/project or ID)</label>
+                <input type="text" class="input" id="tc-project-id" placeholder="hxanet/clawmark or 123" value="${escHtml(cfg.project_id || '')}">
+                <label>GitLab URL (optional, default: https://gitlab.com)</label>
+                <input type="text" class="input" id="tc-base-url" placeholder="https://gitlab.com" value="${escHtml(cfg.base_url || '')}">
+                <label>Labels (comma-separated)</label>
+                <input type="text" class="input" id="tc-gl-labels" placeholder="clawmark, bug" value="${escHtml((cfg.labels || []).join(', '))}">`;
             break;
         case 'lark':
             // Webhook URL is now in auth credentials
@@ -653,6 +665,15 @@ function getTargetConfig() {
             const labelsRaw = fieldVal('tc-labels') || '';
             const labels = labelsRaw ? labelsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
             cfg = { repo, labels, assignees: [] };
+            break;
+        }
+        case 'gitlab-issue': {
+            const projectId = fieldVal('tc-project-id') || '';
+            const baseUrl = fieldVal('tc-base-url') || '';
+            const glLabelsRaw = fieldVal('tc-gl-labels') || '';
+            const glLabels = glLabelsRaw ? glLabelsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+            cfg = { project_id: projectId, labels: glLabels };
+            if (baseUrl) cfg.base_url = baseUrl;
             break;
         }
         case 'lark':
@@ -854,6 +875,7 @@ function renderAuthsTable() {
 // Auth type → credential fields config
 const AUTH_TYPE_FIELDS = {
     'github-pat':     [{ key: 'token', label: 'Personal Access Token', secret: true }],
+    'gitlab-pat':     [{ key: 'token', label: 'Personal Access Token', secret: true }],
     'lark-webhook':   [{ key: 'webhook_url', label: 'Webhook URL', secret: true }, { key: 'secret', label: 'Secret (optional)', secret: true }],
     'telegram-bot':   [{ key: 'bot_token', label: 'Bot Token', secret: true }],
     'slack-webhook':  [{ key: 'webhook_url', label: 'Webhook URL', secret: true }],

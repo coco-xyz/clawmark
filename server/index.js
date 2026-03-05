@@ -91,6 +91,7 @@ const { EmailAdapter } = require('./adapters/email');
 const { LinearAdapter } = require('./adapters/linear');
 const { JiraAdapter } = require('./adapters/jira');
 const { HxaConnectAdapter } = require('./adapters/hxa-connect');
+const { GitLabIssueAdapter } = require('./adapters/gitlab-issue');
 const { resolveTarget, resolveTargets } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
@@ -106,6 +107,7 @@ registry.registerType('email', EmailAdapter);
 registry.registerType('linear', LinearAdapter);
 registry.registerType('jira', JiraAdapter);
 registry.registerType('hxa-connect', HxaConnectAdapter);
+registry.registerType('gitlab-issue', GitLabIssueAdapter);
 
 // Load distribution config
 if (config.distribution) {
@@ -1306,7 +1308,7 @@ app.post('/api/v2/auths', apiWriteLimiter, v2Auth, (req, res) => {
         return res.status(400).json({ error: 'Missing credentials object' });
     }
 
-    const validTypes = ['github-pat', 'lark-webhook', 'telegram-bot', 'slack-webhook',
+    const validTypes = ['github-pat', 'gitlab-pat', 'lark-webhook', 'telegram-bot', 'slack-webhook',
                          'email-api', 'linear-api', 'jira-api', 'hxa-api', 'webhook-secret'];
     if (!validTypes.includes(auth_type)) {
         return res.status(400).json({ error: `Invalid auth_type. Must be one of: ${validTypes.join(', ')}` });
@@ -1327,7 +1329,7 @@ app.put('/api/v2/auths/:id', apiWriteLimiter, v2Auth, (req, res) => {
     const { name, auth_type, credentials } = req.body;
 
     if (auth_type) {
-        const validTypes = ['github-pat', 'lark-webhook', 'telegram-bot', 'slack-webhook',
+        const validTypes = ['github-pat', 'gitlab-pat', 'lark-webhook', 'telegram-bot', 'slack-webhook',
                              'email-api', 'linear-api', 'jira-api', 'hxa-api', 'webhook-secret'];
         if (!validTypes.includes(auth_type)) {
             return res.status(400).json({ error: `Invalid auth_type. Must be one of: ${validTypes.join(', ')}` });
