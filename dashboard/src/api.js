@@ -10,9 +10,6 @@ const STORAGE_KEY_TOKEN = 'clawmark_token';
 const STORAGE_KEY_USER = 'clawmark_user';
 const STORAGE_KEY_SERVER = 'clawmark_server_url';
 
-// Extension ID for external messaging (stable, derived from manifest key)
-const EXTENSION_ID = 'blgnfnelakbffkgainibpeejlfbimikn';
-
 const DEFAULT_SERVER = import.meta.env.VITE_SERVER_URL
     || (window.location.origin + '/clawmark');
 
@@ -45,89 +42,17 @@ export function getUser() {
 export function setAuth(token, user) {
     localStorage.setItem(STORAGE_KEY_TOKEN, token);
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
-    // Sync to extension (fire-and-forget)
-    pushAuthToExtension(token, user);
 }
 
 export function clearAuth() {
     localStorage.removeItem(STORAGE_KEY_TOKEN);
     localStorage.removeItem(STORAGE_KEY_USER);
-    // Sync logout to extension
-    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-        try {
-            chrome.runtime.sendMessage(EXTENSION_ID, { type: 'LOGOUT' }, () => {});
-        } catch { /* ignore */ }
-    }
 }
 
 export function isLoggedIn() {
     return !!getToken();
 }
 
-/**
- * Push auth token to the extension so it stays in sync.
- */
-function pushAuthToExtension(token, user) {
-    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
-    try {
-        chrome.runtime.sendMessage(EXTENSION_ID, {
-            type: 'SET_AUTH_STATE',
-            authToken: token,
-            authUser: user,
-        }, () => { /* ignore response */ });
-    } catch { /* extension not installed */ }
-}
-
-/**
- * Try to get auth state from the ClawMark Chrome extension.
- * Returns { authToken, authUser } or null if extension is not available.
- */
-export async function getAuthFromExtension() {
-    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return null;
-    try {
-        const response = await new Promise((resolve, reject) => {
-            chrome.runtime.sendMessage(EXTENSION_ID, { type: 'GET_AUTH_STATE' }, (resp) => {
-                if (chrome.runtime.lastError) {
-                    reject(chrome.runtime.lastError);
-                } else {
-                    resolve(resp);
-                }
-            });
-        });
-        if (response?.authToken && response?.authUser) {
-            return response;
-        }
-        return null;
-    } catch {
-        return null;
-    }
-}
-
-/**
- * Trigger Google login via the extension's chrome.identity flow.
- * Returns { token, user } or null if extension is not available.
- */
-export async function loginViaExtension() {
-    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return null;
-    try {
-        const response = await new Promise((resolve, reject) => {
-            chrome.runtime.sendMessage(EXTENSION_ID, { type: 'LOGIN_GOOGLE' }, (resp) => {
-                if (chrome.runtime.lastError) {
-                    reject(chrome.runtime.lastError);
-                } else {
-                    resolve(resp);
-                }
-            });
-        });
-        if (response?.error) throw new Error(response.error);
-        if (response?.token && response?.user) {
-            return response;
-        }
-        return null;
-    } catch {
-        return null;
-    }
-}
 
 /**
  * Make an authenticated API call.
@@ -253,6 +178,96 @@ export async function deleteAuth(id) {
     return apiFetch(`/api/v2/auths/${id}`, {
         method: 'DELETE',
     });
+}
+
+// ---- Extension Bridge (auth sync)
+
+let _extensionId = null;
+let _extensionChecked = false;
+
+/**
+ * Detect installed ClawMark extension via externally_connectable.
+ * Returns the extension ID if found, null otherwise.
+ */
+export async function detectExtension() {
+    if (_extensionChecked) return _extensionId;
+    _extensionChecked = true;
+
+    // chrome.runtime.sendMessage requires knowing the extension ID.
+    // The extension's public key in manifest.json produces a stable ID.
+    // Try the known extension ID from config, or discover via well-known IDs.
+    const candidates = [
+        (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.EXTENSION_ID) || null,
+    ].filter(Boolean);
+
+    // If no candidates configured, try to detect by sending a ping
+    // The extension must have externally_connectable matching this origin
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        for (const id of candidates) {
+            try {
+                const resp = await chrome.runtime.sendMessage(id, { type: 'PING' });
+                if (resp?.pong) {
+                    _extensionId = id;
+                    return id;
+                }
+            } catch {
+                // Extension not installed or doesn't accept our origin
+            }
+        }
+    }
+
+    _extensionId = null;
+    return null;
+}
+
+/**
+ * Try to get auth token from the extension.
+ * Returns { token, user } or null if extension not available.
+ */
+export async function getAuthFromExtension() {
+    const extId = await detectExtension();
+    if (!extId) return null;
+    try {
+        const resp = await chrome.runtime.sendMessage(extId, { type: 'GET_AUTH_STATE' });
+        if (resp?.authToken && resp?.authUser) {
+            return { token: resp.authToken, user: resp.authUser };
+        }
+    } catch {
+        // Extension unavailable
+    }
+    return null;
+}
+
+/**
+ * Sync a dashboard login to the extension.
+ */
+export async function syncLoginToExtension(token, user) {
+    const extId = await detectExtension();
+    if (!extId) return false;
+    try {
+        const resp = await chrome.runtime.sendMessage(extId, {
+            type: 'DASHBOARD_LOGIN',
+            token,
+            user,
+        });
+        return !!resp?.success;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Sync a dashboard logout to the extension.
+ */
+export async function syncLogoutToExtension() {
+    const extId = await detectExtension();
+    if (!extId) return false;
+    try {
+        const resp = await chrome.runtime.sendMessage(extId, { type: 'DASHBOARD_LOGOUT' });
+        return !!resp?.success;
+    } catch {
+        return false;
+    }
 }
 
 // ---- Version check (GitHub API, no auth needed)

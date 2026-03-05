@@ -15,7 +15,7 @@ import {
     getAuths, createAuth, updateAuth, deleteAuth,
     checkLatestVersion,
     getUserSettings, updateUserSettings,
-    getAuthFromExtension, loginViaExtension,
+    syncLoginToExtension, syncLogoutToExtension, getAuthFromExtension,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -23,6 +23,14 @@ import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } fro
 // ------------------------------------------------------------------ init
 
 async function init() {
+    // Try extension auth first
+    const extAuth = await getAuthFromExtension();
+    if (extAuth) {
+        setAuth(extAuth.token, extAuth.user);
+        showApp(extAuth.user);
+        return;
+    }
+
     // Handle OAuth callback
     const code = extractAuthCode();
     if (code) {
@@ -30,6 +38,7 @@ async function init() {
         try {
             const result = await loginWithCode(code, getRedirectUri());
             setAuth(result.token, result.user);
+            syncLoginToExtension(result.token, result.user);
         } catch (err) {
             showToast('Login failed: ' + err.message, 'error');
         }
@@ -99,24 +108,18 @@ function showApp(user) {
 
     // Handle old hash routes that were consolidated
     const hash = location.hash.slice(1);
-    if (['account', 'connection', 'auths'].includes(hash)) {
+    if (['account', 'connection', 'auths', 'delivery'].includes(hash)) {
         switchTab('settings');
-    } else if (hash === 'sites' || hash === 'about') {
+    } else if (hash === 'about') {
+        switchTab('about');
+    } else if (hash === 'sites') {
         switchTab('overview');
     }
 }
 
 // ------------------------------------------------------------------ login
 
-async function handleGoogleLogin() {
-    // Try extension login first (uses chrome.identity popup — no redirect)
-    const result = await loginViaExtension();
-    if (result) {
-        setAuth(result.token, result.user);
-        showApp(result.user);
-        return;
-    }
-    // Fallback: Dashboard's own OAuth redirect flow
+function handleGoogleLogin() {
     startGoogleLogin();
 }
 
@@ -307,7 +310,7 @@ document.querySelectorAll('.stat-card.clickable').forEach(card => {
     card.addEventListener('click', () => {
         const action = card.dataset.action;
         if (action === 'rules') {
-            document.querySelector('[data-tab="delivery"]').click();
+            document.querySelector('[data-tab="settings"]').click();
             return;
         }
         const typeFilter = action === 'comments' ? 'comment' : action === 'issues' ? 'issue' : null;
@@ -338,6 +341,7 @@ function loadAccount() {
 
 document.getElementById('btn-sign-out').addEventListener('click', () => {
     clearAuth();
+    syncLogoutToExtension();
     showLogin();
     showToast('Signed out');
 });
