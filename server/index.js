@@ -874,9 +874,13 @@ app.get('/api/v2/items', apiReadLimiter, v2Auth, (req, res) => {
     const { url, tag, doc, type, status, assignee } = req.query;
     // Always use server-resolved app_id from auth — never trust client-supplied app_id
     const resolvedAppId = req.v2Auth?.app_id;
-    if (!resolvedAppId) {
+    const isAdmin = req.v2Auth?.role === 'admin';
+    if (!resolvedAppId && !isAdmin) {
         return res.status(400).json({ error: 'Could not resolve app_id — ensure you are authenticated' });
     }
+
+    // Admin users see all apps' items; regular users see only their own
+    const effectiveAppId = isAdmin ? null : resolvedAppId;
 
     // Attach compact dispatch summary to each item
     function attachDispatches(items) {
@@ -893,15 +897,21 @@ app.get('/api/v2/items', apiReadLimiter, v2Auth, (req, res) => {
     }
 
     if (url) {
-        const items = itemsDb.getItemsByUrl({ app_id: resolvedAppId, url });
+        const items = effectiveAppId
+            ? itemsDb.getItemsByUrl({ app_id: effectiveAppId, url })
+            : itemsDb.getItemsByUrl({ url });
         return res.json({ items: attachDispatches(items) });
     }
     if (tag) {
-        const items = itemsDb.getItemsByTag({ app_id: resolvedAppId, tag });
+        const items = effectiveAppId
+            ? itemsDb.getItemsByTag({ app_id: effectiveAppId, tag })
+            : itemsDb.getItemsByTag({ tag });
         return res.json({ items: attachDispatches(items) });
     }
 
-    const items = itemsDb.getItems({ app_id: resolvedAppId, doc, type, status, assignee });
+    const items = effectiveAppId
+        ? itemsDb.getItems({ app_id: effectiveAppId, doc, type, status, assignee })
+        : itemsDb.getItems({ doc, type, status, assignee });
     res.json({ items: attachDispatches(items) });
 });
 
@@ -1489,30 +1499,34 @@ app.post('/api/v2/items/:id/generate-tags', aiLimiter, v2Auth, async (req, res) 
 // =================================================================
 
 // -- GET /api/v2/analytics/summary — dashboard overview stats
+// Admin users see all data across all apps; regular users see only their own app
 app.get('/api/v2/analytics/summary', apiReadLimiter, v2Auth, (req, res) => {
     const app_id = req.v2Auth?.app_id;
-    const summary = itemsDb.getAnalyticsSummary(app_id);
+    const isAdmin = req.v2Auth?.role === 'admin';
+    const summary = itemsDb.getAnalyticsSummary(app_id, { allApps: isAdmin });
     res.json(summary);
 });
 
 // -- GET /api/v2/analytics/trends — time-series annotation volume
 app.get('/api/v2/analytics/trends', apiReadLimiter, v2Auth, (req, res) => {
     const app_id = req.v2Auth?.app_id;
+    const isAdmin = req.v2Auth?.role === 'admin';
     const period = ['day', 'week', 'month'].includes(req.query.period) ? req.query.period : 'day';
     const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
     const group_by = ['classification', 'type', 'status', 'total'].includes(req.query.group_by) ? req.query.group_by : 'total';
 
-    const trends = itemsDb.getAnalyticsTrends({ app_id, period, days, group_by });
+    const trends = itemsDb.getAnalyticsTrends({ app_id, period, days, group_by, allApps: isAdmin });
     res.json({ trends, period, days, group_by });
 });
 
 // -- GET /api/v2/analytics/hot-topics — currently trending topics
 app.get('/api/v2/analytics/hot-topics', apiReadLimiter, v2Auth, (req, res) => {
     const app_id = req.v2Auth?.app_id;
+    const isAdmin = req.v2Auth?.role === 'admin';
     const hours = Math.max(1, Math.min(720, parseInt(req.query.hours, 10) || 24));
     const threshold = Math.max(1, Math.min(100, parseInt(req.query.threshold, 10) || 2));
 
-    const hotTopics = itemsDb.getHotTopics({ app_id, hours, threshold });
+    const hotTopics = itemsDb.getHotTopics({ app_id, hours, threshold, allApps: isAdmin });
     res.json(hotTopics);
 });
 
