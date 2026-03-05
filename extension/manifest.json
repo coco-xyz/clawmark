@@ -15,6 +15,13 @@
     "host_permissions": [
         "<all_urls>"
     ],
+    "externally_connectable": {
+        "matches": [
+            "*://*.coco.site/*",
+            "*://*.coco.xyz/*",
+            "*://localhost/*"
+        ]
+    },
     "background": {
         "service_worker": "background/service-worker.js"
     },

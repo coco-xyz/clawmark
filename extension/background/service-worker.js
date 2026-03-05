@@ -322,6 +322,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // async response
 });
 
+// ---- External messages (from dashboard web page via externally_connectable)
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+    handleExternalMessage(message, sender).then(sendResponse).catch(err => {
+        sendResponse({ error: err.message });
+    });
+    return true;
+});
+
+async function handleExternalMessage(message, sender) {
+    switch (message.type) {
+        case 'GET_AUTH_STATE': {
+            const state = await getAuthState();
+            return {
+                authToken: state.authToken || '',
+                authUser: state.authUser || null,
+            };
+        }
+        case 'DASHBOARD_LOGIN': {
+            // Dashboard completed OAuth and wants to sync token to extension
+            if (!message.token || !message.user) return { error: 'Missing token or user' };
+            await setAuthState(message.token, message.user);
+            chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
+            return { success: true };
+        }
+        case 'DASHBOARD_LOGOUT': {
+            await clearAuthState();
+            chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
+            return { success: true };
+        }
+        case 'PING':
+            return { pong: true, version: chrome.runtime.getManifest().version };
+        default:
+            return { error: `Unknown external message: ${message.type}` };
+    }
+}
+
 async function handleMessage(message, sender) {
     switch (message.type) {
         case 'CREATE_ITEM': {

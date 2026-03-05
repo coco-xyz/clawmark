@@ -179,6 +179,96 @@ export async function deleteAuth(id) {
     });
 }
 
+// ---- Extension Bridge (auth sync)
+
+let _extensionId = null;
+let _extensionChecked = false;
+
+/**
+ * Detect installed ClawMark extension via externally_connectable.
+ * Returns the extension ID if found, null otherwise.
+ */
+export async function detectExtension() {
+    if (_extensionChecked) return _extensionId;
+    _extensionChecked = true;
+
+    // chrome.runtime.sendMessage requires knowing the extension ID.
+    // The extension's public key in manifest.json produces a stable ID.
+    // Try the known extension ID from config, or discover via well-known IDs.
+    const candidates = [
+        (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.EXTENSION_ID) || null,
+    ].filter(Boolean);
+
+    // If no candidates configured, try to detect by sending a ping
+    // The extension must have externally_connectable matching this origin
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        for (const id of candidates) {
+            try {
+                const resp = await chrome.runtime.sendMessage(id, { type: 'PING' });
+                if (resp?.pong) {
+                    _extensionId = id;
+                    return id;
+                }
+            } catch {
+                // Extension not installed or doesn't accept our origin
+            }
+        }
+    }
+
+    _extensionId = null;
+    return null;
+}
+
+/**
+ * Try to get auth token from the extension.
+ * Returns { token, user } or null if extension not available.
+ */
+export async function getAuthFromExtension() {
+    const extId = await detectExtension();
+    if (!extId) return null;
+    try {
+        const resp = await chrome.runtime.sendMessage(extId, { type: 'GET_AUTH_STATE' });
+        if (resp?.authToken && resp?.authUser) {
+            return { token: resp.authToken, user: resp.authUser };
+        }
+    } catch {
+        // Extension unavailable
+    }
+    return null;
+}
+
+/**
+ * Sync a dashboard login to the extension.
+ */
+export async function syncLoginToExtension(token, user) {
+    const extId = await detectExtension();
+    if (!extId) return false;
+    try {
+        const resp = await chrome.runtime.sendMessage(extId, {
+            type: 'DASHBOARD_LOGIN',
+            token,
+            user,
+        });
+        return !!resp?.success;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Sync a dashboard logout to the extension.
+ */
+export async function syncLogoutToExtension() {
+    const extId = await detectExtension();
+    if (!extId) return false;
+    try {
+        const resp = await chrome.runtime.sendMessage(extId, { type: 'DASHBOARD_LOGOUT' });
+        return !!resp?.success;
+    } catch {
+        return false;
+    }
+}
+
 // ---- Version check (GitHub API, no auth needed)
 
 export async function checkLatestVersion() {

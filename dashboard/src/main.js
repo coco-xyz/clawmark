@@ -15,6 +15,7 @@ import {
     getAuths, createAuth, updateAuth, deleteAuth,
     checkLatestVersion,
     getUserSettings, updateUserSettings,
+    syncLoginToExtension, syncLogoutToExtension, getAuthFromExtension,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -22,6 +23,14 @@ import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } fro
 // ------------------------------------------------------------------ init
 
 async function init() {
+    // Try extension auth first
+    const extAuth = await getAuthFromExtension();
+    if (extAuth) {
+        setAuth(extAuth.token, extAuth.user);
+        showApp(extAuth.user);
+        return;
+    }
+
     // Handle OAuth callback
     const code = extractAuthCode();
     if (code) {
@@ -29,6 +38,7 @@ async function init() {
         try {
             const result = await loginWithCode(code, getRedirectUri());
             setAuth(result.token, result.user);
+            syncLoginToExtension(result.token, result.user);
         } catch (err) {
             showToast('Login failed: ' + err.message, 'error');
         }
@@ -321,6 +331,7 @@ function loadAccount() {
 
 document.getElementById('btn-sign-out').addEventListener('click', () => {
     clearAuth();
+    syncLogoutToExtension();
     showLogin();
     showToast('Signed out');
 });
