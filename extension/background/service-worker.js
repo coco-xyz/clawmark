@@ -493,6 +493,16 @@ async function handleMessage(message, sender) {
         case 'CHECK_VERSION':
             return checkForUpdate();
 
+        case 'OPEN_OPTIONS_PAGE': {
+            (async () => {
+                const cfg = await getConfig();
+                const base = cfg.serverUrl.replace(/\/+$/, '').replace(/\/api\/.*$/, '').replace(/\/clawmark\/?$/, '');
+                const hash = message.hash ? `#${message.hash}` : '';
+                chrome.tabs.create({ url: base + '/clawmark-dashboard/' + hash });
+            })();
+            return { success: true };
+        }
+
         default:
             return { error: `Unknown message type: ${message.type}` };
     }
