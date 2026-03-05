@@ -17,6 +17,9 @@
 'use strict';
 
 (() => {
+    // Skip injection on ClawMark Dashboard pages to avoid conflicts
+    if (document.title === 'ClawMark Dashboard' && document.querySelector('#app')) return;
+
     // Prevent double injection
     if (window.__clawmarkInjected) return;
     window.__clawmarkInjected = true;
