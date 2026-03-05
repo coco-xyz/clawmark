@@ -504,6 +504,30 @@ function closeRuleModal() {
 }
 
 document.getElementById('btn-add-rule').addEventListener('click', () => openRuleModal(null));
+
+// Quick-add templates — open modal pre-filled with common setups
+const RULE_TEMPLATES = {
+    github: { rule_type: 'default', target_type: 'github-issue', target_config: {} },
+    lark: { rule_type: 'default', target_type: 'lark', target_config: {} },
+    telegram: { rule_type: 'default', target_type: 'telegram', target_config: {} },
+    slack: { rule_type: 'default', target_type: 'slack', target_config: {} },
+};
+
+document.querySelectorAll('.quick-add-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const tpl = RULE_TEMPLATES[btn.dataset.template];
+        if (!tpl) return;
+        openRuleModal(null); // open empty modal first
+        rfType.value = tpl.rule_type;
+        rfTarget.value = tpl.target_type;
+        rfPattern.value = '';
+        rfPriority.value = 0;
+        const isDefault = tpl.rule_type === 'default';
+        rfPatternLabel.style.display = isDefault ? 'none' : 'block';
+        rfPattern.style.display = isDefault ? 'none' : 'block';
+        updateTargetFields(tpl.target_type, tpl.target_config, null);
+    });
+});
 document.getElementById('rule-modal-close').addEventListener('click', closeRuleModal);
 document.getElementById('rule-modal-cancel').addEventListener('click', closeRuleModal);
 ruleModal.addEventListener('click', (e) => {
