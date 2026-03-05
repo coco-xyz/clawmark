@@ -100,7 +100,7 @@ function showApp(user) {
 
     // Handle old hash routes that were consolidated
     const hash = location.hash.slice(1);
-    if (['account', 'connection', 'auths'].includes(hash)) {
+    if (['account', 'connection', 'auths', 'delivery'].includes(hash)) {
         switchTab('settings');
     } else if (hash === 'about') {
         switchTab('about');
