@@ -321,6 +321,8 @@ label {
 }
 
 .activity-item:last-child { border-bottom: none; }
+.activity-item-link { cursor: pointer; }
+.activity-item-link:hover { background: var(--bg-hover); }
 .activity-type { font-size: 16px; flex-shrink: 0; margin-top: 2px; }
 .activity-body { flex: 1; min-width: 0; }
 
@@ -333,6 +335,41 @@ label {
 }
 
 .activity-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+.activity-source {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.item-dispatch-row {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.item-dispatch-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 12px;
+    padding: 1px 6px;
+    border: 1px solid;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.03);
+}
+
+.dispatch-ext-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 11px;
+}
+
+.dispatch-ext-link:hover { text-decoration: underline; }
 
 /* ---- Account ---- */
 
@@ -363,6 +400,32 @@ label {
 .account-email { font-size: 13px; color: var(--text-muted); }
 
 /* ---- Connection ---- */
+
+.server-url-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.server-url-row .input {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 4px 0;
+    margin-top: 4px;
+}
+
+.btn-link:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
 
 .connection-status {
     display: flex;

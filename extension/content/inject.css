@@ -475,6 +475,10 @@
     border-color: #ef4444;
 }
 
+#clawmark-toast.warning {
+    border-color: #eab308;
+}
+
 /* ---- Phase 3: Progress bar ---- */
 #clawmark-input-overlay .cm-progress-bar {
     height: 3px;
