@@ -15,6 +15,7 @@ import {
     getAuths, createAuth, updateAuth, deleteAuth,
     checkLatestVersion,
     getUserSettings, updateUserSettings,
+    getAuthFromExtension, loginViaExtension,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -35,6 +36,14 @@ async function init() {
     }
 
     const isWelcome = location.hash === '#welcome';
+
+    // If not logged in locally, try syncing auth from the Chrome extension
+    if (!isLoggedIn()) {
+        const extAuth = await getAuthFromExtension();
+        if (extAuth) {
+            setAuth(extAuth.authToken, extAuth.authUser);
+        }
+    }
 
     if (isLoggedIn()) {
         // Verify token is still valid
@@ -99,13 +108,21 @@ function showApp(user) {
 
 // ------------------------------------------------------------------ login
 
-document.getElementById('btn-login').addEventListener('click', () => {
+async function handleGoogleLogin() {
+    // Try extension login first (uses chrome.identity popup — no redirect)
+    const result = await loginViaExtension();
+    if (result) {
+        setAuth(result.token, result.user);
+        showApp(result.user);
+        return;
+    }
+    // Fallback: Dashboard's own OAuth redirect flow
     startGoogleLogin();
-});
+}
 
-document.getElementById('btn-welcome-login').addEventListener('click', () => {
-    startGoogleLogin();
-});
+document.getElementById('btn-login').addEventListener('click', handleGoogleLogin);
+
+document.getElementById('btn-welcome-login').addEventListener('click', handleGoogleLogin);
 
 // ------------------------------------------------------------------ tab navigation
 

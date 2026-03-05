@@ -46,6 +46,13 @@
             "128": "icons/icon-128.png"
         }
     },
+    "externally_connectable": {
+        "matches": [
+            "https://jessie.coco.site/*",
+            "https://labs.coco.xyz/*",
+            "https://*.coco.xyz/*"
+        ]
+    },
     "options_page": "options/options.html",
     "icons": {
         "16": "icons/icon-16.png",

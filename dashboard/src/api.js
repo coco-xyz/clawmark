@@ -10,6 +10,9 @@ const STORAGE_KEY_TOKEN = 'clawmark_token';
 const STORAGE_KEY_USER = 'clawmark_user';
 const STORAGE_KEY_SERVER = 'clawmark_server_url';
 
+// Extension ID for external messaging (stable, derived from manifest key)
+const EXTENSION_ID = 'blgnfnelakbffkgainibpeejlfbimikn';
+
 const DEFAULT_SERVER = import.meta.env.VITE_SERVER_URL
     || (window.location.origin + '/clawmark');
 
@@ -51,6 +54,57 @@ export function clearAuth() {
 
 export function isLoggedIn() {
     return !!getToken();
+}
+
+/**
+ * Try to get auth state from the ClawMark Chrome extension.
+ * Returns { authToken, authUser } or null if extension is not available.
+ */
+export async function getAuthFromExtension() {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return null;
+    try {
+        const response = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage(EXTENSION_ID, { type: 'GET_AUTH_STATE' }, (resp) => {
+                if (chrome.runtime.lastError) {
+                    reject(chrome.runtime.lastError);
+                } else {
+                    resolve(resp);
+                }
+            });
+        });
+        if (response?.authToken && response?.authUser) {
+            return response;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Trigger Google login via the extension's chrome.identity flow.
+ * Returns { token, user } or null if extension is not available.
+ */
+export async function loginViaExtension() {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return null;
+    try {
+        const response = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage(EXTENSION_ID, { type: 'LOGIN_GOOGLE' }, (resp) => {
+                if (chrome.runtime.lastError) {
+                    reject(chrome.runtime.lastError);
+                } else {
+                    resolve(resp);
+                }
+            });
+        });
+        if (response?.error) throw new Error(response.error);
+        if (response?.token && response?.user) {
+            return response;
+        }
+        return null;
+    } catch {
+        return null;
+    }
 }
 
 /**

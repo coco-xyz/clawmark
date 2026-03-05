@@ -330,6 +330,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // async response
 });
 
+// External messaging: allow Dashboard web pages to request auth state
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+    if (message.type === 'GET_AUTH_STATE') {
+        getAuthState().then(sendResponse).catch(() => sendResponse({ authToken: '', authUser: null }));
+        return true;
+    }
+    if (message.type === 'LOGIN_GOOGLE') {
+        loginWithGoogle().then(sendResponse).catch(err => sendResponse({ error: err.message }));
+        return true;
+    }
+    if (message.type === 'LOGOUT') {
+        logout().then(sendResponse).catch(err => sendResponse({ error: err.message }));
+        return true;
+    }
+    sendResponse({ error: 'Unknown message type' });
+});
+
 async function handleMessage(message, sender) {
     switch (message.type) {
         case 'CREATE_ITEM': {
