@@ -699,7 +699,20 @@
 
             resolvedTargets = result.targets || [];
 
-            let html = resolvedTargets.map((t, i) => {
+            // Check if user has no custom rules (only system_default)
+            const hasCustomRules = resolvedTargets.some(t => t.method && t.method !== 'system_default');
+
+            let html = '';
+
+            if (!hasCustomRules) {
+                html += `<div class="cm-dispatch-guide">
+                    <span class="cm-guide-icon">\u{1F4CB}</span>
+                    <span>No delivery rules configured. Annotations will be saved but not dispatched.
+                    <a href="#" class="cm-guide-link" data-action="open-dashboard">Set up rules</a></span>
+                </div>`;
+            }
+
+            html += resolvedTargets.filter(t => t.method !== 'system_default').map((t, i) => {
                 const label = formatTargetLabel(t);
                 return `<label class="cm-dispatch-target">
                     <input type="checkbox" checked data-idx="${i}" />
@@ -719,6 +732,15 @@
 
             targetsEl.innerHTML = html;
             previewEl.style.display = 'block';
+
+            // Handle "Set up rules" link click
+            const guideLink = targetsEl.querySelector('[data-action="open-dashboard"]');
+            if (guideLink) {
+                guideLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS_PAGE', hash: 'delivery' });
+                });
+            }
         } catch {
             // Even on error, show the fallback
             targetsEl.innerHTML = `<label class="cm-dispatch-target cm-dispatch-fallback">
