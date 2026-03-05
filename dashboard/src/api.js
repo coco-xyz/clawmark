@@ -53,6 +53,7 @@ export function isLoggedIn() {
     return !!getToken();
 }
 
+
 /**
  * Make an authenticated API call.
  */

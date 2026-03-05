@@ -46,6 +46,14 @@ async function init() {
 
     const isWelcome = location.hash === '#welcome';
 
+    // If not logged in locally, try syncing auth from the Chrome extension
+    if (!isLoggedIn()) {
+        const extAuth = await getAuthFromExtension();
+        if (extAuth) {
+            setAuth(extAuth.authToken, extAuth.authUser);
+        }
+    }
+
     if (isLoggedIn()) {
         // Verify token is still valid
         try {
@@ -107,13 +115,13 @@ function showApp(user) {
 
 // ------------------------------------------------------------------ login
 
-document.getElementById('btn-login').addEventListener('click', () => {
+function handleGoogleLogin() {
     startGoogleLogin();
-});
+}
 
-document.getElementById('btn-welcome-login').addEventListener('click', () => {
-    startGoogleLogin();
-});
+document.getElementById('btn-login').addEventListener('click', handleGoogleLogin);
+
+document.getElementById('btn-welcome-login').addEventListener('click', handleGoogleLogin);
 
 // ------------------------------------------------------------------ tab navigation
 

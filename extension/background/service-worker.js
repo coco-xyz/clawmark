@@ -16,7 +16,7 @@ importScripts('../config.js');
 
 const DEFAULT_SERVER = ClawMarkConfig.DEFAULT_SERVER;
 const GOOGLE_CLIENT_ID = ClawMarkConfig.GOOGLE_CLIENT_ID
-    || '530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com';
+    || 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
 
 async function getConfig() {
     const result = await chrome.storage.sync.get({
@@ -71,13 +71,21 @@ async function loginWithGoogle() {
     authUrl.searchParams.set('access_type', 'offline');
     authUrl.searchParams.set('prompt', 'consent');
 
-    const responseUrl = await chrome.identity.launchWebAuthFlow({
-        url: authUrl.toString(),
-        interactive: true,
+    const responseUrl = await new Promise((resolve, reject) => {
+        chrome.identity.launchWebAuthFlow({
+            url: authUrl.toString(),
+            interactive: true,
+        }, (callbackUrl) => {
+            if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+            } else {
+                resolve(callbackUrl);
+            }
+        });
     });
 
-    const url = new URL(responseUrl);
-    const code = url.searchParams.get('code');
+    const code = new URL(responseUrl).searchParams.get('code');
+
     if (!code) {
         throw new Error('No authorization code received');
     }
