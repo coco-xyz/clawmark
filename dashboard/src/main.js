@@ -12,6 +12,7 @@ import {
     loginWithCode, getMe, checkHealth,
     getAnalyticsSummary, getItems,
     getRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule,
+    getAuths, createAuth, updateAuth, deleteAuth,
     checkLatestVersion,
     getUserSettings, updateUserSettings,
 } from './api.js';
@@ -83,6 +84,7 @@ function showApp(user) {
     loadOverview();
     loadAccount();
     loadConnection();
+    loadAuthsList();
     loadRules();
     loadAbout();
 }
@@ -412,10 +414,11 @@ function renderRulesTable() {
     for (const rule of allRules) {
         const tr = document.createElement('tr');
         const patternText = rule.rule_type === 'default' ? '(default)' : (rule.pattern || '\u2014');
+        const authBadge = rule.auth_name ? ` <span class="type-badge" style="font-size:11px;background:var(--bg-secondary);">${escHtml(rule.auth_name)}</span>` : (rule.auth_id ? ' <span class="type-badge" style="font-size:11px;background:#f59e0b22;color:#f59e0b;">auth?</span>' : '');
         tr.innerHTML = `
             <td><span class="type-badge">${escHtml(rule.rule_type)}</span></td>
             <td title="${escHtml(patternText)}">${escHtml(patternText)}</td>
-            <td title="${escHtml(formatTarget(rule.target_type, rule.target_config))}">${escHtml(formatTarget(rule.target_type, rule.target_config))}</td>
+            <td title="${escHtml(formatTarget(rule.target_type, rule.target_config))}">${escHtml(formatTarget(rule.target_type, rule.target_config))}${authBadge}</td>
             <td>${rule.priority || 0}</td>
             <td class="actions-cell">
                 <button class="edit-btn" data-id="${escHtml(rule.id)}">Edit</button>
@@ -451,7 +454,7 @@ function openRuleModal(rule) {
     rfPatternLabel.style.display = isDefault ? 'none' : 'block';
     rfPattern.style.display = isDefault ? 'none' : 'block';
 
-    updateTargetFields(rfTarget.value, rule ? parseConfig(rule.target_config) : null);
+    updateTargetFields(rfTarget.value, rule ? parseConfig(rule.target_config) : null, rule ? rule.auth_id : null);
     ruleModal.style.display = 'flex';
 }
 
@@ -474,7 +477,7 @@ rfType.addEventListener('change', () => {
 });
 
 rfTarget.addEventListener('change', () => {
-    updateTargetFields(rfTarget.value);
+    updateTargetFields(rfTarget.value, null, null);
 });
 
 // Mask a credential string: show only last 4 chars
@@ -486,79 +489,79 @@ function maskSecret(val) {
 // Sentinel for "unchanged" password fields
 const SECRET_UNCHANGED = '••••____UNCHANGED____';
 
-function updateTargetFields(targetType, existingConfig) {
+// Map target types to compatible auth types
+const TARGET_AUTH_TYPES = {
+    'github-issue': ['github-pat'],
+    'lark': ['lark-webhook'],
+    'telegram': ['telegram-bot'],
+    'webhook': ['webhook-secret'],
+    'slack': ['slack-webhook'],
+    'email': ['email-api'],
+    'linear': ['linear-api'],
+    'jira': ['jira-api'],
+    'hxa-connect': ['hxa-api'],
+};
+
+function buildAuthSelector(targetType, selectedAuthId) {
+    const compatibleTypes = TARGET_AUTH_TYPES[targetType] || [];
+    const compatible = allAuths.filter(a => compatibleTypes.includes(a.auth_type));
+    if (compatible.length === 0) {
+        return `<label>Auth</label><div class="help-text" style="margin-bottom:8px;">No ${compatibleTypes.join('/')} auths configured. <a href="#" onclick="document.querySelector('[data-tab=auths]').click();return false;">Add one first</a>.</div>
+            <input type="hidden" id="tc-auth-id" value="">`;
+    }
+    let opts = '<option value="">(none)</option>';
+    for (const a of compatible) {
+        const sel = a.id === selectedAuthId ? ' selected' : '';
+        opts += `<option value="${escHtml(a.id)}"${sel}>${escHtml(a.name)}</option>`;
+    }
+    return `<label>Auth</label><select class="input" id="tc-auth-id">${opts}</select>`;
+}
+
+function updateTargetFields(targetType, existingConfig, selectedAuthId) {
     const cfg = existingConfig || {};
-    const isEdit = !!existingConfig;
-    // For password fields when editing: show masked placeholder, don't expose real value
-    const secretVal = (v) => isEdit && v ? SECRET_UNCHANGED : escHtml(v || '');
-    const secretPlaceholder = (v) => isEdit && v ? maskSecret(v) : '';
-    let html = '';
+    let html = buildAuthSelector(targetType, selectedAuthId);
     switch (targetType) {
         case 'github-issue':
-            html = `
+            html += `
                 <label>Repository (owner/repo)</label>
                 <input type="text" class="input" id="tc-repo" placeholder="owner/repo" value="${escHtml(cfg.repo || '')}">
                 <label>Labels (comma-separated)</label>
                 <input type="text" class="input" id="tc-labels" placeholder="clawmark, bug" value="${escHtml((cfg.labels || []).join(', '))}">`;
             break;
         case 'lark':
-            html = `<label>Webhook URL</label><input type="password" class="input" id="tc-webhook" data-secret="1" placeholder="${secretPlaceholder(cfg.webhook_url) || 'https://open.larksuite.com/...'}" value="${secretVal(cfg.webhook_url)}">`;
+            // Webhook URL is now in auth credentials
             break;
         case 'telegram':
-            html = `
-                <label>Bot Token</label><input type="password" class="input" id="tc-bot-token" data-secret="1" placeholder="${secretPlaceholder(cfg.bot_token)}" value="${secretVal(cfg.bot_token)}">
-                <label>Chat ID</label><input type="text" class="input" id="tc-chat-id" value="${escHtml(cfg.chat_id || '')}">`;
+            html += `<label>Chat ID</label><input type="text" class="input" id="tc-chat-id" value="${escHtml(cfg.chat_id || '')}">`;
             break;
         case 'webhook':
-            html = `
-                <label>Webhook URL</label><input type="text" class="input" id="tc-url" value="${escHtml(cfg.url || '')}">
-                <label>Secret (optional)</label><input type="password" class="input" id="tc-secret" data-secret="1" placeholder="${secretPlaceholder(cfg.secret)}" value="${secretVal(cfg.secret)}">`;
+            html += `<label>Webhook URL</label><input type="text" class="input" id="tc-url" value="${escHtml(cfg.url || '')}">`;
             break;
         case 'slack':
-            html = `
-                <label>Webhook URL</label><input type="password" class="input" id="tc-slack-webhook" data-secret="1" placeholder="${secretPlaceholder(cfg.webhook_url)}" value="${secretVal(cfg.webhook_url)}">
-                <label>Channel (optional)</label><input type="text" class="input" id="tc-slack-channel" value="${escHtml(cfg.channel || '')}">`;
+            html += `<label>Channel (optional)</label><input type="text" class="input" id="tc-slack-channel" value="${escHtml(cfg.channel || '')}">`;
             break;
         case 'email':
-            html = `
-                <label>Provider</label>
-                <select class="input" id="tc-email-provider">
-                    <option value="resend"${(cfg.provider || 'resend') === 'resend' ? ' selected' : ''}>Resend</option>
-                    <option value="sendgrid"${cfg.provider === 'sendgrid' ? ' selected' : ''}>SendGrid</option>
-                </select>
-                <label>API Key</label><input type="password" class="input" id="tc-email-apikey" data-secret="1" placeholder="${secretPlaceholder(cfg.api_key)}" value="${secretVal(cfg.api_key)}">
-                <label>From</label><input type="text" class="input" id="tc-email-from" value="${escHtml(cfg.from || '')}">
+            html += `
                 <label>To (comma-separated)</label><input type="text" class="input" id="tc-email-to" value="${escHtml((cfg.to || []).join(', '))}">`;
             break;
         case 'linear':
-            html = `
-                <label>API Key</label><input type="password" class="input" id="tc-linear-apikey" data-secret="1" placeholder="${secretPlaceholder(cfg.api_key)}" value="${secretVal(cfg.api_key)}">
+            html += `
                 <label>Team ID</label><input type="text" class="input" id="tc-linear-team" value="${escHtml(cfg.team_id || '')}">
                 <label>Assignee ID (optional)</label><input type="text" class="input" id="tc-linear-assignee" value="${escHtml(cfg.assignee_id || '')}">`;
             break;
         case 'jira':
-            html = `
-                <label>Domain</label><input type="text" class="input" id="tc-jira-domain" value="${escHtml(cfg.domain || '')}">
-                <label>Email</label><input type="text" class="input" id="tc-jira-email" value="${escHtml(cfg.email || '')}">
-                <label>API Token</label><input type="password" class="input" id="tc-jira-token" data-secret="1" placeholder="${secretPlaceholder(cfg.api_token)}" value="${secretVal(cfg.api_token)}">
+            html += `
                 <label>Project Key</label><input type="text" class="input" id="tc-jira-project" value="${escHtml(cfg.project_key || '')}">
                 <label>Issue Type (optional)</label><input type="text" class="input" id="tc-jira-issuetype" value="${escHtml(cfg.issue_type || '')}">`;
             break;
         case 'hxa-connect':
-            html = `
+            html += `
                 <label>Hub URL</label><input type="text" class="input" id="tc-hxa-hub" value="${escHtml(cfg.hub_url || '')}">
                 <label>Agent ID</label><input type="text" class="input" id="tc-hxa-agent" value="${escHtml(cfg.agent_id || '')}">
-                <label>API Key (optional)</label><input type="password" class="input" id="tc-hxa-apikey" data-secret="1" placeholder="${secretPlaceholder(cfg.api_key)}" value="${secretVal(cfg.api_key)}">
                 <label>Thread ID (optional)</label><input type="text" class="input" id="tc-hxa-thread" value="${escHtml(cfg.thread_id || '')}">`;
             break;
     }
     targetFieldsEl.innerHTML = html;
-    // Clear sentinel on focus so user starts fresh
-    targetFieldsEl.querySelectorAll('[data-secret]').forEach(el => {
-        el.addEventListener('focus', () => {
-            if (el.value === SECRET_UNCHANGED) el.value = '';
-        }, { once: true });
-    });
 }
 
 // Get field value; return undefined if it's the unchanged sentinel (so server keeps existing)
@@ -569,7 +572,6 @@ function fieldVal(id) {
 
 function getTargetConfig() {
     const type = rfTarget.value;
-    const omitUndefined = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
     switch (type) {
         case 'github-issue': {
             const repo = fieldVal('tc-repo') || '';
@@ -578,65 +580,45 @@ function getTargetConfig() {
             return { repo, labels, assignees: [] };
         }
         case 'lark':
-            return omitUndefined({ webhook_url: fieldVal('tc-webhook') });
+            return {};
         case 'telegram':
-            return omitUndefined({ bot_token: fieldVal('tc-bot-token'), chat_id: fieldVal('tc-chat-id') || '' });
-        case 'webhook': {
-            const url = fieldVal('tc-url') || '';
-            const secret = fieldVal('tc-secret');
-            const cfg = { url };
-            if (secret !== undefined && secret) cfg.secret = secret;
-            return cfg;
-        }
+            return { chat_id: fieldVal('tc-chat-id') || '' };
+        case 'webhook':
+            return { url: fieldVal('tc-url') || '' };
         case 'slack': {
-            const wh = fieldVal('tc-slack-webhook');
             const ch = fieldVal('tc-slack-channel') || '';
-            const cfg = omitUndefined({ webhook_url: wh });
-            if (ch) cfg.channel = ch;
-            return cfg;
+            return ch ? { channel: ch } : {};
         }
         case 'email': {
-            const provider = document.getElementById('tc-email-provider')?.value || 'resend';
-            const apiKey = fieldVal('tc-email-apikey');
-            const from = fieldVal('tc-email-from') || '';
             const toRaw = fieldVal('tc-email-to') || '';
             const to = toRaw ? toRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
-            const cfg = { provider, from, to };
-            if (apiKey !== undefined) cfg.api_key = apiKey;
-            return cfg;
+            return { to };
         }
         case 'linear': {
-            const apiKey = fieldVal('tc-linear-apikey');
-            const teamId = fieldVal('tc-linear-team') || '';
+            const cfg = { team_id: fieldVal('tc-linear-team') || '' };
             const assigneeId = fieldVal('tc-linear-assignee') || '';
-            const cfg = omitUndefined({ api_key: apiKey });
-            cfg.team_id = teamId;
             if (assigneeId) cfg.assignee_id = assigneeId;
             return cfg;
         }
         case 'jira': {
-            const domain = fieldVal('tc-jira-domain') || '';
-            const email = fieldVal('tc-jira-email') || '';
-            const apiToken = fieldVal('tc-jira-token');
-            const projectKey = fieldVal('tc-jira-project') || '';
+            const cfg = { project_key: fieldVal('tc-jira-project') || '' };
             const issueType = fieldVal('tc-jira-issuetype') || '';
-            const cfg = omitUndefined({ domain, email, api_token: apiToken, project_key: projectKey });
             if (issueType) cfg.issue_type = issueType;
             return cfg;
         }
         case 'hxa-connect': {
-            const hubUrl = fieldVal('tc-hxa-hub') || '';
-            const agentId = fieldVal('tc-hxa-agent') || '';
-            const apiKey = fieldVal('tc-hxa-apikey');
+            const cfg = { hub_url: fieldVal('tc-hxa-hub') || '', agent_id: fieldVal('tc-hxa-agent') || '' };
             const threadId = fieldVal('tc-hxa-thread') || '';
-            const cfg = { hub_url: hubUrl, agent_id: agentId };
-            if (apiKey !== undefined && apiKey) cfg.api_key = apiKey;
             if (threadId) cfg.thread_id = threadId;
             return cfg;
         }
         default:
             return {};
     }
+}
+
+function getSelectedAuthId() {
+    return document.getElementById('tc-auth-id')?.value || null;
 }
 
 document.getElementById('rule-modal-save').addEventListener('click', async () => {
@@ -659,6 +641,7 @@ document.getElementById('rule-modal-save').addEventListener('click', async () =>
             target_type: target,
             target_config: getTargetConfig(),
             priority: Math.max(0, Math.min(100, parseInt(rfPriority.value, 10) || 0)),
+            auth_id: getSelectedAuthId(),
         };
 
         if (editingRuleId) {
@@ -732,6 +715,170 @@ document.getElementById('btn-import-rules').addEventListener('change', async (e)
     }
     e.target.value = '';
 });
+
+// ------------------------------------------------------------------ Auth Management
+
+let allAuths = [];
+let editingAuthId = null;
+
+async function loadAuthsList() {
+    try {
+        const result = await getAuths();
+        allAuths = result.auths || [];
+        renderAuthsTable();
+    } catch {
+        allAuths = [];
+        renderAuthsTable();
+    }
+}
+
+function renderAuthsTable() {
+    const tbody = document.getElementById('auths-tbody');
+    const emptyEl = document.getElementById('auths-empty');
+    tbody.innerHTML = '';
+
+    if (allAuths.length === 0) {
+        emptyEl.style.display = 'block';
+        return;
+    }
+    emptyEl.style.display = 'none';
+
+    for (const auth of allAuths) {
+        const creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : (auth.credentials || {});
+        const credSummary = Object.entries(creds).map(([k, v]) => `${k}: ${v}`).join(', ');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${escHtml(auth.name)}</td>
+            <td><span class="type-badge">${escHtml(auth.auth_type)}</span></td>
+            <td title="${escHtml(credSummary)}">${escHtml(credSummary).substring(0, 50)}</td>
+            <td class="actions-cell">
+                <button class="edit-btn" data-id="${escHtml(auth.id)}">Edit</button>
+                <button class="del-btn" data-id="${escHtml(auth.id)}">Delete</button>
+            </td>`;
+        tr.querySelector('.edit-btn').addEventListener('click', () => openAuthModal(auth));
+        tr.querySelector('.del-btn').addEventListener('click', () => doDeleteAuth(auth.id));
+        tbody.appendChild(tr);
+    }
+}
+
+// Auth type → credential fields config
+const AUTH_TYPE_FIELDS = {
+    'github-pat':     [{ key: 'token', label: 'Personal Access Token', secret: true }],
+    'lark-webhook':   [{ key: 'webhook_url', label: 'Webhook URL', secret: true }, { key: 'secret', label: 'Secret (optional)', secret: true }],
+    'telegram-bot':   [{ key: 'bot_token', label: 'Bot Token', secret: true }],
+    'slack-webhook':  [{ key: 'webhook_url', label: 'Webhook URL', secret: true }],
+    'email-api':      [{ key: 'api_key', label: 'API Key', secret: true }, { key: 'provider', label: 'Provider (resend/sendgrid)', secret: false }, { key: 'from', label: 'From Email', secret: false }],
+    'linear-api':     [{ key: 'api_key', label: 'API Key', secret: true }],
+    'jira-api':       [{ key: 'email', label: 'Email', secret: false }, { key: 'api_token', label: 'API Token', secret: true }, { key: 'domain', label: 'Domain', secret: false }],
+    'hxa-api':        [{ key: 'api_key', label: 'API Key', secret: true }],
+    'webhook-secret': [{ key: 'secret', label: 'Secret', secret: true }],
+};
+
+const AUTH_UNCHANGED = '••••____UNCHANGED____';
+
+function updateAuthFields(authType, existingCreds) {
+    const fieldsEl = document.getElementById('opt-auth-fields');
+    const fields = AUTH_TYPE_FIELDS[authType] || [];
+    const creds = existingCreds || {};
+    const isEdit = !!existingCreds;
+
+    let html = '';
+    for (const f of fields) {
+        const inputType = f.secret ? 'password' : 'text';
+        const val = isEdit && f.secret && creds[f.key] ? AUTH_UNCHANGED : escHtml(creds[f.key] || '');
+        html += `<label>${escHtml(f.label)}</label>
+            <input type="${inputType}" class="input auth-cred-field" data-key="${f.key}" ${f.secret ? 'data-secret="1"' : ''} value="${val}">`;
+    }
+    fieldsEl.innerHTML = html;
+    fieldsEl.querySelectorAll('[data-secret]').forEach(el => {
+        el.addEventListener('focus', () => {
+            if (el.value === AUTH_UNCHANGED) el.value = '';
+        }, { once: true });
+    });
+}
+
+function getAuthCredentials() {
+    const fields = document.querySelectorAll('.auth-cred-field');
+    const creds = {};
+    for (const field of fields) {
+        const val = field.value.trim();
+        if (val === AUTH_UNCHANGED) continue; // Keep existing
+        if (val) creds[field.dataset.key] = val;
+    }
+    return creds;
+}
+
+const authModal = document.getElementById('auth-modal');
+const authTypeSelect = document.getElementById('opt-auth-type');
+
+authTypeSelect.addEventListener('change', () => {
+    updateAuthFields(authTypeSelect.value);
+});
+
+function openAuthModal(auth) {
+    editingAuthId = auth ? auth.id : null;
+    document.getElementById('auth-modal-title').textContent = auth ? 'Edit Auth' : 'Add Auth';
+    document.getElementById('auth-modal-save').textContent = auth ? 'Update Auth' : 'Save Auth';
+    document.getElementById('opt-auth-name').value = auth ? auth.name : '';
+    authTypeSelect.value = auth ? auth.auth_type : 'github-pat';
+    const creds = auth ? (typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials) : null;
+    updateAuthFields(authTypeSelect.value, creds);
+    authModal.style.display = 'flex';
+}
+
+function closeAuthModal() {
+    authModal.style.display = 'none';
+    editingAuthId = null;
+}
+
+document.getElementById('btn-add-auth').addEventListener('click', () => openAuthModal(null));
+document.getElementById('auth-modal-close').addEventListener('click', closeAuthModal);
+document.getElementById('auth-modal-cancel').addEventListener('click', closeAuthModal);
+authModal.addEventListener('click', (e) => { if (e.target === authModal) closeAuthModal(); });
+
+document.getElementById('auth-modal-save').addEventListener('click', async () => {
+    const name = document.getElementById('opt-auth-name').value.trim();
+    const auth_type = authTypeSelect.value;
+    if (!name) { showToast('Name is required', 'error'); return; }
+
+    const credentials = getAuthCredentials();
+    if (Object.keys(credentials).length === 0 && !editingAuthId) {
+        showToast('At least one credential field is required', 'error');
+        return;
+    }
+
+    const saveBtn = document.getElementById('auth-modal-save');
+    saveBtn.disabled = true;
+    try {
+        const data = { name, auth_type, credentials };
+        if (editingAuthId) {
+            await updateAuth(editingAuthId, data);
+            showToast('Auth updated');
+        } else {
+            await createAuth(data);
+            showToast('Auth created');
+        }
+        closeAuthModal();
+        await loadAuthsList();
+        // Also refresh rules (they show auth_name)
+        await loadRules();
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        saveBtn.disabled = false;
+    }
+});
+
+async function doDeleteAuth(id) {
+    if (!confirm('Delete this auth? Rules using it will lose their auth reference.')) return;
+    try {
+        await deleteAuth(id);
+        showToast('Auth deleted');
+        await loadAuthsList();
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
 
 // ------------------------------------------------------------------ About
 

@@ -254,6 +254,20 @@ async function sendWebhook(event, payload) {
             delete payload._selected_targets;
         }
 
+        // Inject auth credentials from user_auths into targets that reference an auth_id
+        for (const t of filteredTargets) {
+            if (t.matched_rule && t.matched_rule.auth_id) {
+                const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
+                if (auth) {
+                    let creds;
+                    try { creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials; } catch { creds = {}; }
+                    Object.assign(t.target_config, creds);
+                } else {
+                    console.warn(`[routing] Auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
+                }
+            }
+        }
+
         console.log(`[routing] ${event}: ${filteredTargets.length} target(s) — ${filteredTargets.map(t => `${t.method}→${t.target_type}`).join(', ')}`);
 
         // Store routing decision on the item for debugging/auditing
@@ -1088,11 +1102,24 @@ app.post('/api/v2/distributions/:item_id/retry', apiWriteLimiter, v2Auth, async 
 app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
     // Always use auth-resolved user identity — never trust client-supplied user param
     const user = req.v2Auth?.user;
+
+    // Build auth name lookup for this user
+    const authMap = {};
+    if (user) {
+        for (const auth of itemsDb.getUserAuths(user)) {
+            authMap[auth.id] = auth.name;
+        }
+    }
+
     const parseRuleConfig = (rule) => {
         if (typeof rule.target_config === 'string') {
             try { rule.target_config = JSON.parse(rule.target_config); } catch {}
         }
         rule.target_config = redactConfig(rule.target_config);
+        // Attach auth name for display
+        if (rule.auth_id) {
+            rule.auth_name = authMap[rule.auth_id] || null;
+        }
         return rule;
     };
     if (user) {
@@ -1105,7 +1132,7 @@ app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
 
 // -- POST /api/v2/routing/rules — create a routing rule
 app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
-    const { rule_type, pattern, target_type, target_config, priority } = req.body;
+    const { rule_type, pattern, target_type, target_config, priority, auth_id } = req.body;
     // Always use auth-resolved user identity — never trust client-supplied userName
     const user = req.v2Auth?.user;
 
@@ -1122,9 +1149,18 @@ app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
         return res.status(400).json({ error: 'Pattern is required for non-default rules' });
     }
 
+    // Validate auth_id belongs to this user
+    if (auth_id) {
+        const auth = itemsDb.getUserAuth(auth_id);
+        if (!auth || auth.user_name !== user) {
+            return res.status(400).json({ error: 'Invalid auth_id — auth not found or not owned by you' });
+        }
+    }
+
     const rule = itemsDb.createUserRule({
         user_name: user, rule_type, pattern,
         target_type, target_config, priority: priority || 0,
+        auth_id: auth_id || null,
     });
 
     res.json({ success: true, rule });
@@ -1132,7 +1168,7 @@ app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
 
 // -- PUT /api/v2/routing/rules/:id — update a routing rule (ownership check)
 app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
-    const { rule_type, pattern, target_type, target_config, priority, enabled } = req.body;
+    const { rule_type, pattern, target_type, target_config, priority, enabled, auth_id } = req.body;
 
     // Ownership check: verify the rule belongs to this user
     const existing = itemsDb.getUserRule(req.params.id);
@@ -1141,8 +1177,17 @@ app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
         return res.status(403).json({ error: 'Not authorized to modify this rule' });
     }
 
+    // Validate auth_id belongs to this user
+    if (auth_id) {
+        const auth = itemsDb.getUserAuth(auth_id);
+        if (!auth || auth.user_name !== req.v2Auth?.user) {
+            return res.status(400).json({ error: 'Invalid auth_id — auth not found or not owned by you' });
+        }
+    }
+
     const updated = itemsDb.updateUserRule(req.params.id, {
         rule_type, pattern, target_type, target_config, priority, enabled,
+        auth_id: auth_id !== undefined ? auth_id : undefined,
     });
 
     if (!updated) return res.status(404).json({ error: 'Rule not found' });
@@ -1192,7 +1237,7 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
                 typeof t.target_config === 'string' ? JSON.parse(t.target_config) : t.target_config
             ),
             method: t.method,
-            matched_rule: t.matched_rule ? { id: t.matched_rule.id, pattern: t.matched_rule.pattern } : null,
+            matched_rule: t.matched_rule ? { id: t.matched_rule.id, pattern: t.matched_rule.pattern, auth_id: t.matched_rule.auth_id || null } : null,
         })),
         // Legacy single-target fields for backward compatibility (e.g., checkTargetInjection)
         target_type: targets[0]?.target_type,
@@ -1200,6 +1245,92 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
         method: targets[0]?.method,
         js_injection: declaration?.js_injection ?? true,
     });
+});
+
+// ================================================================= Auth Management API
+//
+// CRUD for user auth credentials. Decouples credentials from routing rules.
+// =================================================================
+
+/** Redact credentials for safe API responses. */
+function redactCredentials(creds) {
+    if (!creds || typeof creds !== 'object') return creds;
+    const redacted = { ...creds };
+    for (const key of Object.keys(redacted)) {
+        const val = String(redacted[key]);
+        if (val.length > 8) {
+            redacted[key] = val.slice(0, 4) + '***' + val.slice(-4);
+        } else if (val.length > 0) {
+            redacted[key] = '***';
+        }
+    }
+    return redacted;
+}
+
+const parseAuthCreds = (auth) => {
+    if (typeof auth.credentials === 'string') {
+        try { auth.credentials = JSON.parse(auth.credentials); } catch {}
+    }
+    auth.credentials = redactCredentials(auth.credentials);
+    return auth;
+};
+
+// -- GET /api/v2/auths — list auths for current user
+app.get('/api/v2/auths', apiReadLimiter, v2Auth, (req, res) => {
+    const user = req.v2Auth?.user;
+    if (!user) return res.status(400).json({ error: 'Could not determine user' });
+    const auths = itemsDb.getUserAuths(user).map(parseAuthCreds);
+    res.json({ auths });
+});
+
+// -- POST /api/v2/auths — create a new auth
+app.post('/api/v2/auths', apiWriteLimiter, v2Auth, (req, res) => {
+    const { name, auth_type, credentials } = req.body;
+    const user = req.v2Auth?.user;
+    if (!user) return res.status(400).json({ error: 'Could not determine user' });
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Missing auth name' });
+    if (!auth_type) return res.status(400).json({ error: 'Missing auth_type' });
+    if (!credentials || typeof credentials !== 'object') {
+        return res.status(400).json({ error: 'Missing credentials object' });
+    }
+
+    const validTypes = ['github-pat', 'lark-webhook', 'telegram-bot', 'slack-webhook',
+                         'email-api', 'linear-api', 'jira-api', 'hxa-api', 'webhook-secret'];
+    if (!validTypes.includes(auth_type)) {
+        return res.status(400).json({ error: `Invalid auth_type. Must be one of: ${validTypes.join(', ')}` });
+    }
+
+    const auth = itemsDb.createUserAuth({ user_name: user, name: name.trim(), auth_type, credentials });
+    res.json({ success: true, auth: parseAuthCreds(auth) });
+});
+
+// -- PUT /api/v2/auths/:id — update an auth
+app.put('/api/v2/auths/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const existing = itemsDb.getUserAuth(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Auth not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to modify this auth' });
+    }
+
+    const { name, auth_type, credentials } = req.body;
+    const updated = itemsDb.updateUserAuth(req.params.id, { name, auth_type, credentials });
+    if (!updated) return res.status(404).json({ error: 'Auth not found' });
+    res.json({ success: true, auth: parseAuthCreds(updated) });
+});
+
+// -- DELETE /api/v2/auths/:id — delete an auth (fails if rules reference it)
+app.delete('/api/v2/auths/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const existing = itemsDb.getUserAuth(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Auth not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to delete this auth' });
+    }
+
+    const result = itemsDb.deleteUserAuth(req.params.id);
+    if (!result.success) {
+        return res.status(409).json({ error: result.error || 'Cannot delete auth' });
+    }
+    res.json({ success: true });
 });
 
 // -- POST /api/v2/routing/recommend — AI-powered routing recommendation
