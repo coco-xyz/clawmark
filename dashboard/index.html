@@ -83,23 +83,11 @@
                 <li class="nav-item active" data-tab="overview">
                     <span class="nav-icon">&#x1f4ca;</span> Overview
                 </li>
-                <li class="nav-item" data-tab="account">
-                    <span class="nav-icon">&#x1f464;</span> Account
-                </li>
-                <li class="nav-item" data-tab="connection">
-                    <span class="nav-icon">&#x1f517;</span> Connection
-                </li>
-                <li class="nav-item" data-tab="auths">
-                    <span class="nav-icon">&#x1f511;</span> Auth
+                <li class="nav-item" data-tab="settings">
+                    <span class="nav-icon">&#x2699;&#xfe0f;</span> Settings
                 </li>
                 <li class="nav-item" data-tab="delivery">
                     <span class="nav-icon">&#x1f4ee;</span> Delivery Rules
-                </li>
-                <li class="nav-item" data-tab="sites">
-                    <span class="nav-icon">&#x1f310;</span> Site Management
-                </li>
-                <li class="nav-item" data-tab="about">
-                    <span class="nav-icon">&#x2139;&#xfe0f;</span> About
                 </li>
             </ul>
             <div class="sidebar-footer">
@@ -133,13 +121,37 @@
                 <div class="activity-list" id="activity-list">
                     <div class="empty-state">Loading...</div>
                 </div>
+                <div class="card" style="margin-top:24px;">
+                    <h3>Version Info</h3>
+                    <table style="width:100%;font-size:13px;border-collapse:collapse;margin:8px 0;">
+                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Server Version</td><td style="padding:4px 8px;"><strong id="about-server-version">&mdash;</strong></td></tr>
+                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Latest Release</td><td style="padding:4px 8px;"><strong id="about-latest-version">checking...</strong></td></tr>
+                    </table>
+                </div>
+                <div class="card" id="update-guide-card" style="display:none;">
+                    <h3>Extension Update Available</h3>
+                    <p id="update-guide-text" style="font-size:13px;color:var(--text-muted);line-height:1.6;"></p>
+                    <a id="update-guide-link" href="https://github.com/coco-xyz/clawmark/releases/latest" target="_blank" class="btn btn-primary" style="margin-top:8px;display:inline-block;text-decoration:none;">Download Latest</a>
+                </div>
+                <div class="card">
+                    <h3>Links</h3>
+                    <ul class="link-list">
+                        <li><a href="https://labs.coco.xyz/clawmark/" target="_blank">Official Website</a></li>
+                        <li><a href="https://github.com/coco-xyz/clawmark" target="_blank">GitHub Repository</a></li>
+                        <li><a href="https://github.com/coco-xyz/clawmark/releases" target="_blank">Releases</a></li>
+                        <li><a href="https://github.com/coco-xyz/clawmark/issues" target="_blank">Report an Issue</a></li>
+                        <li><a href="https://labs.coco.xyz/clawmark/privacy/" target="_blank">Privacy Policy</a></li>
+                    </ul>
+                </div>
             </section>
 
-            <!-- Account Tab -->
-            <section class="tab-panel" id="tab-account">
-                <h1>Account</h1>
+            <!-- Settings Tab (Account + Connection + Auth) -->
+            <section class="tab-panel" id="tab-settings">
+                <h1>Settings</h1>
+
+                <!-- Account Section -->
                 <div class="card">
-                    <h3>Profile</h3>
+                    <h3>Account</h3>
                     <div class="account-user" id="account-user">
                         <div class="account-avatar" id="account-avatar"></div>
                         <div class="account-details">
@@ -149,13 +161,10 @@
                     </div>
                     <button class="btn btn-danger" id="btn-sign-out">Sign Out</button>
                 </div>
-            </section>
 
-            <!-- Connection Tab -->
-            <section class="tab-panel" id="tab-connection">
-                <h1>Connection</h1>
+                <!-- Connection Section -->
                 <div class="card">
-                    <h3>Server URL</h3>
+                    <h3>Connection</h3>
                     <p class="help-text">ClawMark server endpoint. Change this to connect to a different server.</p>
                     <div class="server-url-row">
                         <input type="text" class="input" id="opt-server-url" placeholder="https://api.coco.xyz/clawmark">
@@ -166,34 +175,31 @@
                     <div class="connection-status" id="connection-status">
                         <span class="status-dot" id="conn-dot"></span>
                         <span id="conn-text">Checking...</span>
+                        <span id="server-version" style="margin-left:12px;font-size:12px;color:var(--text-muted);"></span>
                     </div>
                 </div>
-                <div class="card">
-                    <h3>Server Version</h3>
-                    <div id="server-version">&mdash;</div>
-                </div>
-            </section>
 
-            <!-- Auth Tab -->
-            <section class="tab-panel" id="tab-auths">
-                <h1>Auth</h1>
-                <p class="help-text">Manage authorization credentials. Each auth stores credentials (tokens, keys, secrets) that delivery rules reference when dispatching.</p>
-                <div class="toolbar">
-                    <button class="btn btn-primary" id="btn-add-auth">+ Add Auth</button>
-                </div>
-                <div class="rules-table-wrapper">
-                    <table class="rules-table" id="auths-table">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Type</th>
-                                <th>Credentials</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="auths-tbody"></tbody>
-                    </table>
-                    <div class="empty-state" id="auths-empty">No auths configured. Add one to use with delivery rules.</div>
+                <!-- Auth Section -->
+                <div class="card">
+                    <h3>Auth Credentials</h3>
+                    <p class="help-text">Manage authorization credentials that delivery rules reference when dispatching.</p>
+                    <div class="toolbar">
+                        <button class="btn btn-primary" id="btn-add-auth">+ Add Auth</button>
+                    </div>
+                    <div class="rules-table-wrapper">
+                        <table class="rules-table" id="auths-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Credentials</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="auths-tbody"></tbody>
+                        </table>
+                        <div class="empty-state" id="auths-empty">No auths configured. Add one to use with delivery rules.</div>
+                    </div>
                 </div>
 
                 <!-- Auth Form Modal -->
@@ -209,6 +215,7 @@
                             <label>Auth Type</label>
                             <select class="input" id="opt-auth-type">
                                 <option value="github-pat">GitHub PAT</option>
+                                <option value="gitlab-pat">GitLab PAT</option>
                                 <option value="lark-webhook">Lark Webhook</option>
                                 <option value="telegram-bot">Telegram Bot</option>
                                 <option value="slack-webhook">Slack Webhook</option>
@@ -233,9 +240,18 @@
                 <h1>Delivery Rules</h1>
                 <div class="toolbar">
                     <button class="btn btn-primary" id="btn-add-rule">+ Add Rule</button>
-                    <button class="btn btn-secondary" id="btn-export-rules">Export JSON</button>
+                    <div class="quick-add-group">
+                        <span class="quick-add-label">Quick add:</span>
+                        <button class="btn btn-ghost quick-add-btn" data-template="github">GitHub Issues</button>
+                        <button class="btn btn-ghost quick-add-btn" data-template="gitlab">GitLab Issues</button>
+                        <button class="btn btn-ghost quick-add-btn" data-template="lark">Lark</button>
+                        <button class="btn btn-ghost quick-add-btn" data-template="telegram">Telegram</button>
+                        <button class="btn btn-ghost quick-add-btn" data-template="slack">Slack</button>
+                    </div>
+                    <div style="flex:1"></div>
+                    <button class="btn btn-secondary" id="btn-export-rules">Export</button>
                     <label class="btn btn-secondary import-label">
-                        Import JSON
+                        Import
                         <input type="file" id="btn-import-rules" accept=".json" style="display:none">
                     </label>
                 </div>
@@ -252,7 +268,10 @@
                         </thead>
                         <tbody id="rules-tbody"></tbody>
                     </table>
-                    <div class="empty-state" id="rules-empty">No delivery rules configured</div>
+                    <div class="empty-state" id="rules-empty">
+                        <p>No delivery rules configured.</p>
+                        <p style="font-size:0.85em;opacity:0.7;margin-top:4px">Use the quick-add buttons above to get started, or click "+ Add Rule" for a custom rule.</p>
+                    </div>
                 </div>
 
                 <!-- Rule Form Modal -->
@@ -275,6 +294,7 @@
                             <label>Target</label>
                             <select class="input" id="opt-rf-target">
                                 <option value="github-issue">GitHub Issue</option>
+                                <option value="gitlab-issue">GitLab Issue</option>
                                 <option value="lark">Lark Webhook</option>
                                 <option value="telegram">Telegram</option>
                                 <option value="webhook">Webhook</option>
@@ -296,42 +316,7 @@
                 </div>
             </section>
 
-            <!-- Site Management Tab -->
-            <section class="tab-panel" id="tab-sites">
-                <h1>Site Management</h1>
-                <div class="card">
-                    <p class="help-text">Site management settings (blacklist/whitelist) are stored in your browser extension. Open the extension popup &rarr; gear icon to manage sites.</p>
-                </div>
-            </section>
-
-            <!-- About Tab -->
-            <section class="tab-panel" id="tab-about">
-                <h1>About</h1>
-                <div class="card">
-                    <h3>ClawMark</h3>
-                    <p>Annotate, comment, and track issues on any webpage.</p>
-                    <table style="width:100%;font-size:13px;border-collapse:collapse;margin:8px 0;">
-                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Dashboard Version</td><td style="padding:4px 8px;"><strong>0.1.0</strong></td></tr>
-                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Server Version</td><td style="padding:4px 8px;"><strong id="about-server-version">&mdash;</strong></td></tr>
-                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Latest Release (GitHub)</td><td style="padding:4px 8px;"><strong id="about-latest-version">checking...</strong></td></tr>
-                    </table>
-                </div>
-                <div class="card" id="update-guide-card" style="display:none;">
-                    <h3>Extension Update Available</h3>
-                    <p id="update-guide-text" style="font-size:13px;color:var(--text-muted);line-height:1.6;"></p>
-                    <a id="update-guide-link" href="https://github.com/coco-xyz/clawmark/releases/latest" target="_blank" class="btn btn-primary" style="margin-top:8px;display:inline-block;text-decoration:none;">Download Latest</a>
-                </div>
-                <div class="card">
-                    <h3>Links</h3>
-                    <ul class="link-list">
-                        <li><a href="https://labs.coco.xyz/clawmark/" target="_blank">Official Website</a></li>
-                        <li><a href="https://github.com/coco-xyz/clawmark" target="_blank">GitHub Repository</a></li>
-                        <li><a href="https://github.com/coco-xyz/clawmark/releases" target="_blank">Releases</a></li>
-                        <li><a href="https://github.com/coco-xyz/clawmark/issues" target="_blank">Report an Issue</a></li>
-                        <li><a href="https://labs.coco.xyz/clawmark/privacy/" target="_blank">Privacy Policy</a></li>
-                    </ul>
-                </div>
-            </section>
+            <!-- Sites and About tabs removed — consolidated into Overview and Settings -->
         </main>
     </div>
 

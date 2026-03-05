@@ -429,6 +429,10 @@ async function handleMessage(message, sender) {
         case 'DELETE_ROUTING_RULE':
             return apiRequest('DELETE', `/api/v2/routing/rules/${message.id}`);
 
+        // Auth management
+        case 'GET_AUTHS':
+            return apiRequest('GET', '/api/v2/auths');
+
         // Retry failed dispatches for an item (#200)
         case 'RETRY_DISPATCHES':
             return apiRequest('POST', `/api/v2/distributions/${message.itemId}/retry`);
@@ -488,6 +492,16 @@ async function handleMessage(message, sender) {
 
         case 'CHECK_VERSION':
             return checkForUpdate();
+
+        case 'OPEN_OPTIONS_PAGE': {
+            (async () => {
+                const cfg = await getConfig();
+                const base = cfg.serverUrl.replace(/\/+$/, '').replace(/\/api\/.*$/, '').replace(/\/clawmark\/?$/, '');
+                const hash = message.hash ? `#${message.hash}` : '';
+                chrome.tabs.create({ url: base + '/clawmark-dashboard/' + hash });
+            })();
+            return { success: true };
+        }
 
         default:
             return { error: `Unknown message type: ${message.type}` };

@@ -591,17 +591,27 @@ function initDb(dataDir) {
 
     // ---------------------------------------------------------- V2 query methods
 
-    function getItemsByUrl({ app_id = 'default', url }) {
+    function getItemsByUrl({ app_id, url }) {
+        if (app_id) {
+            return db.prepare(
+                'SELECT * FROM items WHERE app_id = ? AND source_url = ? ORDER BY created_at DESC'
+            ).all(app_id, url);
+        }
         return db.prepare(
-            'SELECT * FROM items WHERE app_id = ? AND source_url = ? ORDER BY created_at DESC'
-        ).all(app_id, url);
+            'SELECT * FROM items WHERE source_url = ? ORDER BY created_at DESC'
+        ).all(url);
     }
 
-    function getItemsByTag({ app_id = 'default', tag }) {
+    function getItemsByTag({ app_id, tag }) {
         // SQLite JSON: tags is stored as '["bug","ui"]', search with LIKE
+        if (app_id) {
+            return db.prepare(
+                `SELECT * FROM items WHERE app_id = ? AND tags LIKE ? ORDER BY created_at DESC`
+            ).all(app_id, `%"${tag}"%`);
+        }
         return db.prepare(
-            `SELECT * FROM items WHERE app_id = ? AND tags LIKE ? ORDER BY created_at DESC`
-        ).all(app_id, `%"${tag}"%`);
+            `SELECT * FROM items WHERE tags LIKE ? ORDER BY created_at DESC`
+        ).all(`%"${tag}"%`);
     }
 
     function getDistinctUrls(app_id = 'default') {
@@ -1266,8 +1276,10 @@ function initDb(dataDir) {
 
     // ------------------------------------------------- analytics methods
 
-    function getAnalyticsTrends({ app_id = 'default', period = 'day', days = 30, group_by = 'total' }) {
+    function getAnalyticsTrends({ app_id = 'default', period = 'day', days = 30, group_by = 'total', allApps = false }) {
         const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        const appWhere = allApps ? '1=1' : 'app_id = ?';
+        const appParams = allApps ? [] : [app_id];
 
         let dateFormat;
         switch (period) {
@@ -1292,39 +1304,42 @@ function initDb(dataDir) {
         const query = `
             SELECT ${dateFormat} AS period, COUNT(*) AS count${selectCol}
             FROM items
-            WHERE app_id = ? AND created_at >= ?
+            WHERE ${appWhere} AND created_at >= ?
             GROUP BY ${dateFormat}${groupCol}
             ORDER BY period ASC
         `;
-        return db.prepare(query).all(app_id, cutoff);
+        return db.prepare(query).all(...appParams, cutoff);
     }
 
-    function getAnalyticsSummary(app_id = 'default') {
+    function getAnalyticsSummary(app_id = 'default', { allApps = false } = {}) {
+        const where = allApps ? '1=1' : 'app_id = ?';
+        const params = allApps ? [] : [app_id];
+
         const total = db.prepare(
-            'SELECT COUNT(*) AS count FROM items WHERE app_id = ?'
-        ).get(app_id).count;
+            `SELECT COUNT(*) AS count FROM items WHERE ${where}`
+        ).get(...params).count;
 
         const byStatus = db.prepare(
-            'SELECT status, COUNT(*) AS count FROM items WHERE app_id = ? GROUP BY status ORDER BY count DESC'
-        ).all(app_id);
+            `SELECT status, COUNT(*) AS count FROM items WHERE ${where} GROUP BY status ORDER BY count DESC`
+        ).all(...params);
 
         const byType = db.prepare(
-            'SELECT type, COUNT(*) AS count FROM items WHERE app_id = ? GROUP BY type ORDER BY count DESC'
-        ).all(app_id);
+            `SELECT type, COUNT(*) AS count FROM items WHERE ${where} GROUP BY type ORDER BY count DESC`
+        ).all(...params);
 
         const byClassification = db.prepare(
-            'SELECT classification, COUNT(*) AS count FROM items WHERE app_id = ? AND classification IS NOT NULL GROUP BY classification ORDER BY count DESC'
-        ).all(app_id);
+            `SELECT classification, COUNT(*) AS count FROM items WHERE ${where} AND classification IS NOT NULL GROUP BY classification ORDER BY count DESC`
+        ).all(...params);
 
         const topUrls = db.prepare(
             `SELECT source_url, source_title, COUNT(*) AS count
-             FROM items WHERE app_id = ? AND source_url IS NOT NULL
+             FROM items WHERE ${where} AND source_url IS NOT NULL
              GROUP BY source_url ORDER BY count DESC LIMIT 10`
-        ).all(app_id);
+        ).all(...params);
 
         const topTags = db.prepare(
-            `SELECT tags FROM items WHERE app_id = ? AND tags != '[]' AND tags IS NOT NULL`
-        ).all(app_id);
+            `SELECT tags FROM items WHERE ${where} AND tags != '[]' AND tags IS NOT NULL`
+        ).all(...params);
 
         // Aggregate tag counts from JSON arrays
         const tagCounts = {};
@@ -1343,36 +1358,38 @@ function initDb(dataDir) {
 
         const recentActivity = db.prepare(
             `SELECT strftime('%Y-%m-%d', created_at) AS day, COUNT(*) AS count
-             FROM items WHERE app_id = ? AND created_at >= datetime('now', '-7 days')
+             FROM items WHERE ${where} AND created_at >= datetime('now', '-7 days')
              GROUP BY day ORDER BY day ASC`
-        ).all(app_id);
+        ).all(...params);
 
         return { total, byStatus, byType, byClassification, topUrls, topTags: tagList, recentActivity };
     }
 
-    function getHotTopics({ app_id = 'default', hours = 24, threshold = 2 }) {
+    function getHotTopics({ app_id = 'default', hours = 24, threshold = 2, allApps = false }) {
         const cutoff = new Date(Date.now() - hours * 3600000).toISOString();
+        const appWhere = allApps ? '1=1' : 'app_id = ?';
+        const appParams = allApps ? [] : [app_id];
 
         // Hot by URL
         const hotUrls = db.prepare(
             `SELECT source_url, source_title, COUNT(*) AS count
-             FROM items WHERE app_id = ? AND created_at >= ? AND source_url IS NOT NULL
+             FROM items WHERE ${appWhere} AND created_at >= ? AND source_url IS NOT NULL
              GROUP BY source_url HAVING count >= ?
              ORDER BY count DESC LIMIT 20`
-        ).all(app_id, cutoff, threshold);
+        ).all(...appParams, cutoff, threshold);
 
         // Hot by classification
         const hotClassifications = db.prepare(
             `SELECT classification, COUNT(*) AS count
-             FROM items WHERE app_id = ? AND created_at >= ? AND classification IS NOT NULL
+             FROM items WHERE ${appWhere} AND created_at >= ? AND classification IS NOT NULL
              GROUP BY classification HAVING count >= ?
              ORDER BY count DESC`
-        ).all(app_id, cutoff, threshold);
+        ).all(...appParams, cutoff, threshold);
 
         // Hot by tags
         const recentTagged = db.prepare(
-            `SELECT tags FROM items WHERE app_id = ? AND created_at >= ? AND tags != '[]' AND tags IS NOT NULL`
-        ).all(app_id, cutoff);
+            `SELECT tags FROM items WHERE ${appWhere} AND created_at >= ? AND tags != '[]' AND tags IS NOT NULL`
+        ).all(...appParams, cutoff);
 
         const tagCounts = {};
         for (const row of recentTagged) {
