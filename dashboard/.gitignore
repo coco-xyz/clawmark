@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env.local
+.env.*.local
+
+# Environment files with real values
+.env.production
+.env.test

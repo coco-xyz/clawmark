@@ -10,12 +10,13 @@
 
 'use strict';
 
+importScripts('../config.js');
+
 // ------------------------------------------------------------------ config
 
-const DEFAULT_SERVER = 'https://api.coco.xyz/clawmark';
-
-// Google OAuth client ID — set by server admin via CLAWMARK_GOOGLE_CLIENT_ID
-const GOOGLE_CLIENT_ID = '530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com';
+const DEFAULT_SERVER = ClawMarkConfig.DEFAULT_SERVER;
+const GOOGLE_CLIENT_ID = ClawMarkConfig.GOOGLE_CLIENT_ID
+    || 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
 
 async function getConfig() {
     const result = await chrome.storage.sync.get({
@@ -70,13 +71,21 @@ async function loginWithGoogle() {
     authUrl.searchParams.set('access_type', 'offline');
     authUrl.searchParams.set('prompt', 'consent');
 
-    const responseUrl = await chrome.identity.launchWebAuthFlow({
-        url: authUrl.toString(),
-        interactive: true,
+    const responseUrl = await new Promise((resolve, reject) => {
+        chrome.identity.launchWebAuthFlow({
+            url: authUrl.toString(),
+            interactive: true,
+        }, (callbackUrl) => {
+            if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+            } else {
+                resolve(callbackUrl);
+            }
+        });
     });
 
-    const url = new URL(responseUrl);
-    const code = url.searchParams.get('code');
+    const code = new URL(responseUrl).searchParams.get('code');
+
     if (!code) {
         throw new Error('No authorization code received');
     }
@@ -281,7 +290,8 @@ async function uploadImage(dataUrl) {
 
 chrome.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install') {
-        chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html?welcome=1') });
+        const dashUrl = ClawMarkConfig.DASHBOARD_URL || 'https://labs.coco.xyz/clawmark/dash/';
+        chrome.tabs.create({ url: dashUrl + '#welcome' });
     }
 
     chrome.contextMenus.create({
@@ -319,6 +329,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true; // async response
 });
+
+// ---- External messages (from dashboard web page via externally_connectable)
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+    handleExternalMessage(message, sender).then(sendResponse).catch(err => {
+        sendResponse({ error: err.message });
+    });
+    return true;
+});
+
+async function handleExternalMessage(message, sender) {
+    switch (message.type) {
+        case 'GET_AUTH_STATE': {
+            const state = await getAuthState();
+            return {
+                authToken: state.authToken || '',
+                authUser: state.authUser || null,
+            };
+        }
+        case 'DASHBOARD_LOGIN': {
+            // Dashboard completed OAuth and wants to sync token to extension
+            if (!message.token || !message.user) return { error: 'Missing token or user' };
+            await setAuthState(message.token, message.user);
+            chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
+            return { success: true };
+        }
+        case 'DASHBOARD_LOGOUT': {
+            await clearAuthState();
+            chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
+            return { success: true };
+        }
+        case 'PING':
+            return { pong: true, version: chrome.runtime.getManifest().version };
+        default:
+            return { error: `Unknown external message: ${message.type}` };
+    }
+}
 
 async function handleMessage(message, sender) {
     switch (message.type) {
@@ -427,6 +473,14 @@ async function handleMessage(message, sender) {
         case 'DELETE_ROUTING_RULE':
             return apiRequest('DELETE', `/api/v2/routing/rules/${message.id}`);
 
+        // Auth management
+        case 'GET_AUTHS':
+            return apiRequest('GET', '/api/v2/auths');
+
+        // Retry failed dispatches for an item (#200)
+        case 'RETRY_DISPATCHES':
+            return apiRequest('POST', `/api/v2/distributions/${message.itemId}/retry`);
+
         // Master toggle (global on/off)
         case 'GET_MASTER_TOGGLE': {
             const { masterEnabled = true } = await chrome.storage.sync.get({ masterEnabled: true });
@@ -482,6 +536,16 @@ async function handleMessage(message, sender) {
 
         case 'CHECK_VERSION':
             return checkForUpdate();
+
+        case 'OPEN_OPTIONS_PAGE': {
+            (async () => {
+                const cfg = await getConfig();
+                const base = cfg.serverUrl.replace(/\/+$/, '').replace(/\/api\/.*$/, '').replace(/\/clawmark\/?$/, '');
+                const hash = message.hash ? `#${message.hash}` : '';
+                chrome.tabs.create({ url: base + '/clawmark-dashboard/' + hash });
+            })();
+            return { success: true };
+        }
 
         default:
             return { error: `Unknown message type: ${message.type}` };

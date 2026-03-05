@@ -699,7 +699,20 @@
 
             resolvedTargets = result.targets || [];
 
-            let html = resolvedTargets.map((t, i) => {
+            // Check if user has no custom rules (only system_default)
+            const hasCustomRules = resolvedTargets.some(t => t.method && t.method !== 'system_default');
+
+            let html = '';
+
+            if (!hasCustomRules) {
+                html += `<div class="cm-dispatch-guide">
+                    <span class="cm-guide-icon">\u{1F4CB}</span>
+                    <span>No delivery rules configured. Annotations will be saved but not dispatched.
+                    <a href="#" class="cm-guide-link" data-action="open-dashboard">Set up rules</a></span>
+                </div>`;
+            }
+
+            html += resolvedTargets.filter(t => t.method !== 'system_default').map((t, i) => {
                 const label = formatTargetLabel(t);
                 return `<label class="cm-dispatch-target">
                     <input type="checkbox" checked data-idx="${i}" />
@@ -719,6 +732,15 @@
 
             targetsEl.innerHTML = html;
             previewEl.style.display = 'block';
+
+            // Handle "Set up rules" link click
+            const guideLink = targetsEl.querySelector('[data-action="open-dashboard"]');
+            if (guideLink) {
+                guideLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS_PAGE', hash: 'delivery' });
+                });
+            }
         } catch {
             // Even on error, show the fallback
             targetsEl.innerHTML = `<label class="cm-dispatch-target cm-dispatch-fallback">
@@ -916,15 +938,31 @@
 
             setProgress(100);
 
-            // Build informative toast with dispatch destinations
+            // Build informative toast with dispatch status (#200)
             const dispatched = response.dispatched || [];
-            const targetNames = dispatched.length > 0
-                ? dispatched.map(d => d.label || d.target_type).join(', ')
-                : resolvedTargets.map(t => formatTargetLabel(t)).join(', ');
-            const summary = targetNames
-                ? `Saved \u2192 ${targetNames}`
-                : 'Saved to ClawMark';
-            showToast(summary, 'success');
+            const sent = dispatched.filter(d => d.status === 'sent');
+            const failed = dispatched.filter(d => d.status === 'failed' || d.status === 'timeout');
+
+            if (failed.length > 0 && sent.length > 0) {
+                // Partial success
+                const sentNames = sent.map(d => d.label || d.target_type).join(', ');
+                const failedNames = failed.map(d => d.label || d.target_type).join(', ');
+                showToast(`已保存 \u2192 ${sentNames}\n\u26A0 投递失败: ${failedNames}`, 'warning');
+            } else if (failed.length > 0 && sent.length === 0) {
+                // All dispatches failed, but item was saved
+                const failedNames = failed.map(d => d.label || d.target_type).join(', ');
+                showToast(`已保存到 ClawMark\n\u274C 投递失败: ${failedNames}`, 'warning');
+            } else {
+                // All succeeded or no dispatches
+                const targetNames = sent.length > 0
+                    ? sent.map(d => d.label || d.target_type).join(', ')
+                    : resolvedTargets.map(t => formatTargetLabel(t)).join(', ');
+                const summary = targetNames
+                    ? `Saved \u2192 ${targetNames}`
+                    : 'Saved to ClawMark';
+                showToast(summary, 'success');
+            }
+
             resolvedTargets = [];
             hideInputOverlay();
             maybeShowShortcutTip();
@@ -988,10 +1026,17 @@
 
     function showToast(message, type = 'success') {
         if (!toast) return;
-        toast.textContent = message;
+        // Support multi-line messages (#200)
+        if (message.includes('\n')) {
+            toast.innerHTML = escHtml(message).replace(/\n/g, '<br>');
+        } else {
+            toast.textContent = message;
+        }
         toast.className = `visible ${type}`;
         clearTimeout(toast._timer);
-        toast._timer = setTimeout(() => toast.classList.remove('visible'), 3000);
+        // Show warnings longer so user can read failure details
+        const duration = type === 'warning' ? 5000 : 3000;
+        toast._timer = setTimeout(() => toast.classList.remove('visible'), duration);
     }
 
     // ----------------------------------------------------------- selection detection

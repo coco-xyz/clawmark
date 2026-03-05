@@ -91,6 +91,7 @@ const { EmailAdapter } = require('./adapters/email');
 const { LinearAdapter } = require('./adapters/linear');
 const { JiraAdapter } = require('./adapters/jira');
 const { HxaConnectAdapter } = require('./adapters/hxa-connect');
+const { GitLabIssueAdapter } = require('./adapters/gitlab-issue');
 const { resolveTarget, resolveTargets } = require('./routing');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
@@ -106,6 +107,7 @@ registry.registerType('email', EmailAdapter);
 registry.registerType('linear', LinearAdapter);
 registry.registerType('jira', JiraAdapter);
 registry.registerType('hxa-connect', HxaConnectAdapter);
+registry.registerType('gitlab-issue', GitLabIssueAdapter);
 
 // Load distribution config
 if (config.distribution) {
@@ -211,6 +213,15 @@ const defaultGitHubTarget = config.distribution?.channels?.['github-clawmark']
  * @param {string} event   Event name, e.g. 'item.created'
  * @param {object} payload The item/data payload
  */
+/**
+ * Dispatch event through the adapter registry.
+ * For item.created, returns dispatch results so the caller can surface failures.
+ * Other events remain fire-and-forget.
+ *
+ * @param {string} event   Event name, e.g. 'item.created'
+ * @param {object} payload The item/data payload
+ * @returns {Array|undefined} Dispatch results for item.created, undefined otherwise
+ */
 async function sendWebhook(event, payload) {
     if (event === 'item.created') {
         // Fetch target declaration (async — checks .clawmark.yml or /.well-known/clawmark.json)
@@ -245,20 +256,39 @@ async function sendWebhook(event, payload) {
             delete payload._selected_targets;
         }
 
+        // Inject auth credentials from user_auths into targets that reference an auth_id.
+        // Use spread to create a new object — the original target_config must stay clean
+        // because dispatchToTargets serializes it into dispatch_log.
+        for (const t of filteredTargets) {
+            if (t.matched_rule && t.matched_rule.auth_id) {
+                const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
+                if (auth) {
+                    let creds;
+                    try { creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials; } catch { creds = {}; }
+                    t.target_config = { ...t.target_config, ...creds };
+                } else {
+                    console.warn(`[routing] Auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
+                }
+            }
+        }
+
         console.log(`[routing] ${event}: ${filteredTargets.length} target(s) — ${filteredTargets.map(t => `${t.method}→${t.target_type}`).join(', ')}`);
 
         // Store routing decision on the item for debugging/auditing
         payload._routing = filteredTargets.map(t => ({ method: t.method, target_type: t.target_type, repo: t.target_config.repo }));
 
-        // Multi-target dispatch with tracking
-        registry.dispatchToTargets(event, payload, filteredTargets, {}).catch(err => {
+        // Multi-target dispatch with tracking — await results (#200)
+        try {
+            const results = await registry.dispatchToTargets(event, payload, filteredTargets, {});
+            return results;
+        } catch (err) {
             console.error(`[dispatch] Multi-target dispatch failed for ${event}:`, err.message);
             // Fallback to static dispatch on error
             registry.dispatch(event, payload).catch(e => {
                 console.error(`[dispatch] Fallback also failed:`, e.message);
             });
-        });
-        return;
+            return [{ target_type: 'unknown', status: 'failed', error: err.message }];
+        }
     }
 
     // Default static dispatch (for non-routed events or system_default routing)
@@ -717,8 +747,26 @@ function v2Auth(req, res, next) {
     return res.status(401).json({ error: 'Authentication required (JWT or API key)' });
 }
 
+// -- GET /api/v2/user/settings — get current user's settings
+app.get('/api/v2/user/settings', apiReadLimiter, v2Auth, (req, res) => {
+    if (!req.v2Auth?.userId) return res.status(401).json({ error: 'JWT auth required' });
+    const settings = itemsDb.getUserSettings(req.v2Auth.userId);
+    res.json({ settings });
+});
+
+// -- PUT /api/v2/user/settings — update current user's settings (merge patch)
+app.put('/api/v2/user/settings', apiWriteLimiter, v2Auth, (req, res) => {
+    if (!req.v2Auth?.userId) return res.status(401).json({ error: 'JWT auth required' });
+    const patch = req.body;
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        return res.status(400).json({ error: 'Body must be a JSON object' });
+    }
+    const settings = itemsDb.updateUserSettings(req.v2Auth.userId, patch);
+    res.json({ settings });
+});
+
 // -- POST /api/v2/items — create item with full V2 schema
-app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
+app.post('/api/v2/items', apiWriteLimiter, v2Auth, async (req, res) => {
     const { type, source_url, source_title, quote, quote_position,
             screenshots, title, content, priority, tags, userName, version,
             selected_targets } = req.body;
@@ -754,7 +802,31 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
     if (selected_targets && Array.isArray(selected_targets)) {
         item._selected_targets = selected_targets;
     }
-    sendWebhook('item.created', item);
+
+    // Await dispatch results with timeout so we can report failures (#200)
+    let dispatches = [];
+    try {
+        const dispatchPromise = sendWebhook('item.created', item);
+        const timeoutPromise = new Promise(resolve =>
+            setTimeout(() => resolve([{ target_type: 'unknown', status: 'timeout' }]), 10000)
+        );
+        dispatches = await Promise.race([dispatchPromise, timeoutPromise]) || [];
+    } catch (err) {
+        console.error(`[dispatch] Error awaiting dispatch for item ${item.id}:`, err.message);
+        dispatches = [{ target_type: 'unknown', status: 'failed', error: err.message }];
+    }
+
+    // Build dispatch summary for client
+    const dispatchSummary = dispatches.map(d => ({
+        target_type: d?.target_type || 'unknown',
+        status: d?.status || 'unknown',
+        error: d?.error || undefined,
+        label: d?.target_type === 'github-issue'
+            ? `GitHub`
+            : (d?.target_type || 'unknown'),
+    }));
+
+    const hasFailed = dispatchSummary.some(d => d.status === 'failed' || d.status === 'timeout');
 
     // Async classification — fire-and-forget, doesn't block response (M2: only if not already classified)
     const v2AiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
@@ -791,13 +863,19 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
         }
     }
 
-    res.json({ success: true, item });
+    res.json({
+        success: true,
+        item,
+        dispatched: dispatchSummary,
+        dispatch_warning: hasFailed ? '部分投递失败，请在面板中查看详情' : undefined,
+    });
 });
 
 // -- GET /api/v2/items — query with url/tag support
 app.get('/api/v2/items', apiReadLimiter, v2Auth, (req, res) => {
     const { url, tag, doc, type, status, assignee } = req.query;
     // Always use server-resolved app_id from auth — never trust client-supplied app_id
+    // GL#21: Dashboard always shows user's own data. Admin features are separate.
     const resolvedAppId = req.v2Auth?.app_id;
     if (!resolvedAppId) {
         return res.status(400).json({ error: 'Could not resolve app_id — ensure you are authenticated' });
@@ -1029,24 +1107,36 @@ app.post('/api/v2/distributions/:item_id/retry', apiWriteLimiter, v2Auth, async 
 app.get('/api/v2/routing/rules', apiReadLimiter, v2Auth, (req, res) => {
     // Always use auth-resolved user identity — never trust client-supplied user param
     const user = req.v2Auth?.user;
+
+    // Build auth name lookup for this user
+    const authMap = {};
+    if (user) {
+        for (const auth of itemsDb.getUserAuths(user)) {
+            authMap[auth.id] = auth.name;
+        }
+    }
+
     const parseRuleConfig = (rule) => {
         if (typeof rule.target_config === 'string') {
             try { rule.target_config = JSON.parse(rule.target_config); } catch {}
         }
         rule.target_config = redactConfig(rule.target_config);
+        // Attach auth name for display
+        if (rule.auth_id) {
+            rule.auth_name = authMap[rule.auth_id] || null;
+        }
         return rule;
     };
-    if (user) {
-        const rules = itemsDb.getUserRules(user).map(parseRuleConfig);
-        return res.json({ rules });
+    if (!user) {
+        return res.status(401).json({ error: 'Authentication required' });
     }
-    const rules = itemsDb.getAllUserRules().map(parseRuleConfig);
+    const rules = itemsDb.getUserRules(user).map(parseRuleConfig);
     res.json({ rules });
 });
 
 // -- POST /api/v2/routing/rules — create a routing rule
 app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
-    const { rule_type, pattern, target_type, target_config, priority } = req.body;
+    const { rule_type, pattern, target_type, target_config, priority, auth_id } = req.body;
     // Always use auth-resolved user identity — never trust client-supplied userName
     const user = req.v2Auth?.user;
 
@@ -1063,9 +1153,18 @@ app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
         return res.status(400).json({ error: 'Pattern is required for non-default rules' });
     }
 
+    // Validate auth_id belongs to this user
+    if (auth_id) {
+        const auth = itemsDb.getUserAuth(auth_id);
+        if (!auth || auth.user_name !== user) {
+            return res.status(400).json({ error: 'Invalid auth_id — auth not found or not owned by you' });
+        }
+    }
+
     const rule = itemsDb.createUserRule({
         user_name: user, rule_type, pattern,
         target_type, target_config, priority: priority || 0,
+        auth_id: auth_id || null,
     });
 
     res.json({ success: true, rule });
@@ -1073,7 +1172,7 @@ app.post('/api/v2/routing/rules', apiWriteLimiter, v2Auth, (req, res) => {
 
 // -- PUT /api/v2/routing/rules/:id — update a routing rule (ownership check)
 app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
-    const { rule_type, pattern, target_type, target_config, priority, enabled } = req.body;
+    const { rule_type, pattern, target_type, target_config, priority, enabled, auth_id } = req.body;
 
     // Ownership check: verify the rule belongs to this user
     const existing = itemsDb.getUserRule(req.params.id);
@@ -1082,8 +1181,17 @@ app.put('/api/v2/routing/rules/:id', apiWriteLimiter, v2Auth, (req, res) => {
         return res.status(403).json({ error: 'Not authorized to modify this rule' });
     }
 
+    // Validate auth_id belongs to this user
+    if (auth_id) {
+        const auth = itemsDb.getUserAuth(auth_id);
+        if (!auth || auth.user_name !== req.v2Auth?.user) {
+            return res.status(400).json({ error: 'Invalid auth_id — auth not found or not owned by you' });
+        }
+    }
+
     const updated = itemsDb.updateUserRule(req.params.id, {
         rule_type, pattern, target_type, target_config, priority, enabled,
+        auth_id: auth_id !== undefined ? auth_id : undefined,
     });
 
     if (!updated) return res.status(404).json({ error: 'Rule not found' });
@@ -1133,7 +1241,7 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
                 typeof t.target_config === 'string' ? JSON.parse(t.target_config) : t.target_config
             ),
             method: t.method,
-            matched_rule: t.matched_rule ? { id: t.matched_rule.id, pattern: t.matched_rule.pattern } : null,
+            matched_rule: t.matched_rule ? { id: t.matched_rule.id, pattern: t.matched_rule.pattern, auth_id: t.matched_rule.auth_id || null } : null,
         })),
         // Legacy single-target fields for backward compatibility (e.g., checkTargetInjection)
         target_type: targets[0]?.target_type,
@@ -1141,6 +1249,101 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
         method: targets[0]?.method,
         js_injection: declaration?.js_injection ?? true,
     });
+});
+
+// ================================================================= Auth Management API
+//
+// CRUD for user auth credentials. Decouples credentials from routing rules.
+// =================================================================
+
+/** Redact credentials for safe API responses. */
+function redactCredentials(creds) {
+    if (!creds || typeof creds !== 'object') return creds;
+    const redacted = { ...creds };
+    for (const key of Object.keys(redacted)) {
+        const val = String(redacted[key]);
+        if (val.length > 8) {
+            redacted[key] = val.slice(0, 4) + '***' + val.slice(-4);
+        } else if (val.length > 0) {
+            redacted[key] = '***';
+        }
+    }
+    return redacted;
+}
+
+const parseAuthCreds = (auth) => {
+    if (typeof auth.credentials === 'string') {
+        try { auth.credentials = JSON.parse(auth.credentials); } catch {}
+    }
+    auth.credentials = redactCredentials(auth.credentials);
+    return auth;
+};
+
+// -- GET /api/v2/auths — list auths for current user
+app.get('/api/v2/auths', apiReadLimiter, v2Auth, (req, res) => {
+    const user = req.v2Auth?.user;
+    if (!user) return res.status(400).json({ error: 'Could not determine user' });
+    const auths = itemsDb.getUserAuths(user).map(parseAuthCreds);
+    res.json({ auths });
+});
+
+// -- POST /api/v2/auths — create a new auth
+app.post('/api/v2/auths', apiWriteLimiter, v2Auth, (req, res) => {
+    const { name, auth_type, credentials } = req.body;
+    const user = req.v2Auth?.user;
+    if (!user) return res.status(400).json({ error: 'Could not determine user' });
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Missing auth name' });
+    if (!auth_type) return res.status(400).json({ error: 'Missing auth_type' });
+    if (!credentials || typeof credentials !== 'object') {
+        return res.status(400).json({ error: 'Missing credentials object' });
+    }
+
+    const validTypes = ['github-pat', 'gitlab-pat', 'lark-webhook', 'telegram-bot', 'slack-webhook',
+                         'email-api', 'linear-api', 'jira-api', 'hxa-api', 'webhook-secret'];
+    if (!validTypes.includes(auth_type)) {
+        return res.status(400).json({ error: `Invalid auth_type. Must be one of: ${validTypes.join(', ')}` });
+    }
+
+    const auth = itemsDb.createUserAuth({ user_name: user, name: name.trim(), auth_type, credentials });
+    res.json({ success: true, auth: parseAuthCreds(auth) });
+});
+
+// -- PUT /api/v2/auths/:id — update an auth
+app.put('/api/v2/auths/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const existing = itemsDb.getUserAuth(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Auth not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to modify this auth' });
+    }
+
+    const { name, auth_type, credentials } = req.body;
+
+    if (auth_type) {
+        const validTypes = ['github-pat', 'gitlab-pat', 'lark-webhook', 'telegram-bot', 'slack-webhook',
+                             'email-api', 'linear-api', 'jira-api', 'hxa-api', 'webhook-secret'];
+        if (!validTypes.includes(auth_type)) {
+            return res.status(400).json({ error: `Invalid auth_type. Must be one of: ${validTypes.join(', ')}` });
+        }
+    }
+
+    const updated = itemsDb.updateUserAuth(req.params.id, { name, auth_type, credentials });
+    if (!updated) return res.status(404).json({ error: 'Auth not found' });
+    res.json({ success: true, auth: parseAuthCreds(updated) });
+});
+
+// -- DELETE /api/v2/auths/:id — delete an auth (fails if rules reference it)
+app.delete('/api/v2/auths/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const existing = itemsDb.getUserAuth(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Auth not found' });
+    if (existing.user_name !== req.v2Auth?.user) {
+        return res.status(403).json({ error: 'Not authorized to delete this auth' });
+    }
+
+    const result = itemsDb.deleteUserAuth(req.params.id);
+    if (!result.success) {
+        return res.status(409).json({ error: result.error || 'Cannot delete auth' });
+    }
+    res.json({ success: true });
 });
 
 // -- POST /api/v2/routing/recommend — AI-powered routing recommendation
@@ -1288,9 +1491,10 @@ app.post('/api/v2/items/:id/generate-tags', aiLimiter, v2Auth, async (req, res) 
 // =================================================================
 
 // -- GET /api/v2/analytics/summary — dashboard overview stats
+// GL#21: Always show user's own data. Admin features are separate.
 app.get('/api/v2/analytics/summary', apiReadLimiter, v2Auth, (req, res) => {
     const app_id = req.v2Auth?.app_id;
-    const summary = itemsDb.getAnalyticsSummary(app_id);
+    const summary = itemsDb.getAnalyticsSummary(app_id, { allApps: false });
     res.json(summary);
 });
 
@@ -1301,7 +1505,7 @@ app.get('/api/v2/analytics/trends', apiReadLimiter, v2Auth, (req, res) => {
     const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
     const group_by = ['classification', 'type', 'status', 'total'].includes(req.query.group_by) ? req.query.group_by : 'total';
 
-    const trends = itemsDb.getAnalyticsTrends({ app_id, period, days, group_by });
+    const trends = itemsDb.getAnalyticsTrends({ app_id, period, days, group_by, allApps: false });
     res.json({ trends, period, days, group_by });
 });
 
@@ -1311,7 +1515,7 @@ app.get('/api/v2/analytics/hot-topics', apiReadLimiter, v2Auth, (req, res) => {
     const hours = Math.max(1, Math.min(720, parseInt(req.query.hours, 10) || 24));
     const threshold = Math.max(1, Math.min(100, parseInt(req.query.threshold, 10) || 2));
 
-    const hotTopics = itemsDb.getHotTopics({ app_id, hours, threshold });
+    const hotTopics = itemsDb.getHotTopics({ app_id, hours, threshold, allApps: false });
     res.json(hotTopics);
 });
 

@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClawMark Dashboard</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="./src/style.css">
+    <script>
+        const ClawMarkConfig = {
+            EXTENSION_ID: 'blgnfnelakbffkgainibpeejlfbimikn',
+        };
+    </script>
+</head>
+<body>
+    <!-- Welcome Screen (new install) -->
+    <div id="welcome-screen" style="display:none;">
+        <div class="welcome-card">
+            <div class="welcome-logo">&#x1f980;</div>
+            <h1 class="welcome-title">Welcome to ClawMark</h1>
+            <p class="welcome-subtitle">Annotate, comment, and track issues on any webpage.</p>
+            <ol class="welcome-steps">
+                <li class="welcome-step">
+                    <span class="step-icon">&#x1f510;</span>
+                    <div class="step-body">
+                        <strong>Sign in with Google</strong>
+                        <span>Create your account in one click</span>
+                    </div>
+                </li>
+                <li class="welcome-step">
+                    <span class="step-icon">&#x270f;&#xfe0f;</span>
+                    <div class="step-body">
+                        <strong>Annotate any webpage</strong>
+                        <span>Visit any page &mdash; click the ClawMark icon to add comments or issues</span>
+                    </div>
+                </li>
+                <li class="welcome-step">
+                    <span class="step-icon">&#x1f4ee;</span>
+                    <div class="step-body">
+                        <strong>Set up delivery rules</strong>
+                        <span>Send annotations to GitHub, Slack, Lark, and more</span>
+                    </div>
+                </li>
+            </ol>
+            <button class="btn btn-google btn-large" id="btn-welcome-login">
+                <svg viewBox="0 0 24 24" width="18" height="18">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                Sign in with Google
+            </button>
+        </div>
+    </div>
+
+    <!-- Login Screen -->
+    <div id="login-screen" style="display:none;">
+        <div class="login-card">
+            <div class="login-icon">&#x1f980;</div>
+            <h1 class="login-title">ClawMark Dashboard</h1>
+            <p class="login-desc">Manage your annotations, delivery rules, and settings.</p>
+            <button class="btn btn-google btn-large" id="btn-login">
+                <svg viewBox="0 0 24 24" width="18" height="18">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                Sign in with Google
+            </button>
+            <p class="login-footer">
+                <a href="https://labs.coco.xyz/clawmark/" target="_blank">About ClawMark</a>
+                &middot;
+                <a href="https://labs.coco.xyz/clawmark/privacy/" target="_blank">Privacy</a>
+            </p>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app" style="display:none;">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <span class="sidebar-logo">&#x1f980;</span>
+                <span class="sidebar-title">ClawMark</span>
+            </div>
+            <ul class="sidebar-nav">
+                <li class="nav-item active" data-tab="overview">
+                    <span class="nav-icon">&#x1f4ca;</span> Overview
+                </li>
+                <li class="nav-item" data-tab="settings">
+                    <span class="nav-icon">&#x2699;&#xfe0f;</span> Settings
+                </li>
+                <li class="nav-item" data-tab="about">
+                    <span class="nav-icon">&#x1f4cb;</span> About
+                </li>
+            </ul>
+            <div class="sidebar-footer">
+                <div class="sidebar-user" id="sidebar-user"></div>
+            </div>
+        </nav>
+
+        <main class="content">
+            <!-- Overview Tab -->
+            <section class="tab-panel active" id="tab-overview">
+                <h1>Overview</h1>
+
+                <!-- Account Card -->
+                <div class="card">
+                    <h3>Account</h3>
+                    <div class="account-user" id="account-user">
+                        <div class="account-avatar" id="account-avatar"></div>
+                        <div class="account-details">
+                            <div class="account-name" id="account-name"></div>
+                            <div class="account-email" id="account-email"></div>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger" id="btn-sign-out">Sign Out</button>
+                </div>
+
+                <!-- Connection Card -->
+                <div class="card">
+                    <h3>Connection</h3>
+                    <p class="help-text">ClawMark server endpoint. Change this to connect to a different server.</p>
+                    <div class="server-url-row">
+                        <input type="text" class="input" id="opt-server-url" placeholder="https://api.coco.xyz/clawmark">
+                        <button class="btn btn-primary" id="btn-save-server">Save</button>
+                        <button class="btn btn-secondary" id="btn-test-server">Test</button>
+                    </div>
+                    <button class="btn btn-link" id="btn-reset-server">Reset to default</button>
+                    <div class="connection-status" id="connection-status">
+                        <span class="status-dot" id="conn-dot"></span>
+                        <span id="conn-text">Checking...</span>
+                        <span id="server-version" style="margin-left:12px;font-size:12px;color:var(--text-muted);"></span>
+                    </div>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card clickable" data-action="all">
+                        <div class="stat-value" id="stat-total">&mdash;</div>
+                        <div class="stat-label">Total Annotations</div>
+                    </div>
+                    <div class="stat-card clickable" data-action="comments">
+                        <div class="stat-value" id="stat-comments">&mdash;</div>
+                        <div class="stat-label">Comments</div>
+                    </div>
+                    <div class="stat-card clickable" data-action="issues">
+                        <div class="stat-value" id="stat-issues">&mdash;</div>
+                        <div class="stat-label">Issues</div>
+                    </div>
+                    <div class="stat-card clickable" data-action="rules">
+                        <div class="stat-value" id="stat-rules">&mdash;</div>
+                        <div class="stat-label">Delivery Rules</div>
+                    </div>
+                </div>
+                <h2 id="activity-heading">Top Annotated Pages</h2>
+                <div class="activity-list" id="activity-list">
+                    <div class="empty-state">Loading...</div>
+                </div>
+            </section>
+
+            <!-- Settings Tab (Auth + Delivery Rules) -->
+            <section class="tab-panel" id="tab-settings">
+                <h1>Settings</h1>
+
+                <!-- Auth Section -->
+                <div class="card">
+                    <h3>Auth Credentials</h3>
+                    <p class="help-text">Manage authorization credentials that delivery rules reference when dispatching.</p>
+                    <div class="toolbar">
+                        <button class="btn btn-primary" id="btn-add-auth">+ Add Auth</button>
+                    </div>
+                    <div class="rules-table-wrapper">
+                        <table class="rules-table" id="auths-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Credentials</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="auths-tbody"></tbody>
+                        </table>
+                        <div class="empty-state" id="auths-empty">No auths configured. Add one to use with delivery rules.</div>
+                    </div>
+                </div>
+
+                <!-- Delivery Rules Section -->
+                <div class="card">
+                    <h3>Delivery Rules</h3>
+                    <div class="toolbar">
+                        <button class="btn btn-primary" id="btn-add-rule">+ Add Rule</button>
+                        <div class="quick-add-group">
+                            <span class="quick-add-label">Quick add:</span>
+                            <button class="btn btn-ghost quick-add-btn" data-template="github">GitHub Issues</button>
+                            <button class="btn btn-ghost quick-add-btn" data-template="gitlab">GitLab Issues</button>
+                            <button class="btn btn-ghost quick-add-btn" data-template="lark">Lark</button>
+                            <button class="btn btn-ghost quick-add-btn" data-template="telegram">Telegram</button>
+                            <button class="btn btn-ghost quick-add-btn" data-template="slack">Slack</button>
+                        </div>
+                        <div style="flex:1"></div>
+                        <button class="btn btn-secondary" id="btn-export-rules">Export</button>
+                        <label class="btn btn-secondary import-label">
+                            Import
+                            <input type="file" id="btn-import-rules" accept=".json" style="display:none">
+                        </label>
+                    </div>
+                    <div class="rules-table-wrapper">
+                        <table class="rules-table" id="rules-table">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Pattern</th>
+                                    <th>Target</th>
+                                    <th>Priority</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rules-tbody"></tbody>
+                        </table>
+                        <div class="empty-state" id="rules-empty">
+                            <p>No delivery rules configured.</p>
+                            <p style="font-size:0.85em;opacity:0.7;margin-top:4px">Use the quick-add buttons above to get started, or click "+ Add Rule" for a custom rule.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Rule Form Modal -->
+                <div class="modal-overlay" id="rule-modal" style="display:none">
+                    <div class="modal">
+                        <div class="modal-header">
+                            <h3 id="rule-modal-title">Add Rule</h3>
+                            <button class="modal-close" id="rule-modal-close">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <label>Rule Type</label>
+                            <select class="input" id="opt-rf-type">
+                                <option value="url_pattern">URL Pattern</option>
+                                <option value="content_type">Content Type</option>
+                                <option value="tag_match">Tag Match</option>
+                                <option value="default">Default</option>
+                            </select>
+                            <label id="opt-rf-pattern-label">Pattern</label>
+                            <input type="text" class="input" id="opt-rf-pattern" placeholder="github.com/my-org/**">
+                            <label>Target</label>
+                            <select class="input" id="opt-rf-target">
+                                <option value="github-issue">GitHub Issue</option>
+                                <option value="gitlab-issue">GitLab Issue</option>
+                                <option value="lark">Lark Webhook</option>
+                                <option value="telegram">Telegram</option>
+                                <option value="webhook">Webhook</option>
+                                <option value="slack">Slack</option>
+                                <option value="email">Email</option>
+                                <option value="linear">Linear</option>
+                                <option value="jira">Jira</option>
+                                <option value="hxa-connect">HxA Connect</option>
+                            </select>
+                            <div id="opt-target-fields"></div>
+                            <label>Priority</label>
+                            <input type="number" class="input" id="opt-rf-priority" value="0" min="0" max="100">
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" id="rule-modal-cancel">Cancel</button>
+                            <button class="btn btn-primary" id="rule-modal-save">Save Rule</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Auth Form Modal -->
+                <div class="modal-overlay" id="auth-modal" style="display:none">
+                    <div class="modal">
+                        <div class="modal-header">
+                            <h3 id="auth-modal-title">Add Auth</h3>
+                            <button class="modal-close" id="auth-modal-close">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <label>Name</label>
+                            <input type="text" class="input" id="opt-auth-name" placeholder="e.g. GitHub - coco-xyz repos">
+                            <label>Auth Type</label>
+                            <select class="input" id="opt-auth-type">
+                                <option value="github-pat">GitHub PAT</option>
+                                <option value="gitlab-pat">GitLab PAT</option>
+                                <option value="lark-webhook">Lark Webhook</option>
+                                <option value="telegram-bot">Telegram Bot</option>
+                                <option value="slack-webhook">Slack Webhook</option>
+                                <option value="email-api">Email API</option>
+                                <option value="linear-api">Linear API</option>
+                                <option value="jira-api">Jira API</option>
+                                <option value="hxa-api">HxA Connect API</option>
+                                <option value="webhook-secret">Webhook Secret</option>
+                            </select>
+                            <div id="opt-auth-fields"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" id="auth-modal-cancel">Cancel</button>
+                            <button class="btn btn-primary" id="auth-modal-save">Save Auth</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- About Tab -->
+            <section class="tab-panel" id="tab-about">
+                <h1>About</h1>
+                <div class="card">
+                    <h3>Version Info</h3>
+                    <table style="width:100%;font-size:13px;border-collapse:collapse;margin:8px 0;">
+                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Server Version</td><td style="padding:4px 8px;"><strong id="about-server-version">&mdash;</strong></td></tr>
+                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Latest Release</td><td style="padding:4px 8px;"><strong id="about-latest-version">checking...</strong></td></tr>
+                    </table>
+                </div>
+                <div class="card" id="update-guide-card" style="display:none;">
+                    <h3>Extension Update Available</h3>
+                    <p id="update-guide-text" style="font-size:13px;color:var(--text-muted);line-height:1.6;"></p>
+                    <a id="update-guide-link" href="https://github.com/coco-xyz/clawmark/releases/latest" target="_blank" class="btn btn-primary" style="margin-top:8px;display:inline-block;text-decoration:none;">Download Latest</a>
+                </div>
+                <div class="card">
+                    <h3>Links</h3>
+                    <ul class="link-list">
+                        <li><a href="https://labs.coco.xyz/clawmark/" target="_blank">Official Website</a></li>
+                        <li><a href="https://github.com/coco-xyz/clawmark" target="_blank">GitHub Repository</a></li>
+                        <li><a href="https://github.com/coco-xyz/clawmark/releases" target="_blank">Releases</a></li>
+                        <li><a href="https://github.com/coco-xyz/clawmark/issues" target="_blank">Report an Issue</a></li>
+                        <li><a href="https://labs.coco.xyz/clawmark/privacy/" target="_blank">Privacy Policy</a></li>
+                    </ul>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script type="module" src="./src/main.js"></script>
+</body>
+</html>

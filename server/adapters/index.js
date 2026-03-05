@@ -202,6 +202,7 @@ class AdapterRegistry {
                 target_config: t.target_config,
                 event,
                 method: t.method,
+                auth_id: t.matched_rule?.auth_id || null,
             }),
             ...t,
         }));
@@ -297,6 +298,17 @@ class AdapterRegistry {
             }
 
             const config = JSON.parse(entry.target_config);
+
+            // Re-inject auth credentials from user_auths (same logic as initial dispatch)
+            if (entry.auth_id && !config.token) {
+                const auth = this.db.getUserAuth(entry.auth_id);
+                if (auth) {
+                    let creds;
+                    try { creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials; } catch { creds = {}; }
+                    Object.assign(config, creds);
+                }
+            }
+
             try {
                 const result = await this._dispatchSingleTarget(entry.event || 'item.created', item, entry.target_type, config, {});
                 this.db.updateDispatchEntry(entry.id, {

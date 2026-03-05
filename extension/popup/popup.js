@@ -65,17 +65,19 @@ masterToggle.addEventListener('change', async () => {
     showMessage(enabled ? 'ClawMark enabled' : 'ClawMark paused', 'success');
 });
 
-// ------------------------------------------------------------------ gear -> dashboard
+// ------------------------------------------------------------------ gear -> dashboard (standalone website)
 
-gearBtn.addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
+function openDashboard(hash) {
+    const base = (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.DASHBOARD_URL)
+        || 'https://labs.coco.xyz/clawmark/dash/';
+    const url = hash ? base + '#' + hash : base;
+    chrome.tabs.create({ url });
     window.close();
-});
+}
 
-settingsLink.addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
-    window.close();
-});
+gearBtn.addEventListener('click', () => openDashboard());
+
+settingsLink.addEventListener('click', () => openDashboard('account'));
 
 // ------------------------------------------------------------------ auth
 
@@ -189,9 +191,179 @@ function formatTargetName(type, config) {
     }
 }
 
-document.getElementById('btn-more-targets').addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
-    window.close();
+document.getElementById('btn-more-targets').addEventListener('click', () => openDashboard('delivery'));
+
+// ------------------------------------------------------------------ quick add rule (#202)
+
+const quickAddForm = document.getElementById('quick-add-form');
+const qaTargetType = document.getElementById('qa-target-type');
+const qaRepo = document.getElementById('qa-repo');
+const qaAuthSelect = document.getElementById('qa-auth-id');
+const qaPattern = document.getElementById('qa-pattern');
+const qaStatus = document.getElementById('qa-status');
+const qaSuggestion = document.getElementById('quick-add-suggestion');
+const qaNoAuthHint = document.getElementById('qa-no-auth-hint');
+
+let cachedAuths = [];
+
+// Map target types to compatible auth types (matches dashboard)
+const TARGET_AUTH_TYPES = {
+    'github-issue': ['github-pat'],
+    'lark': ['lark-webhook'],
+    'telegram': ['telegram-bot'],
+    'webhook': ['webhook-secret'],
+    'slack': ['slack-webhook'],
+};
+
+/**
+ * Extract GitHub owner/repo from a URL.
+ */
+function extractGitHubRepo(url) {
+    if (!url) return null;
+    const m = url.match(/github\.com\/([^/?#]+)\/([^/?#]+)/);
+    if (!m) return null;
+    const owner = m[1];
+    const repo = m[2].replace(/\.git$/, '');
+    const skip = ['settings', 'orgs', 'marketplace', 'explore', 'topics', 'trending',
+        'collections', 'events', 'sponsors', 'notifications', 'new', 'login', 'signup',
+        'features', 'security', 'pricing', 'enterprise'];
+    if (skip.includes(owner)) return null;
+    return { owner, repo };
+}
+
+async function loadAuths() {
+    try {
+        const result = await chrome.runtime.sendMessage({ type: 'GET_AUTHS' });
+        cachedAuths = result.auths || [];
+    } catch {
+        cachedAuths = [];
+    }
+}
+
+function populateAuthDropdown(targetType) {
+    const compatibleTypes = TARGET_AUTH_TYPES[targetType] || [];
+    const compatible = cachedAuths.filter(a => compatibleTypes.includes(a.auth_type));
+
+    qaAuthSelect.innerHTML = '';
+    if (compatible.length === 0) {
+        qaAuthSelect.innerHTML = '<option value="">(no auth available)</option>';
+        qaAuthSelect.disabled = true;
+        qaNoAuthHint.style.display = 'block';
+    } else {
+        qaAuthSelect.disabled = false;
+        qaNoAuthHint.style.display = 'none';
+        for (const a of compatible) {
+            const opt = document.createElement('option');
+            opt.value = a.id;
+            opt.textContent = a.name;
+            qaAuthSelect.appendChild(opt);
+        }
+    }
+}
+
+document.getElementById('btn-quick-add').addEventListener('click', async () => {
+    const wasHidden = quickAddForm.style.display === 'none';
+    quickAddForm.style.display = wasHidden ? 'block' : 'none';
+    if (wasHidden) {
+        await loadAuths();
+        autoPopulateQuickAdd();
+    }
+});
+
+document.getElementById('qa-add-auth-link').addEventListener('click', () => openDashboard('auths'));
+
+function autoPopulateQuickAdd() {
+    const gh = extractGitHubRepo(currentUrl);
+    if (gh) {
+        qaTargetType.value = 'github-issue';
+        qaRepo.value = `${gh.owner}/${gh.repo}`;
+        qaPattern.value = `*github.com/${gh.owner}/${gh.repo}*`;
+        qaSuggestion.textContent = `Detected GitHub repo: ${gh.owner}/${gh.repo}`;
+        qaSuggestion.style.display = 'block';
+        updateQuickAddFields();
+    } else {
+        // Default: URL pattern for current domain
+        try {
+            const domain = new URL(currentUrl).hostname;
+            qaPattern.value = `*${domain}*`;
+        } catch {}
+        qaSuggestion.style.display = 'none';
+        updateQuickAddFields();
+    }
+}
+
+function updateQuickAddFields() {
+    const type = qaTargetType.value;
+    const isGitHub = type === 'github-issue';
+    document.getElementById('qa-repo-field').style.display = isGitHub ? 'block' : 'none';
+    populateAuthDropdown(type);
+}
+
+qaTargetType.addEventListener('change', () => {
+    updateQuickAddFields();
+    qaSuggestion.style.display = 'none';
+});
+
+document.getElementById('qa-cancel').addEventListener('click', () => {
+    quickAddForm.style.display = 'none';
+    qaStatus.textContent = '';
+});
+
+document.getElementById('qa-save').addEventListener('click', async () => {
+    const type = qaTargetType.value;
+    const pattern = qaPattern.value.trim();
+    if (!pattern) {
+        qaStatus.textContent = 'Pattern is required';
+        qaStatus.style.color = '#ef4444';
+        return;
+    }
+
+    const authId = qaAuthSelect.value || null;
+    if (!authId) {
+        qaStatus.textContent = 'Auth is required — add one in Dashboard first';
+        qaStatus.style.color = '#ef4444';
+        return;
+    }
+
+    let target_config = {};
+    if (type === 'github-issue') {
+        const repo = qaRepo.value.trim();
+        if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) {
+            qaStatus.textContent = 'Invalid repo format (owner/repo)';
+            qaStatus.style.color = '#ef4444';
+            return;
+        }
+        target_config = { repo, labels: ['clawmark'], assignees: [] };
+    }
+
+    qaStatus.textContent = 'Saving...';
+    qaStatus.style.color = '#888';
+
+    try {
+        const result = await chrome.runtime.sendMessage({
+            type: 'CREATE_ROUTING_RULE',
+            data: {
+                rule_type: 'url_pattern',
+                pattern,
+                target_type: type,
+                target_config,
+                priority: 50,
+                auth_id: authId,
+            },
+        });
+        if (result.error) throw new Error(result.error);
+        qaStatus.textContent = 'Rule created!';
+        qaStatus.style.color = '#22c55e';
+        // Refresh targets and hide form after a moment
+        setTimeout(() => {
+            quickAddForm.style.display = 'none';
+            qaStatus.textContent = '';
+            loadDeliveryTargets();
+        }, 1000);
+    } catch (err) {
+        qaStatus.textContent = `Failed: ${err.message}`;
+        qaStatus.style.color = '#ef4444';
+    }
 });
 
 // ------------------------------------------------------------------ annotation stats
