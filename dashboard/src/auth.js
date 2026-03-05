@@ -9,8 +9,11 @@
 
 'use strict';
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
-    || '530440081185-32t15m4gqndq7qab6g57a25i6gfc1gmn.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+if (!GOOGLE_CLIENT_ID) {
+    console.warn('[ClawMark Auth] VITE_GOOGLE_CLIENT_ID is not set. Google OAuth will not work.');
+}
 
 export function getRedirectUri() {
     return window.location.origin + window.location.pathname;
