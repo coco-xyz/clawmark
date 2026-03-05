@@ -86,8 +86,8 @@
                 <li class="nav-item" data-tab="settings">
                     <span class="nav-icon">&#x2699;&#xfe0f;</span> Settings
                 </li>
-                <li class="nav-item" data-tab="delivery">
-                    <span class="nav-icon">&#x1f4ee;</span> Delivery Rules
+                <li class="nav-item" data-tab="about">
+                    <span class="nav-icon">&#x1f4cb;</span> About
                 </li>
             </ul>
             <div class="sidebar-footer">
@@ -99,6 +99,38 @@
             <!-- Overview Tab -->
             <section class="tab-panel active" id="tab-overview">
                 <h1>Overview</h1>
+
+                <!-- Account Card -->
+                <div class="card">
+                    <h3>Account</h3>
+                    <div class="account-user" id="account-user">
+                        <div class="account-avatar" id="account-avatar"></div>
+                        <div class="account-details">
+                            <div class="account-name" id="account-name"></div>
+                            <div class="account-email" id="account-email"></div>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger" id="btn-sign-out">Sign Out</button>
+                </div>
+
+                <!-- Connection Card -->
+                <div class="card">
+                    <h3>Connection</h3>
+                    <p class="help-text">ClawMark server endpoint. Change this to connect to a different server.</p>
+                    <div class="server-url-row">
+                        <input type="text" class="input" id="opt-server-url" placeholder="https://api.coco.xyz/clawmark">
+                        <button class="btn btn-primary" id="btn-save-server">Save</button>
+                        <button class="btn btn-secondary" id="btn-test-server">Test</button>
+                    </div>
+                    <button class="btn btn-link" id="btn-reset-server">Reset to default</button>
+                    <div class="connection-status" id="connection-status">
+                        <span class="status-dot" id="conn-dot"></span>
+                        <span id="conn-text">Checking...</span>
+                        <span id="server-version" style="margin-left:12px;font-size:12px;color:var(--text-muted);"></span>
+                    </div>
+                </div>
+
+                <!-- Stats Grid -->
                 <div class="stats-grid">
                     <div class="stat-card clickable" data-action="all">
                         <div class="stat-value" id="stat-total">&mdash;</div>
@@ -121,63 +153,11 @@
                 <div class="activity-list" id="activity-list">
                     <div class="empty-state">Loading...</div>
                 </div>
-                <div class="card" style="margin-top:24px;">
-                    <h3>Version Info</h3>
-                    <table style="width:100%;font-size:13px;border-collapse:collapse;margin:8px 0;">
-                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Server Version</td><td style="padding:4px 8px;"><strong id="about-server-version">&mdash;</strong></td></tr>
-                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Latest Release</td><td style="padding:4px 8px;"><strong id="about-latest-version">checking...</strong></td></tr>
-                    </table>
-                </div>
-                <div class="card" id="update-guide-card" style="display:none;">
-                    <h3>Extension Update Available</h3>
-                    <p id="update-guide-text" style="font-size:13px;color:var(--text-muted);line-height:1.6;"></p>
-                    <a id="update-guide-link" href="https://github.com/coco-xyz/clawmark/releases/latest" target="_blank" class="btn btn-primary" style="margin-top:8px;display:inline-block;text-decoration:none;">Download Latest</a>
-                </div>
-                <div class="card">
-                    <h3>Links</h3>
-                    <ul class="link-list">
-                        <li><a href="https://labs.coco.xyz/clawmark/" target="_blank">Official Website</a></li>
-                        <li><a href="https://github.com/coco-xyz/clawmark" target="_blank">GitHub Repository</a></li>
-                        <li><a href="https://github.com/coco-xyz/clawmark/releases" target="_blank">Releases</a></li>
-                        <li><a href="https://github.com/coco-xyz/clawmark/issues" target="_blank">Report an Issue</a></li>
-                        <li><a href="https://labs.coco.xyz/clawmark/privacy/" target="_blank">Privacy Policy</a></li>
-                    </ul>
-                </div>
             </section>
 
-            <!-- Settings Tab (Account + Connection + Auth) -->
+            <!-- Settings Tab (Auth + Delivery Rules) -->
             <section class="tab-panel" id="tab-settings">
                 <h1>Settings</h1>
-
-                <!-- Account Section -->
-                <div class="card">
-                    <h3>Account</h3>
-                    <div class="account-user" id="account-user">
-                        <div class="account-avatar" id="account-avatar"></div>
-                        <div class="account-details">
-                            <div class="account-name" id="account-name"></div>
-                            <div class="account-email" id="account-email"></div>
-                        </div>
-                    </div>
-                    <button class="btn btn-danger" id="btn-sign-out">Sign Out</button>
-                </div>
-
-                <!-- Connection Section -->
-                <div class="card">
-                    <h3>Connection</h3>
-                    <p class="help-text">ClawMark server endpoint. Change this to connect to a different server.</p>
-                    <div class="server-url-row">
-                        <input type="text" class="input" id="opt-server-url" placeholder="https://api.coco.xyz/clawmark">
-                        <button class="btn btn-primary" id="btn-save-server">Save</button>
-                        <button class="btn btn-secondary" id="btn-test-server">Test</button>
-                    </div>
-                    <button class="btn btn-link" id="btn-reset-server">Reset to default</button>
-                    <div class="connection-status" id="connection-status">
-                        <span class="status-dot" id="conn-dot"></span>
-                        <span id="conn-text">Checking...</span>
-                        <span id="server-version" style="margin-left:12px;font-size:12px;color:var(--text-muted);"></span>
-                    </div>
-                </div>
 
                 <!-- Auth Section -->
                 <div class="card">
@@ -202,75 +182,43 @@
                     </div>
                 </div>
 
-                <!-- Auth Form Modal -->
-                <div class="modal-overlay" id="auth-modal" style="display:none">
-                    <div class="modal">
-                        <div class="modal-header">
-                            <h3 id="auth-modal-title">Add Auth</h3>
-                            <button class="modal-close" id="auth-modal-close">&times;</button>
+                <!-- Delivery Rules Section -->
+                <div class="card">
+                    <h3>Delivery Rules</h3>
+                    <div class="toolbar">
+                        <button class="btn btn-primary" id="btn-add-rule">+ Add Rule</button>
+                        <div class="quick-add-group">
+                            <span class="quick-add-label">Quick add:</span>
+                            <button class="btn btn-ghost quick-add-btn" data-template="github">GitHub Issues</button>
+                            <button class="btn btn-ghost quick-add-btn" data-template="gitlab">GitLab Issues</button>
+                            <button class="btn btn-ghost quick-add-btn" data-template="lark">Lark</button>
+                            <button class="btn btn-ghost quick-add-btn" data-template="telegram">Telegram</button>
+                            <button class="btn btn-ghost quick-add-btn" data-template="slack">Slack</button>
                         </div>
-                        <div class="modal-body">
-                            <label>Name</label>
-                            <input type="text" class="input" id="opt-auth-name" placeholder="e.g. GitHub - coco-xyz repos">
-                            <label>Auth Type</label>
-                            <select class="input" id="opt-auth-type">
-                                <option value="github-pat">GitHub PAT</option>
-                                <option value="gitlab-pat">GitLab PAT</option>
-                                <option value="lark-webhook">Lark Webhook</option>
-                                <option value="telegram-bot">Telegram Bot</option>
-                                <option value="slack-webhook">Slack Webhook</option>
-                                <option value="email-api">Email API</option>
-                                <option value="linear-api">Linear API</option>
-                                <option value="jira-api">Jira API</option>
-                                <option value="hxa-api">HxA Connect API</option>
-                                <option value="webhook-secret">Webhook Secret</option>
-                            </select>
-                            <div id="opt-auth-fields"></div>
-                        </div>
-                        <div class="modal-footer">
-                            <button class="btn btn-secondary" id="auth-modal-cancel">Cancel</button>
-                            <button class="btn btn-primary" id="auth-modal-save">Save Auth</button>
-                        </div>
+                        <div style="flex:1"></div>
+                        <button class="btn btn-secondary" id="btn-export-rules">Export</button>
+                        <label class="btn btn-secondary import-label">
+                            Import
+                            <input type="file" id="btn-import-rules" accept=".json" style="display:none">
+                        </label>
                     </div>
-                </div>
-            </section>
-
-            <!-- Delivery Rules Tab -->
-            <section class="tab-panel" id="tab-delivery">
-                <h1>Delivery Rules</h1>
-                <div class="toolbar">
-                    <button class="btn btn-primary" id="btn-add-rule">+ Add Rule</button>
-                    <div class="quick-add-group">
-                        <span class="quick-add-label">Quick add:</span>
-                        <button class="btn btn-ghost quick-add-btn" data-template="github">GitHub Issues</button>
-                        <button class="btn btn-ghost quick-add-btn" data-template="gitlab">GitLab Issues</button>
-                        <button class="btn btn-ghost quick-add-btn" data-template="lark">Lark</button>
-                        <button class="btn btn-ghost quick-add-btn" data-template="telegram">Telegram</button>
-                        <button class="btn btn-ghost quick-add-btn" data-template="slack">Slack</button>
-                    </div>
-                    <div style="flex:1"></div>
-                    <button class="btn btn-secondary" id="btn-export-rules">Export</button>
-                    <label class="btn btn-secondary import-label">
-                        Import
-                        <input type="file" id="btn-import-rules" accept=".json" style="display:none">
-                    </label>
-                </div>
-                <div class="rules-table-wrapper">
-                    <table class="rules-table" id="rules-table">
-                        <thead>
-                            <tr>
-                                <th>Type</th>
-                                <th>Pattern</th>
-                                <th>Target</th>
-                                <th>Priority</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="rules-tbody"></tbody>
-                    </table>
-                    <div class="empty-state" id="rules-empty">
-                        <p>No delivery rules configured.</p>
-                        <p style="font-size:0.85em;opacity:0.7;margin-top:4px">Use the quick-add buttons above to get started, or click "+ Add Rule" for a custom rule.</p>
+                    <div class="rules-table-wrapper">
+                        <table class="rules-table" id="rules-table">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Pattern</th>
+                                    <th>Target</th>
+                                    <th>Priority</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rules-tbody"></tbody>
+                        </table>
+                        <div class="empty-state" id="rules-empty">
+                            <p>No delivery rules configured.</p>
+                            <p style="font-size:0.85em;opacity:0.7;margin-top:4px">Use the quick-add buttons above to get started, or click "+ Add Rule" for a custom rule.</p>
+                        </div>
                     </div>
                 </div>
 
@@ -314,9 +262,66 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Auth Form Modal -->
+                <div class="modal-overlay" id="auth-modal" style="display:none">
+                    <div class="modal">
+                        <div class="modal-header">
+                            <h3 id="auth-modal-title">Add Auth</h3>
+                            <button class="modal-close" id="auth-modal-close">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <label>Name</label>
+                            <input type="text" class="input" id="opt-auth-name" placeholder="e.g. GitHub - coco-xyz repos">
+                            <label>Auth Type</label>
+                            <select class="input" id="opt-auth-type">
+                                <option value="github-pat">GitHub PAT</option>
+                                <option value="gitlab-pat">GitLab PAT</option>
+                                <option value="lark-webhook">Lark Webhook</option>
+                                <option value="telegram-bot">Telegram Bot</option>
+                                <option value="slack-webhook">Slack Webhook</option>
+                                <option value="email-api">Email API</option>
+                                <option value="linear-api">Linear API</option>
+                                <option value="jira-api">Jira API</option>
+                                <option value="hxa-api">HxA Connect API</option>
+                                <option value="webhook-secret">Webhook Secret</option>
+                            </select>
+                            <div id="opt-auth-fields"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" id="auth-modal-cancel">Cancel</button>
+                            <button class="btn btn-primary" id="auth-modal-save">Save Auth</button>
+                        </div>
+                    </div>
+                </div>
             </section>
 
-            <!-- Sites and About tabs removed — consolidated into Overview and Settings -->
+            <!-- About Tab -->
+            <section class="tab-panel" id="tab-about">
+                <h1>About</h1>
+                <div class="card">
+                    <h3>Version Info</h3>
+                    <table style="width:100%;font-size:13px;border-collapse:collapse;margin:8px 0;">
+                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Server Version</td><td style="padding:4px 8px;"><strong id="about-server-version">&mdash;</strong></td></tr>
+                        <tr><td style="padding:4px 8px;color:var(--text-muted);">Latest Release</td><td style="padding:4px 8px;"><strong id="about-latest-version">checking...</strong></td></tr>
+                    </table>
+                </div>
+                <div class="card" id="update-guide-card" style="display:none;">
+                    <h3>Extension Update Available</h3>
+                    <p id="update-guide-text" style="font-size:13px;color:var(--text-muted);line-height:1.6;"></p>
+                    <a id="update-guide-link" href="https://github.com/coco-xyz/clawmark/releases/latest" target="_blank" class="btn btn-primary" style="margin-top:8px;display:inline-block;text-decoration:none;">Download Latest</a>
+                </div>
+                <div class="card">
+                    <h3>Links</h3>
+                    <ul class="link-list">
+                        <li><a href="https://labs.coco.xyz/clawmark/" target="_blank">Official Website</a></li>
+                        <li><a href="https://github.com/coco-xyz/clawmark" target="_blank">GitHub Repository</a></li>
+                        <li><a href="https://github.com/coco-xyz/clawmark/releases" target="_blank">Releases</a></li>
+                        <li><a href="https://github.com/coco-xyz/clawmark/issues" target="_blank">Report an Issue</a></li>
+                        <li><a href="https://labs.coco.xyz/clawmark/privacy/" target="_blank">Privacy Policy</a></li>
+                    </ul>
+                </div>
+            </section>
         </main>
     </div>
 
