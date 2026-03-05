@@ -87,6 +87,14 @@ function showApp(user) {
     loadAuthsList();
     loadRules();
     loadAbout();
+
+    // Handle old hash routes that were consolidated
+    const hash = location.hash.slice(1);
+    if (['account', 'connection', 'auths'].includes(hash)) {
+        switchTab('settings');
+    } else if (hash === 'sites' || hash === 'about') {
+        switchTab('overview');
+    }
 }
 
 // ------------------------------------------------------------------ login
@@ -573,7 +581,7 @@ function buildAuthSelector(targetType, selectedAuthId) {
     const compatibleTypes = TARGET_AUTH_TYPES[targetType] || [];
     const compatible = allAuths.filter(a => compatibleTypes.includes(a.auth_type));
     if (compatible.length === 0) {
-        return `<label>Auth</label><div class="help-text" style="margin-bottom:8px;">No ${compatibleTypes.join('/')} auths configured. <a href="#" onclick="document.querySelector('[data-tab=auths]').click();return false;">Add one first</a>.</div>
+        return `<label>Auth</label><div class="help-text" style="margin-bottom:8px;">No ${compatibleTypes.join('/')} auths configured. <a href="#" onclick="document.querySelector('[data-tab=settings]').click();return false;">Add one first</a>.</div>
             <input type="hidden" id="tc-auth-id" value="">`;
     }
     let opts = '<option value="">(none)</option>';
