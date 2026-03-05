@@ -233,9 +233,17 @@
                 <h1>Delivery Rules</h1>
                 <div class="toolbar">
                     <button class="btn btn-primary" id="btn-add-rule">+ Add Rule</button>
-                    <button class="btn btn-secondary" id="btn-export-rules">Export JSON</button>
+                    <div class="quick-add-group">
+                        <span class="quick-add-label">Quick add:</span>
+                        <button class="btn btn-ghost quick-add-btn" data-template="github">GitHub Issues</button>
+                        <button class="btn btn-ghost quick-add-btn" data-template="lark">Lark</button>
+                        <button class="btn btn-ghost quick-add-btn" data-template="telegram">Telegram</button>
+                        <button class="btn btn-ghost quick-add-btn" data-template="slack">Slack</button>
+                    </div>
+                    <div style="flex:1"></div>
+                    <button class="btn btn-secondary" id="btn-export-rules">Export</button>
                     <label class="btn btn-secondary import-label">
-                        Import JSON
+                        Import
                         <input type="file" id="btn-import-rules" accept=".json" style="display:none">
                     </label>
                 </div>
@@ -252,7 +260,10 @@
                         </thead>
                         <tbody id="rules-tbody"></tbody>
                     </table>
-                    <div class="empty-state" id="rules-empty">No delivery rules configured</div>
+                    <div class="empty-state" id="rules-empty">
+                        <p>No delivery rules configured.</p>
+                        <p style="font-size:0.85em;opacity:0.7;margin-top:4px">Use the quick-add buttons above to get started, or click "+ Add Rule" for a custom rule.</p>
+                    </div>
                 </div>
 
                 <!-- Rule Form Modal -->
