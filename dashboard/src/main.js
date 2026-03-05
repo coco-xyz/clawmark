@@ -906,7 +906,7 @@ document.getElementById('auth-modal-save').addEventListener('click', async () =>
 });
 
 async function doDeleteAuth(id) {
-    if (!confirm('Delete this auth? Rules using it will lose their auth reference.')) return;
+    if (!confirm('Delete this auth? (Will fail if any rules still reference it.)')) return;
     try {
         await deleteAuth(id);
         showToast('Auth deleted');
