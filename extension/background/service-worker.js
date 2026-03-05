@@ -71,46 +71,20 @@ async function loginWithGoogle() {
     authUrl.searchParams.set('access_type', 'offline');
     authUrl.searchParams.set('prompt', 'consent');
 
-    // GL#17: Use a sized popup window instead of chrome.identity.launchWebAuthFlow
-    // which opens an oversized dialog that can't be resized.
-    const code = await new Promise((resolve, reject) => {
-        chrome.windows.create({
+    const responseUrl = await new Promise((resolve, reject) => {
+        chrome.identity.launchWebAuthFlow({
             url: authUrl.toString(),
-            type: 'popup',
-            width: 500,
-            height: 650,
-            left: 200,
-            top: 100,
-        }, (win) => {
-            if (!win) { reject(new Error('Failed to open auth window')); return; }
-            const windowId = win.id;
-
-            function onNavigation(details) {
-                if (details.url && details.url.startsWith(redirectUrl)) {
-                    chrome.webNavigation.onBeforeNavigate.removeListener(onNavigation);
-                    chrome.windows.onRemoved.removeListener(onClosed);
-                    const responseUrl = new URL(details.url);
-                    const authCode = responseUrl.searchParams.get('code');
-                    chrome.windows.remove(windowId).catch(() => {});
-                    if (authCode) { resolve(authCode); }
-                    else { reject(new Error('No authorization code received')); }
-                }
+            interactive: true,
+        }, (callbackUrl) => {
+            if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+            } else {
+                resolve(callbackUrl);
             }
-
-            function onClosed(closedId) {
-                if (closedId === windowId) {
-                    chrome.webNavigation.onBeforeNavigate.removeListener(onNavigation);
-                    chrome.windows.onRemoved.removeListener(onClosed);
-                    reject(new Error('Auth window closed by user'));
-                }
-            }
-
-            chrome.webNavigation.onBeforeNavigate.addListener(onNavigation, {
-                url: [{ urlPrefix: redirectUrl }],
-            });
-            chrome.windows.onRemoved.addListener(onClosed);
         });
     });
+
+    const code = new URL(responseUrl).searchParams.get('code');
 
     if (!code) {
         throw new Error('No authorization code received');

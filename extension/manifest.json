@@ -10,8 +10,7 @@
         "identity",
         "contextMenus",
         "sidePanel",
-        "tabs",
-        "webNavigation"
+        "tabs"
     ],
     "host_permissions": [
         "<all_urls>"
