@@ -198,11 +198,22 @@ document.getElementById('btn-more-targets').addEventListener('click', () => open
 const quickAddForm = document.getElementById('quick-add-form');
 const qaTargetType = document.getElementById('qa-target-type');
 const qaRepo = document.getElementById('qa-repo');
-const qaWebhookUrl = document.getElementById('qa-webhook-url');
-const qaToken = document.getElementById('qa-token');
+const qaAuthSelect = document.getElementById('qa-auth-id');
 const qaPattern = document.getElementById('qa-pattern');
 const qaStatus = document.getElementById('qa-status');
 const qaSuggestion = document.getElementById('quick-add-suggestion');
+const qaNoAuthHint = document.getElementById('qa-no-auth-hint');
+
+let cachedAuths = [];
+
+// Map target types to compatible auth types (matches dashboard)
+const TARGET_AUTH_TYPES = {
+    'github-issue': ['github-pat'],
+    'lark': ['lark-webhook'],
+    'telegram': ['telegram-bot'],
+    'webhook': ['webhook-secret'],
+    'slack': ['slack-webhook'],
+};
 
 /**
  * Extract GitHub owner/repo from a URL.
@@ -220,12 +231,46 @@ function extractGitHubRepo(url) {
     return { owner, repo };
 }
 
-document.getElementById('btn-quick-add').addEventListener('click', () => {
-    quickAddForm.style.display = quickAddForm.style.display === 'none' ? 'block' : 'none';
-    if (quickAddForm.style.display === 'block') {
+async function loadAuths() {
+    try {
+        const result = await chrome.runtime.sendMessage({ type: 'GET_AUTHS' });
+        cachedAuths = result.auths || [];
+    } catch {
+        cachedAuths = [];
+    }
+}
+
+function populateAuthDropdown(targetType) {
+    const compatibleTypes = TARGET_AUTH_TYPES[targetType] || [];
+    const compatible = cachedAuths.filter(a => compatibleTypes.includes(a.auth_type));
+
+    qaAuthSelect.innerHTML = '';
+    if (compatible.length === 0) {
+        qaAuthSelect.innerHTML = '<option value="">(no auth available)</option>';
+        qaAuthSelect.disabled = true;
+        qaNoAuthHint.style.display = 'block';
+    } else {
+        qaAuthSelect.disabled = false;
+        qaNoAuthHint.style.display = 'none';
+        for (const a of compatible) {
+            const opt = document.createElement('option');
+            opt.value = a.id;
+            opt.textContent = a.name;
+            qaAuthSelect.appendChild(opt);
+        }
+    }
+}
+
+document.getElementById('btn-quick-add').addEventListener('click', async () => {
+    const wasHidden = quickAddForm.style.display === 'none';
+    quickAddForm.style.display = wasHidden ? 'block' : 'none';
+    if (wasHidden) {
+        await loadAuths();
         autoPopulateQuickAdd();
     }
 });
+
+document.getElementById('qa-add-auth-link').addEventListener('click', () => openDashboard('auths'));
 
 function autoPopulateQuickAdd() {
     const gh = extractGitHubRepo(currentUrl);
@@ -251,8 +296,7 @@ function updateQuickAddFields() {
     const type = qaTargetType.value;
     const isGitHub = type === 'github-issue';
     document.getElementById('qa-repo-field').style.display = isGitHub ? 'block' : 'none';
-    document.getElementById('qa-token-field').style.display = isGitHub ? 'block' : 'none';
-    document.getElementById('qa-webhook-field').style.display = !isGitHub ? 'block' : 'none';
+    populateAuthDropdown(type);
 }
 
 qaTargetType.addEventListener('change', () => {
@@ -274,33 +318,22 @@ document.getElementById('qa-save').addEventListener('click', async () => {
         return;
     }
 
+    const authId = qaAuthSelect.value || null;
+    if (!authId) {
+        qaStatus.textContent = 'Auth is required — add one in Dashboard first';
+        qaStatus.style.color = '#ef4444';
+        return;
+    }
+
     let target_config = {};
     if (type === 'github-issue') {
         const repo = qaRepo.value.trim();
-        const token = qaToken.value.trim();
         if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) {
             qaStatus.textContent = 'Invalid repo format (owner/repo)';
             qaStatus.style.color = '#ef4444';
             return;
         }
-        if (!token) {
-            qaStatus.textContent = 'GitHub token is required';
-            qaStatus.style.color = '#ef4444';
-            return;
-        }
-        target_config = { repo, token, labels: ['clawmark'], assignees: [] };
-    } else {
-        const url = qaWebhookUrl.value.trim();
-        if (!url) {
-            qaStatus.textContent = 'URL is required';
-            qaStatus.style.color = '#ef4444';
-            return;
-        }
-        target_config = type === 'telegram'
-            ? { bot_token: url.split('/').pop(), chat_id: '' }
-            : type === 'slack' ? { webhook_url: url }
-            : type === 'lark' ? { webhook_url: url }
-            : { url };
+        target_config = { repo, labels: ['clawmark'], assignees: [] };
     }
 
     qaStatus.textContent = 'Saving...';
@@ -315,6 +348,7 @@ document.getElementById('qa-save').addEventListener('click', async () => {
                 target_type: type,
                 target_config,
                 priority: 50,
+                auth_id: authId,
             },
         });
         if (result.error) throw new Error(result.error);
