@@ -211,6 +211,15 @@ const defaultGitHubTarget = config.distribution?.channels?.['github-clawmark']
  * @param {string} event   Event name, e.g. 'item.created'
  * @param {object} payload The item/data payload
  */
+/**
+ * Dispatch event through the adapter registry.
+ * For item.created, returns dispatch results so the caller can surface failures.
+ * Other events remain fire-and-forget.
+ *
+ * @param {string} event   Event name, e.g. 'item.created'
+ * @param {object} payload The item/data payload
+ * @returns {Array|undefined} Dispatch results for item.created, undefined otherwise
+ */
 async function sendWebhook(event, payload) {
     if (event === 'item.created') {
         // Fetch target declaration (async — checks .clawmark.yml or /.well-known/clawmark.json)
@@ -250,15 +259,18 @@ async function sendWebhook(event, payload) {
         // Store routing decision on the item for debugging/auditing
         payload._routing = filteredTargets.map(t => ({ method: t.method, target_type: t.target_type, repo: t.target_config.repo }));
 
-        // Multi-target dispatch with tracking
-        registry.dispatchToTargets(event, payload, filteredTargets, {}).catch(err => {
+        // Multi-target dispatch with tracking — await results (#200)
+        try {
+            const results = await registry.dispatchToTargets(event, payload, filteredTargets, {});
+            return results;
+        } catch (err) {
             console.error(`[dispatch] Multi-target dispatch failed for ${event}:`, err.message);
             // Fallback to static dispatch on error
             registry.dispatch(event, payload).catch(e => {
                 console.error(`[dispatch] Fallback also failed:`, e.message);
             });
-        });
-        return;
+            return [{ target_type: 'unknown', status: 'failed', error: err.message }];
+        }
     }
 
     // Default static dispatch (for non-routed events or system_default routing)
@@ -736,7 +748,7 @@ app.put('/api/v2/user/settings', apiWriteLimiter, v2Auth, (req, res) => {
 });
 
 // -- POST /api/v2/items — create item with full V2 schema
-app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
+app.post('/api/v2/items', apiWriteLimiter, v2Auth, async (req, res) => {
     const { type, source_url, source_title, quote, quote_position,
             screenshots, title, content, priority, tags, userName, version,
             selected_targets } = req.body;
@@ -772,7 +784,31 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
     if (selected_targets && Array.isArray(selected_targets)) {
         item._selected_targets = selected_targets;
     }
-    sendWebhook('item.created', item);
+
+    // Await dispatch results with timeout so we can report failures (#200)
+    let dispatches = [];
+    try {
+        const dispatchPromise = sendWebhook('item.created', item);
+        const timeoutPromise = new Promise(resolve =>
+            setTimeout(() => resolve([{ target_type: 'unknown', status: 'timeout' }]), 10000)
+        );
+        dispatches = await Promise.race([dispatchPromise, timeoutPromise]) || [];
+    } catch (err) {
+        console.error(`[dispatch] Error awaiting dispatch for item ${item.id}:`, err.message);
+        dispatches = [{ target_type: 'unknown', status: 'failed', error: err.message }];
+    }
+
+    // Build dispatch summary for client
+    const dispatchSummary = dispatches.map(d => ({
+        target_type: d?.target_type || 'unknown',
+        status: d?.status || 'unknown',
+        error: d?.error || undefined,
+        label: d?.target_type === 'github-issue'
+            ? `GitHub`
+            : (d?.target_type || 'unknown'),
+    }));
+
+    const hasFailed = dispatchSummary.some(d => d.status === 'failed' || d.status === 'timeout');
 
     // Async classification — fire-and-forget, doesn't block response (M2: only if not already classified)
     const v2AiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;
@@ -809,7 +845,12 @@ app.post('/api/v2/items', apiWriteLimiter, v2Auth, (req, res) => {
         }
     }
 
-    res.json({ success: true, item });
+    res.json({
+        success: true,
+        item,
+        dispatched: dispatchSummary,
+        dispatch_warning: hasFailed ? '部分投递失败，请在面板中查看详情' : undefined,
+    });
 });
 
 // -- GET /api/v2/items — query with url/tag support
