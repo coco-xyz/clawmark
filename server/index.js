@@ -65,6 +65,16 @@ const { initAuth } = require('./auth');
 const JWT_SECRET = process.env.CLAWMARK_JWT_SECRET
     || (config.auth && config.auth.jwtSecret)
     || null;
+
+if (!JWT_SECRET && process.env.NODE_ENV === 'production') {
+    console.error('[FATAL] CLAWMARK_JWT_SECRET is not set. Refusing to start in production without a JWT secret.');
+    console.error('Set CLAWMARK_JWT_SECRET environment variable or auth.jwtSecret in config.json.');
+    process.exit(1);
+}
+if (!JWT_SECRET) {
+    console.warn('[SECURITY WARNING] JWT_SECRET not configured — authentication is effectively disabled. Do NOT run this in production.');
+}
+
 const GOOGLE_CLIENT_ID = process.env.CLAWMARK_GOOGLE_CLIENT_ID
     || (config.auth && config.auth.googleClientId)
     || null;
@@ -349,8 +359,8 @@ function saveDiscussions(docId, data) {
 
 // --------------------------------------------------------- discussion endpoints
 
-// Get discussions for a document
-app.get('/discussions', (req, res) => {
+// Get discussions for a document (auth added per #239 C-2)
+app.get('/discussions', v2Auth, (req, res) => {
     const { doc, version } = req.query;
     if (!doc) return res.status(400).json({ error: 'Missing doc parameter' });
 
@@ -362,7 +372,7 @@ app.get('/discussions', (req, res) => {
 });
 
 // Create a new discussion or add a message to an existing one
-app.post('/discussions', (req, res) => {
+app.post('/discussions', v2Auth, (req, res) => {
     const { doc, version, discussionId, quote, message, userName } = req.body;
 
     if (!doc || !message || !userName) {
@@ -411,7 +421,7 @@ app.post('/discussions', (req, res) => {
 });
 
 // Post a response to a discussion (called by an AI agent or admin)
-app.post('/respond', (req, res) => {
+app.post('/respond', v2Auth, (req, res) => {
     const { doc, discussionId, response } = req.body;
     if (!doc || !discussionId || !response) {
         return res.status(400).json({ error: 'Missing required fields' });
@@ -441,7 +451,7 @@ app.post('/respond', (req, res) => {
 });
 
 // Resolve or reopen a discussion
-app.post('/discussions/resolve', (req, res) => {
+app.post('/discussions/resolve', v2Auth, (req, res) => {
     const { doc, discussionId, action } = req.body;
     if (!doc || !discussionId) return res.status(400).json({ error: 'Missing doc or discussionId' });
 
@@ -462,7 +472,7 @@ app.post('/discussions/resolve', (req, res) => {
 });
 
 // Submit a reply via API (for AI agent or admin use)
-app.post('/submit-reply', (req, res) => {
+app.post('/submit-reply', v2Auth, (req, res) => {
     const { doc, discussionId, reply } = req.body;
     if (!doc || !discussionId || !reply) {
         return res.status(400).json({ error: 'Missing doc, discussionId, or reply' });
@@ -492,7 +502,7 @@ app.post('/submit-reply', (req, res) => {
 });
 
 // List pending discussions (discussions that have an unanswered pending message)
-app.get('/pending', (req, res) => {
+app.get('/pending', v2Auth, (req, res) => {
     const files = fs.readdirSync(DATA_DIR).filter(f => f.endsWith('.json'));
     const pending = [];
 
@@ -693,31 +703,31 @@ function v1Deprecated(req, res, next) {
     next();
 }
 
-// Flat routes (default app) — DEPRECATED
-app.get('/items',              apiReadLimiter, v1Deprecated, handleGetItems);
-app.post('/items',             apiWriteLimiter, v1Deprecated, handleCreateItem);
-app.get('/items-full',         apiReadLimiter, v1Deprecated, handleGetItemsFull);
-app.get('/items/:id',          apiReadLimiter, v1Deprecated, handleGetItem);
-app.post('/items/:id/messages', apiWriteLimiter, v1Deprecated, handleAddMessage);
-app.post('/items/:id/assign',  apiWriteLimiter, v1Deprecated, handleAssignItem);
-app.post('/items/:id/resolve', apiWriteLimiter, v1Deprecated, handleResolveItem);
-app.post('/items/:id/verify',  apiWriteLimiter, v1Deprecated, handleVerifyItem);
-app.post('/items/:id/reopen',  apiWriteLimiter, v1Deprecated, handleReopenItem);
-app.post('/items/:id/close',   apiWriteLimiter, v1Deprecated, handleCloseItem);
-app.post('/items/:id/respond', apiWriteLimiter, v1Deprecated, handleRespondToItem);
+// Flat routes (default app) — DEPRECATED (auth added per #239 C-2)
+app.get('/items',              apiReadLimiter, v1Deprecated, v2Auth, handleGetItems);
+app.post('/items',             apiWriteLimiter, v1Deprecated, v2Auth, handleCreateItem);
+app.get('/items-full',         apiReadLimiter, v1Deprecated, v2Auth, handleGetItemsFull);
+app.get('/items/:id',          apiReadLimiter, v1Deprecated, v2Auth, handleGetItem);
+app.post('/items/:id/messages', apiWriteLimiter, v1Deprecated, v2Auth, handleAddMessage);
+app.post('/items/:id/assign',  apiWriteLimiter, v1Deprecated, v2Auth, handleAssignItem);
+app.post('/items/:id/resolve', apiWriteLimiter, v1Deprecated, v2Auth, handleResolveItem);
+app.post('/items/:id/verify',  apiWriteLimiter, v1Deprecated, v2Auth, handleVerifyItem);
+app.post('/items/:id/reopen',  apiWriteLimiter, v1Deprecated, v2Auth, handleReopenItem);
+app.post('/items/:id/close',   apiWriteLimiter, v1Deprecated, v2Auth, handleCloseItem);
+app.post('/items/:id/respond', apiWriteLimiter, v1Deprecated, v2Auth, handleRespondToItem);
 
-// Namespaced routes (multi-app) — DEPRECATED
-app.get('/api/clawmark/:app/items',              apiReadLimiter, v1Deprecated, handleGetItems);
-app.post('/api/clawmark/:app/items',             apiWriteLimiter, v1Deprecated, handleCreateItem);
-app.get('/api/clawmark/:app/items-full',         apiReadLimiter, v1Deprecated, handleGetItemsFull);
-app.get('/api/clawmark/:app/items/:id',          apiReadLimiter, v1Deprecated, handleGetItem);
-app.post('/api/clawmark/:app/items/:id/messages', apiWriteLimiter, v1Deprecated, handleAddMessage);
-app.post('/api/clawmark/:app/items/:id/assign',  apiWriteLimiter, v1Deprecated, handleAssignItem);
-app.post('/api/clawmark/:app/items/:id/resolve', apiWriteLimiter, v1Deprecated, handleResolveItem);
-app.post('/api/clawmark/:app/items/:id/verify',  apiWriteLimiter, v1Deprecated, handleVerifyItem);
-app.post('/api/clawmark/:app/items/:id/reopen',  apiWriteLimiter, v1Deprecated, handleReopenItem);
-app.post('/api/clawmark/:app/items/:id/close',   apiWriteLimiter, v1Deprecated, handleCloseItem);
-app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, v1Deprecated, handleRespondToItem);
+// Namespaced routes (multi-app) — DEPRECATED (auth added per #239 C-2)
+app.get('/api/clawmark/:app/items',              apiReadLimiter, v1Deprecated, v2Auth, handleGetItems);
+app.post('/api/clawmark/:app/items',             apiWriteLimiter, v1Deprecated, v2Auth, handleCreateItem);
+app.get('/api/clawmark/:app/items-full',         apiReadLimiter, v1Deprecated, v2Auth, handleGetItemsFull);
+app.get('/api/clawmark/:app/items/:id',          apiReadLimiter, v1Deprecated, v2Auth, handleGetItem);
+app.post('/api/clawmark/:app/items/:id/messages', apiWriteLimiter, v1Deprecated, v2Auth, handleAddMessage);
+app.post('/api/clawmark/:app/items/:id/assign',  apiWriteLimiter, v1Deprecated, v2Auth, handleAssignItem);
+app.post('/api/clawmark/:app/items/:id/resolve', apiWriteLimiter, v1Deprecated, v2Auth, handleResolveItem);
+app.post('/api/clawmark/:app/items/:id/verify',  apiWriteLimiter, v1Deprecated, v2Auth, handleVerifyItem);
+app.post('/api/clawmark/:app/items/:id/reopen',  apiWriteLimiter, v1Deprecated, v2Auth, handleReopenItem);
+app.post('/api/clawmark/:app/items/:id/close',   apiWriteLimiter, v1Deprecated, v2Auth, handleCloseItem);
+app.post('/api/clawmark/:app/items/:id/respond', apiWriteLimiter, v1Deprecated, v2Auth, handleRespondToItem);
 
 // ================================================================= V2 API
 //
@@ -2101,14 +2111,14 @@ app.get('/dashboard/endpoints', (req, res) => {
 // ----------------------------------------------------------------- queue
 
 // Get the consumer queue — open + in-progress items sorted by priority
-app.get('/queue', (req, res) => {
+app.get('/queue', v2Auth, (req, res) => {
     const items = itemsDb.getQueue();
     res.json({ items });
 });
 
 // ----------------------------------------------------------------- stats
 
-app.get('/stats', (req, res) => {
+app.get('/stats', v2Auth, (req, res) => {
     const { doc } = req.query;
     const stats = itemsDb.getStats(doc);
     res.json({ stats });
