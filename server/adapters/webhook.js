@@ -10,9 +10,9 @@
 
 'use strict';
 
-const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const { isSafeUrl } = require('../target-declaration');
 
 class WebhookAdapter {
     constructor(config) {
@@ -26,7 +26,10 @@ class WebhookAdapter {
     validate() {
         if (!this.url) return { ok: false, error: 'Missing url' };
         try {
-            new URL(this.url);
+            const parsed = new URL(this.url);
+            if (parsed.protocol !== 'https:') {
+                return { ok: false, error: 'Webhook URL must use HTTPS' };
+            }
             return { ok: true };
         } catch {
             return { ok: false, error: `Invalid url: ${this.url}` };
@@ -36,6 +39,12 @@ class WebhookAdapter {
     async send(event, item, context = {}) {
         // Event filter
         if (this.events && this.events.length && !this.events.includes(event)) return;
+
+        // SSRF protection: verify URL doesn't resolve to private/internal IP
+        const safe = await isSafeUrl(this.url);
+        if (!safe) {
+            throw new Error(`Webhook URL blocked by SSRF protection: ${this.url}`);
+        }
 
         const body = JSON.stringify({
             event,
@@ -47,10 +56,9 @@ class WebhookAdapter {
         return new Promise((resolve, reject) => {
             try {
                 const parsed = new URL(this.url);
-                const isHttps = parsed.protocol === 'https:';
                 const options = {
                     hostname: parsed.hostname,
-                    port: parsed.port || (isHttps ? 443 : 80),
+                    port: parsed.port || 443,
                     path: parsed.pathname + parsed.search,
                     method: 'POST',
                     headers: {
@@ -63,7 +71,7 @@ class WebhookAdapter {
                     },
                 };
 
-                const req = (isHttps ? https : http).request(options, (res) => {
+                const req = https.request(options, (res) => {
                     let data = '';
                     res.on('data', chunk => data += chunk);
                     res.on('end', () => {

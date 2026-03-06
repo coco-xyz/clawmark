@@ -461,19 +461,35 @@ describe('DB — API keys', () => {
     beforeEach(setup);
     afterEach(teardown);
 
+    let testAppId;
+    beforeEach(() => {
+        // Create a user + app so createApiKey has a valid app_id
+        const app = dbApi.getOrCreateDefaultApp('user-test-apikey', 'alice@test.com');
+        testAppId = app.id;
+    });
+
     it('createApiKey generates cmk_ prefixed key', () => {
         const result = dbApi.createApiKey({
+            app_id: testAppId,
             name: 'test-key',
             created_by: 'Alice',
         });
 
         assert.ok(result.key.startsWith('cmk_'));
-        assert.equal(result.app_id, 'default');
+        assert.equal(result.app_id, testAppId);
         assert.equal(result.name, 'test-key');
     });
 
+    it('createApiKey rejects missing app_id', () => {
+        assert.throws(() => dbApi.createApiKey({ created_by: 'Alice' }), /app_id is required/);
+    });
+
+    it('createApiKey rejects default app_id', () => {
+        assert.throws(() => dbApi.createApiKey({ app_id: 'default', created_by: 'Alice' }), /app_id is required/);
+    });
+
     it('validateApiKey returns key data for valid key', () => {
-        const { key } = dbApi.createApiKey({ created_by: 'Alice' });
+        const { key } = dbApi.createApiKey({ app_id: testAppId, created_by: 'Alice' });
         const result = dbApi.validateApiKey(key);
 
         assert.ok(result);
@@ -485,7 +501,7 @@ describe('DB — API keys', () => {
     });
 
     it('validateApiKey updates last_used', () => {
-        const { key } = dbApi.createApiKey({ created_by: 'Alice' });
+        const { key } = dbApi.createApiKey({ app_id: testAppId, created_by: 'Alice' });
         dbApi.validateApiKey(key);
 
         const result = dbApi.validateApiKey(key);
@@ -493,7 +509,7 @@ describe('DB — API keys', () => {
     });
 
     it('revokeApiKey makes key invalid', () => {
-        const { id, key } = dbApi.createApiKey({ created_by: 'Alice' });
+        const { id, key } = dbApi.createApiKey({ app_id: testAppId, created_by: 'Alice' });
         dbApi.revokeApiKey(id);
 
         assert.equal(dbApi.validateApiKey(key), null);

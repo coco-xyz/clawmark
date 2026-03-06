@@ -10,7 +10,8 @@ const STORAGE_KEY_TOKEN = 'clawmark_token';
 const STORAGE_KEY_USER = 'clawmark_user';
 const STORAGE_KEY_SERVER = 'clawmark_server_url';
 
-const DEFAULT_SERVER = import.meta.env.VITE_SERVER_URL
+const DEFAULT_SERVER = (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.DEFAULT_SERVER)
+    || (import.meta.env && import.meta.env.VITE_SERVER_URL)
     || (window.location.origin + '/clawmark');
 
 export function getServerUrl() {
@@ -71,7 +72,7 @@ async function apiFetch(path, opts = {}) {
     const res = await fetch(url, { ...opts, headers });
     if (res.status === 401) {
         clearAuth();
-        window.location.reload();
+        document.dispatchEvent(new CustomEvent('auth:expired'));
         throw new Error('Session expired');
     }
     if (!res.ok) {

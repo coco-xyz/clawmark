@@ -1051,4 +1051,10 @@ async function loadAbout() {
 
 // ------------------------------------------------------------------ start
 
+// Handle session expiry from any API call (auth:expired dispatched by apiFetch on 401)
+document.addEventListener('auth:expired', () => {
+    clearAuth();
+    showLogin();
+});
+
 init();

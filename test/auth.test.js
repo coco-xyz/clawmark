@@ -304,7 +304,7 @@ describe('Auth — /api/v2/auth/apikey route (JWT auth)', () => {
         }
     });
 
-    it('creates API key with invite code', async () => {
+    it('rejects invite code (deprecated)', async () => {
         const { router } = initAuth({
             db: dbApi,
             jwtSecret: TEST_JWT_SECRET,
@@ -328,9 +328,8 @@ describe('Auth — /api/v2/auth/apikey route (JWT auth)', () => {
                 body: JSON.stringify({ code: 'test-code', name: 'invite-app' }),
             });
             const data = await res.json();
-            assert.equal(res.status, 200);
-            assert.equal(data.success, true);
-            assert.ok(data.key.startsWith('cmk_'));
+            assert.equal(res.status, 401);
+            assert.ok(data.error.includes('invite codes are no longer supported'));
         } finally {
             server.close();
         }

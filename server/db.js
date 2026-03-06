@@ -14,6 +14,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { encrypt, decrypt, isEncrypted } = require('./crypto');
 
 // Generate a unique ID with a given prefix
 function genId(prefix) {
@@ -235,10 +236,14 @@ function initDb(dataDir) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_user_rules_auth ON user_rules(auth_id)`);
 
     // ----------------------------------------- schema migration: dispatch_log.auth_id
-    const dispatchCols = db.pragma('table_info(dispatch_log)').map(c => c.name);
-    if (!dispatchCols.includes('auth_id')) {
-        db.exec(`ALTER TABLE dispatch_log ADD COLUMN auth_id TEXT`);
-        console.log('[db] migrated: added column dispatch_log.auth_id');
+    // NOTE: dispatch_log table is created further below. Only migrate if it already exists.
+    const dlExistsAuth = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='dispatch_log'`).get();
+    if (dlExistsAuth) {
+        const dispatchCols = db.pragma('table_info(dispatch_log)').map(c => c.name);
+        if (!dispatchCols.includes('auth_id')) {
+            db.exec(`ALTER TABLE dispatch_log ADD COLUMN auth_id TEXT`);
+            console.log('[db] migrated: added column dispatch_log.auth_id');
+        }
     }
 
     // ----------------------------- schema migration: apps.is_default (data isolation Phase 1)
@@ -306,6 +311,7 @@ function initDb(dataDir) {
             external_url    TEXT,
             method          TEXT,
             app_id          TEXT,
+            auth_id         TEXT,
             created_at      TEXT NOT NULL,
             updated_at      TEXT NOT NULL
         );
@@ -746,41 +752,60 @@ function initDb(dataDir) {
 
     // ----------------------------------------------------- user auth methods
 
+    /** Decrypt credentials field in a user_auths row (in-place). */
+    function decryptAuthRow(row) {
+        if (!row) return row;
+        if (isEncrypted(row.credentials)) {
+            try {
+                row.credentials = decrypt(row.credentials);
+            } catch (err) {
+                throw new Error(`Failed to decrypt credentials for auth ${row.id}: ${err.message}. Check CLAWMARK_ENCRYPTION_KEY.`);
+            }
+        }
+        return row;
+    }
+
     function createUserAuth({ user_name, name, auth_type, credentials }) {
         const now = new Date().toISOString();
         const id = genId('auth');
+        const credStr = typeof credentials === 'string' ? credentials : JSON.stringify(credentials);
         authStmts.insertAuth.run({
             id, user_name, name,
             auth_type,
-            credentials: typeof credentials === 'string' ? credentials : JSON.stringify(credentials),
+            credentials: encrypt(credStr),
             created_at: now, updated_at: now,
         });
         return { id, user_name, name, auth_type, credentials, created_at: now, updated_at: now };
     }
 
     function getUserAuths(user_name) {
-        return authStmts.getAuthsByUser.all(user_name);
+        return authStmts.getAuthsByUser.all(user_name).map(decryptAuthRow);
     }
 
     function getUserAuth(id) {
-        return authStmts.getAuthById.get(id) || null;
+        return decryptAuthRow(authStmts.getAuthById.get(id)) || null;
     }
 
     function updateUserAuth(id, updates) {
         const existing = authStmts.getAuthById.get(id);
         if (!existing) return null;
         const now = new Date().toISOString();
+        let credStr;
+        if (updates.credentials) {
+            credStr = typeof updates.credentials === 'string' ? updates.credentials : JSON.stringify(updates.credentials);
+            credStr = encrypt(credStr);
+        } else {
+            credStr = existing.credentials; // already encrypted (or plaintext legacy)
+        }
         const merged = {
             id,
             name: updates.name ?? existing.name,
             auth_type: updates.auth_type ?? existing.auth_type,
-            credentials: updates.credentials
-                ? (typeof updates.credentials === 'string' ? updates.credentials : JSON.stringify(updates.credentials))
-                : existing.credentials,
+            credentials: credStr,
             updated_at: now,
         };
         authStmts.updateAuth.run(merged);
-        return authStmts.getAuthById.get(id);
+        return decryptAuthRow(authStmts.getAuthById.get(id));
     }
 
     function deleteUserAuth(id) {
