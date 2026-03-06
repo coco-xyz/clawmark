@@ -276,13 +276,28 @@ function initDb(dataDir) {
         console.log('[db] migrated: added column users.settings');
     }
 
+    // ----------------------------- migrations registry (GL#34: prevent repeated data wipes)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS _migrations (
+            name        TEXT PRIMARY KEY,
+            applied_at  TEXT NOT NULL
+        )
+    `);
+
+    function runOnce(name, fn) {
+        const row = db.prepare('SELECT 1 FROM _migrations WHERE name = ?').get(name);
+        if (row) return;
+        fn();
+        db.prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)').run(name, new Date().toISOString());
+        console.log(`[db] migration applied: ${name}`);
+    }
+
     // ----------------------------- data migration: clear legacy test data (data isolation Phase 1)
     // Kevin directive: "don't do data migration — just clear the database and rebuild"
-    // Not yet in production; all existing data is test data. Clean slate approach.
-    {
+    // Runs ONCE via _migrations table (GL#34 fix — previously ran on every restart).
+    runOnce('phase1_clear_legacy_data', () => {
         const legacyItems = db.prepare(`SELECT COUNT(*) AS cnt FROM items WHERE app_id = 'default'`).get();
         const legacyKeys = db.prepare(`SELECT COUNT(*) AS cnt FROM api_keys WHERE app_id = 'default'`).get();
-        const legacyApps = db.prepare(`SELECT COUNT(*) AS cnt FROM apps WHERE is_default = 0 OR is_default IS NULL`).get();
 
         if (legacyItems.cnt > 0 || legacyKeys.cnt > 0) {
             console.log(`[db] Phase 1 cleanup: clearing legacy test data (${legacyItems.cnt} items, ${legacyKeys.cnt} keys with app_id='default')`);
@@ -294,7 +309,7 @@ function initDb(dataDir) {
             db.exec(`DELETE FROM apps WHERE is_default = 0 OR is_default IS NULL`);
             console.log('[db] Phase 1 cleanup: legacy test data cleared. Users will get fresh apps on next login.');
         }
-    }
+    });
 
     // ----------------------------------------- schema: dispatch_log (v0.6.0 #93)
     db.exec(`
