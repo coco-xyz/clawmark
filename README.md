@@ -251,6 +251,25 @@ npm start   # start server (port 3462)
 
 Extension: load unpacked from `extension/` in `chrome://extensions`.
 
+### Dashboard
+
+The web dashboard is a vanilla JS SPA built with Vite. The base path is configurable via `VITE_BASE_PATH`:
+
+```bash
+cd dashboard
+
+# Local development (default base: /clawmark-dashboard/)
+npm run dev
+
+# Build for labs.coco.xyz (uses .env.production default: /clawmark/dashboard/)
+npm run build
+
+# Build for a custom base path
+VITE_BASE_PATH=/my/path/ npm run build
+```
+
+Deploy by copying `dashboard/dist/` to the target server's web root.
+
 ---
 
 ## Links
