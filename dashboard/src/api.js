@@ -72,7 +72,7 @@ async function apiFetch(path, opts = {}) {
     const res = await fetch(url, { ...opts, headers });
     if (res.status === 401) {
         clearAuth();
-        window.location.reload();
+        document.dispatchEvent(new CustomEvent('auth:expired'));
         throw new Error('Session expired');
     }
     if (!res.ok) {
