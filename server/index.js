@@ -58,8 +58,26 @@ if (process.env.CLAWMARK_WEBHOOK_SECRET) WEBHOOK.secret = process.env.CLAWMARK_W
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+// ---------------------------------------------------------------- credential encryption
+const credCrypto = require('./crypto');
+const ENCRYPTION_KEY = process.env.CLAWMARK_ENCRYPTION_KEY
+    || (config.auth && config.auth.encryptionKey)
+    || null;
+credCrypto.init(ENCRYPTION_KEY);
+
 const { initDb } = require('./db');
 const itemsDb = initDb(DATA_DIR);
+
+// Startup check: encryption key vs existing encrypted data
+if (!credCrypto.isEnabled()) {
+    // Check if DB already has encrypted credentials — fatal if key is missing
+    const probe = itemsDb.db.prepare('SELECT credentials FROM user_auths WHERE credentials LIKE ? LIMIT 1').get('enc:%');
+    if (probe) {
+        console.error('[FATAL] Database contains encrypted credentials but CLAWMARK_ENCRYPTION_KEY is not set. Cannot decrypt — refusing to start.');
+        process.exit(1);
+    }
+    console.warn('[SECURITY WARNING] CLAWMARK_ENCRYPTION_KEY not set — credentials stored in plaintext. Set it to enable encryption at rest.');
+}
 
 // ------------------------------------------------------------------ auth module
 const { initAuth } = require('./auth');
