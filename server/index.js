@@ -22,6 +22,7 @@ const http = require('http');
 const https = require('https');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 
 // ---------------------------------------------------------------------- config
 
@@ -138,6 +139,9 @@ if (WEBHOOK.url && !config.distribution) {
 // ---------------------------------------------------------------------- express
 
 const app = express();
+
+// Security headers
+app.use(helmet());
 
 // ---------------------------------------------------------------------- CORS
 const ALLOWED_ORIGINS = config.allowedOrigins || [];
