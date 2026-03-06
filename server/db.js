@@ -236,10 +236,14 @@ function initDb(dataDir) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_user_rules_auth ON user_rules(auth_id)`);
 
     // ----------------------------------------- schema migration: dispatch_log.auth_id
-    const dispatchCols = db.pragma('table_info(dispatch_log)').map(c => c.name);
-    if (!dispatchCols.includes('auth_id')) {
-        db.exec(`ALTER TABLE dispatch_log ADD COLUMN auth_id TEXT`);
-        console.log('[db] migrated: added column dispatch_log.auth_id');
+    // NOTE: dispatch_log table is created further below. Only migrate if it already exists.
+    const dlExistsAuth = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='dispatch_log'`).get();
+    if (dlExistsAuth) {
+        const dispatchCols = db.pragma('table_info(dispatch_log)').map(c => c.name);
+        if (!dispatchCols.includes('auth_id')) {
+            db.exec(`ALTER TABLE dispatch_log ADD COLUMN auth_id TEXT`);
+            console.log('[db] migrated: added column dispatch_log.auth_id');
+        }
     }
 
     // ----------------------------- schema migration: apps.is_default (data isolation Phase 1)
@@ -307,6 +311,7 @@ function initDb(dataDir) {
             external_url    TEXT,
             method          TEXT,
             app_id          TEXT,
+            auth_id         TEXT,
             created_at      TEXT NOT NULL,
             updated_at      TEXT NOT NULL
         );
