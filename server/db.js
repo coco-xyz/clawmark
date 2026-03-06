@@ -751,7 +751,11 @@ function initDb(dataDir) {
     function decryptAuthRow(row) {
         if (!row) return row;
         if (isEncrypted(row.credentials)) {
-            row.credentials = decrypt(row.credentials);
+            try {
+                row.credentials = decrypt(row.credentials);
+            } catch (err) {
+                throw new Error(`Failed to decrypt credentials for auth ${row.id}: ${err.message}. Check CLAWMARK_ENCRYPTION_KEY.`);
+            }
         }
         return row;
     }

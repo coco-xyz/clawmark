@@ -108,7 +108,7 @@ function decrypt(text) {
     const decipher = crypto.createDecipheriv(ALGORITHM, _key, iv, { authTagLength: TAG_LENGTH });
     decipher.setAuthTag(tag);
 
-    return decipher.update(ciphertext) + decipher.final('utf8');
+    return decipher.update(ciphertext, null, 'utf8') + decipher.final('utf8');
 }
 
 module.exports = { init, isEnabled, isEncrypted, encrypt, decrypt, PREFIX };
