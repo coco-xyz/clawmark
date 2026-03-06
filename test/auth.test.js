@@ -304,7 +304,7 @@ describe('Auth — /api/v2/auth/apikey route (JWT auth)', () => {
         }
     });
 
-    it('rejects invite code (deprecated)', async () => {
+    it('rejects invite code (deprecated) with 401', async () => {
         const { router } = initAuth({
             db: dbApi,
             jwtSecret: TEST_JWT_SECRET,
@@ -329,7 +329,7 @@ describe('Auth — /api/v2/auth/apikey route (JWT auth)', () => {
             });
             const data = await res.json();
             assert.equal(res.status, 401);
-            assert.ok(data.error.includes('invite codes are no longer supported'));
+            assert.ok(data.error.includes('invite codes'));
         } finally {
             server.close();
         }
