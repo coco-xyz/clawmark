@@ -461,19 +461,27 @@ describe('DB — API keys', () => {
     beforeEach(setup);
     afterEach(teardown);
 
+    function createTestApp() {
+        const app = dbApi.getOrCreateDefaultApp('user-test-1', 'alice@test.com');
+        return app.id;
+    }
+
     it('createApiKey generates cmk_ prefixed key', () => {
+        const appId = createTestApp();
         const result = dbApi.createApiKey({
+            app_id: appId,
             name: 'test-key',
-            created_by: 'Alice',
+            created_by: 'alice@test.com',
         });
 
         assert.ok(result.key.startsWith('cmk_'));
-        assert.equal(result.app_id, 'default');
+        assert.equal(result.app_id, appId);
         assert.equal(result.name, 'test-key');
     });
 
     it('validateApiKey returns key data for valid key', () => {
-        const { key } = dbApi.createApiKey({ created_by: 'Alice' });
+        const appId = createTestApp();
+        const { key } = dbApi.createApiKey({ app_id: appId, created_by: 'alice@test.com' });
         const result = dbApi.validateApiKey(key);
 
         assert.ok(result);
@@ -485,7 +493,8 @@ describe('DB — API keys', () => {
     });
 
     it('validateApiKey updates last_used', () => {
-        const { key } = dbApi.createApiKey({ created_by: 'Alice' });
+        const appId = createTestApp();
+        const { key } = dbApi.createApiKey({ app_id: appId, created_by: 'alice@test.com' });
         dbApi.validateApiKey(key);
 
         const result = dbApi.validateApiKey(key);
@@ -493,10 +502,22 @@ describe('DB — API keys', () => {
     });
 
     it('revokeApiKey makes key invalid', () => {
-        const { id, key } = dbApi.createApiKey({ created_by: 'Alice' });
+        const appId = createTestApp();
+        const { id, key } = dbApi.createApiKey({ app_id: appId, created_by: 'alice@test.com' });
         dbApi.revokeApiKey(id);
 
         assert.equal(dbApi.validateApiKey(key), null);
+    });
+
+    it('createApiKey rejects default app_id', () => {
+        assert.throws(
+            () => dbApi.createApiKey({ created_by: 'alice@test.com' }),
+            /app_id is required/
+        );
+        assert.throws(
+            () => dbApi.createApiKey({ app_id: 'default', created_by: 'alice@test.com' }),
+            /app_id is required/
+        );
     });
 });
 
