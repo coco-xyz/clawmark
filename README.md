@@ -270,6 +270,37 @@ VITE_BASE_PATH=/my/path/ npm run build
 
 Deploy by copying `dashboard/dist/` to the target server's web root.
 
+### Test Environment
+
+For local testing or staging deployments:
+
+```bash
+# 1. Server — use a separate config and data dir
+cp server/config.example.json config.test.json
+# Edit config.test.json: set port, auth, Google OAuth credentials
+CLAWMARK_PORT=13458 CLAWMARK_DATA_DIR=./data-test CLAWMARK_CONFIG=./config.test.json node server/index.js
+
+# 2. Dashboard — build with test base path
+cd dashboard
+VITE_BASE_PATH=/clawmark-test/dashboard/ npm run build
+# Deploy dist/ to test server
+
+# 3. Extension — point to test server
+# Edit extension/config.js: set serverUrl to your test server URL
+```
+
+**Key config differences by environment:**
+
+| Setting | Production | Test/Staging |
+|---------|-----------|-------------|
+| `CLAWMARK_PORT` | 3462 | 13458 (or any free port) |
+| `CLAWMARK_DATA_DIR` | `./data` | `./data-test` (isolated DB) |
+| Google OAuth Client ID | Production client ID | Test client ID (same or separate) |
+| `VITE_BASE_PATH` | `/clawmark/dashboard/` | `/clawmark-test/dashboard/` |
+| Extension `serverUrl` | `https://api.coco.xyz/clawmark` | `https://your-test-host/api/clawmark-test` |
+
+**Important:** Test and production environments must use separate data directories to avoid data contamination. Google OAuth credentials must match the environment's redirect URI configuration in Google Cloud Console.
+
 ---
 
 ## Links
