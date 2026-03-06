@@ -140,8 +140,8 @@ if (WEBHOOK.url && !config.distribution) {
 
 const app = express();
 
-// Security headers
-app.use(helmet());
+// Security headers (CSP disabled — needs per-route tuning for dashboard inline scripts + widget iframe)
+app.use(helmet({ contentSecurityPolicy: false }));
 
 // ---------------------------------------------------------------------- CORS
 const ALLOWED_ORIGINS = config.allowedOrigins || [];
