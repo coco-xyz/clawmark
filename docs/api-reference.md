@@ -4,23 +4,27 @@ Base URL: `http://localhost:3458` (or your deployed server URL)
 
 ## Authentication
 
-ClawMark supports two auth methods:
+Since v0.8.0, **all API endpoints require authentication**. ClawMark supports two methods:
 
-### Invite Code
-Pass `code` in the request body or query string:
-```json
-{ "code": "your-invite-code", ... }
+### Google OAuth → JWT
+
+1. User authenticates via Google OAuth (extension or dashboard)
+2. Server returns a JWT token
+3. Pass the JWT in all subsequent requests:
+
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
 ```
 
-### API Key (V2)
-Pass in the `Authorization` header:
+### API Key
+
+For programmatic access, create an API key via the dashboard or API:
+
 ```
 Authorization: Bearer cmk_xxxxxxxxxxxxxxxx
 ```
 
-Create API keys via `POST /api/v2/auth/apikey`.
-
-Read endpoints (`GET`) don't require auth. Write endpoints (`POST`) require either method.
+> **Note:** Invite code authentication was removed in v0.8.0. All requests now require JWT or API key.
 
 ---
 
@@ -35,7 +39,7 @@ curl http://localhost:3458/health
 ```json
 {
   "status": "ok",
-  "version": "2.0.0",
+  "version": "0.8.0",
   "uptime": 3600.5,
   "db_ok": true,
   "adapters": 2
@@ -52,36 +56,44 @@ Returns item counts by status for a given document.
 
 ---
 
-## Auth
+## Auth Endpoints
 
-### POST /verify
+### POST /api/v2/auth/google
 
-Validate an invite code.
+Exchange a Google ID token or auth code for a JWT.
 
 ```bash
-curl -X POST http://localhost:3458/verify \
+# ID token flow (Chrome extension)
+curl -X POST http://localhost:3458/api/v2/auth/google \
   -H "Content-Type: application/json" \
-  -d '{"code": "team-code-1"}'
+  -d '{"id_token": "eyJhbGciOi..."}'
+
+# Auth code flow (web dashboard)
+curl -X POST http://localhost:3458/api/v2/auth/google \
+  -H "Content-Type: application/json" \
+  -d '{"code": "4/0AX4XfWh..."}'
 ```
 
 ```json
-{ "valid": true, "userName": "Alice" }
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "user": { "email": "user@example.com", "name": "User Name" }
+}
 ```
-
-Rate limit: 10 requests per 15 minutes.
 
 ### POST /api/v2/auth/apikey
 
-Create an API key (requires invite code).
+Create an API key (requires JWT).
 
 ```bash
 curl -X POST http://localhost:3458/api/v2/auth/apikey \
+  -H "Authorization: Bearer eyJhbG..." \
   -H "Content-Type: application/json" \
-  -d '{"code": "team-code-1", "name": "my-extension", "app_id": "default"}'
+  -d '{"name": "my-extension"}'
 ```
 
 ```json
-{ "success": true, "key": "cmk_xxxxxxxx", "name": "my-extension", "app_id": "default" }
+{ "success": true, "key": "cmk_xxxxxxxx", "name": "my-extension" }
 ```
 
 ---
@@ -90,12 +102,15 @@ curl -X POST http://localhost:3458/api/v2/auth/apikey \
 
 The primary API. Items represent feedback threads (discussions, issues, comments).
 
+All V2 endpoints require `Authorization: Bearer <jwt_or_api_key>`.
+
 ### POST /api/v2/items
 
 Create a new item.
 
 ```bash
 curl -X POST http://localhost:3458/api/v2/items \
+  -H "Authorization: Bearer cmk_..." \
   -H "Content-Type: application/json" \
   -d '{
     "type": "issue",
@@ -103,12 +118,10 @@ curl -X POST http://localhost:3458/api/v2/items \
     "title": "Button not working",
     "content": "The submit button does nothing when clicked",
     "priority": "high",
-    "userName": "Alice",
     "source_url": "https://example.com/page",
     "source_title": "Example Page",
     "tags": ["bug", "ui"],
-    "screenshots": [],
-    "code": "team-code-1"
+    "screenshots": []
   }'
 ```
 
@@ -119,12 +132,11 @@ curl -X POST http://localhost:3458/api/v2/items \
 | `title` | string | Issue only | Item title (required for type `issue`) |
 | `content` | string | No | Message body |
 | `priority` | string | No | `low`, `normal`, `high`, `critical` (default: `normal`) |
-| `userName` | string | Yes* | Creator name (*not needed if using API key auth) |
 | `source_url` | string | No | Page URL where item was created |
 | `source_title` | string | No | Page title |
 | `tags` | string[] | No | Tags array |
 | `screenshots` | string[] | No | Screenshot URLs |
-| `app_id` | string | No | App namespace (default: `default`) |
+| `app_id` | string | No | App namespace (default: user's app_id) |
 | `version` | string | No | Document version |
 | `quote` | string | No | Selected text |
 | `quote_position` | object | No | `{ xpath, startOffset, endOffset }` |
@@ -134,17 +146,17 @@ curl -X POST http://localhost:3458/api/v2/items \
 List items with optional filters.
 
 ```bash
-# By document
-curl "http://localhost:3458/api/v2/items?doc=/my-page"
-
 # By source URL
-curl "http://localhost:3458/api/v2/items?url=https://example.com/page"
+curl -H "Authorization: Bearer cmk_..." \
+  "http://localhost:3458/api/v2/items?url=https://example.com/page"
 
 # By tag
-curl "http://localhost:3458/api/v2/items?tag=bug"
+curl -H "Authorization: Bearer cmk_..." \
+  "http://localhost:3458/api/v2/items?tag=bug"
 
 # By status and type
-curl "http://localhost:3458/api/v2/items?status=open&type=issue"
+curl -H "Authorization: Bearer cmk_..." \
+  "http://localhost:3458/api/v2/items?status=open&type=issue"
 ```
 
 | Query Param | Description |
@@ -155,15 +167,11 @@ curl "http://localhost:3458/api/v2/items?status=open&type=issue"
 | `type` | Filter by type (`issue`, `discuss`, `comment`) |
 | `status` | Filter by status (`open`, `resolved`, `closed`) |
 | `assignee` | Filter by assignee name |
-| `app_id` | App namespace (default: `default`) |
+| `app_id` | App namespace |
 
 ### GET /api/v2/items/:id
 
 Get a single item with messages.
-
-```bash
-curl http://localhost:3458/api/v2/items/item-123
-```
 
 ### POST /api/v2/items/:id/messages
 
@@ -171,15 +179,10 @@ Add a message to an item thread.
 
 ```bash
 curl -X POST http://localhost:3458/api/v2/items/item-123/messages \
+  -H "Authorization: Bearer cmk_..." \
   -H "Content-Type: application/json" \
-  -d '{"content": "I can reproduce this", "userName": "Bob", "code": "team-code-1"}'
+  -d '{"content": "I can reproduce this"}'
 ```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `content` | string | Yes | Message text |
-| `role` | string | No | `user` or `assistant` (default: `user`) |
-| `userName` | string | No | Sender name |
 
 ### POST /api/v2/items/:id/tags
 
@@ -187,23 +190,18 @@ Add or remove tags.
 
 ```bash
 curl -X POST http://localhost:3458/api/v2/items/item-123/tags \
+  -H "Authorization: Bearer cmk_..." \
   -H "Content-Type: application/json" \
-  -d '{"add": ["urgent"], "remove": ["low-priority"], "code": "team-code-1"}'
+  -d '{"add": ["urgent"], "remove": ["low-priority"]}'
 ```
 
 ### POST /api/v2/items/:id/assign
 
-Assign an item to someone.
-
-```bash
-curl -X POST http://localhost:3458/api/v2/items/item-123/assign \
-  -H "Content-Type: application/json" \
-  -d '{"assignee": "Bob", "code": "team-code-1"}'
-```
+Assign an item.
 
 ### POST /api/v2/items/:id/resolve
 
-Mark an item as resolved.
+Mark as resolved.
 
 ### POST /api/v2/items/:id/close
 
@@ -213,35 +211,87 @@ Close an item.
 
 Reopen a closed/resolved item.
 
-### GET /api/v2/urls
+---
 
-List all annotated URLs for an app.
+## Routing API
+
+### GET /api/v2/routing/rules
+
+List user's routing rules.
+
+### POST /api/v2/routing/rules
+
+Create a routing rule.
 
 ```bash
-curl "http://localhost:3458/api/v2/urls?app_id=default"
+curl -X POST http://localhost:3458/api/v2/routing/rules \
+  -H "Authorization: Bearer cmk_..." \
+  -H "Content-Type: application/json" \
+  -d '{"rule_type":"url_pattern","pattern":"medium.com/**","target_type":"github-issue","target_config":{"repo":"my-org/notes"}}'
 ```
 
-```json
-{ "urls": ["https://example.com/page1", "https://example.com/page2"] }
+### PUT /api/v2/routing/rules/:id
+
+Update a routing rule.
+
+### DELETE /api/v2/routing/rules/:id
+
+Delete a routing rule.
+
+### POST /api/v2/routing/resolve
+
+Test routing (dry run).
+
+```bash
+curl -X POST http://localhost:3458/api/v2/routing/resolve \
+  -H "Authorization: Bearer cmk_..." \
+  -H "Content-Type: application/json" \
+  -d '{"source_url":"https://github.com/coco-xyz/clawmark/issues/5"}'
 ```
+
+---
+
+## Credentials API
+
+### GET /api/v2/credentials
+
+List user's stored credentials (metadata only, secrets redacted).
+
+### POST /api/v2/credentials
+
+Store a credential.
+
+### DELETE /api/v2/credentials/:id
+
+Delete a credential.
+
+---
+
+## Other Endpoints
+
+### GET /api/v2/urls
+
+List all annotated URLs.
 
 ### GET /api/v2/adapters
 
 List distribution adapter channels and status.
 
-```bash
-curl http://localhost:3458/api/v2/adapters
-```
+### GET /api/v2/dispatch-log
 
-```json
-{ "channels": { "telegram-alerts": { "type": "telegram", "ok": true } }, "rules": 2 }
-```
+Query dispatch history.
+
+### POST /upload
+
+Upload an image (max 5MB, image formats only). Requires auth.
 
 ---
 
-## V1 Items API (Legacy)
+## V1 Items API (Deprecated)
 
-Same functionality as V2 but without V2-specific fields (source_url, tags, screenshots) and no API key auth. All routes support both flat and namespaced paths.
+> **Deprecated since v0.8.0.** Sunset date: 2026-06-01. Migrate to V2 API.
+
+V1 endpoints now require JWT authentication (same as V2). Responses include `Deprecation` and `Sunset` headers.
 
 | Flat Path | Namespaced Path | Method | Description |
 |-----------|-----------------|--------|-------------|
@@ -249,59 +299,9 @@ Same functionality as V2 but without V2-specific fields (source_url, tags, scree
 | `/items` | `/api/clawmark/:app/items` | POST | Create item |
 | `/items/:id` | `/api/clawmark/:app/items/:id` | GET | Get item |
 | `/items/:id/messages` | `/api/clawmark/:app/items/:id/messages` | POST | Add message |
-| `/items/:id/assign` | `/api/clawmark/:app/items/:id/assign` | POST | Assign |
 | `/items/:id/resolve` | `/api/clawmark/:app/items/:id/resolve` | POST | Resolve |
-| `/items/:id/verify` | `/api/clawmark/:app/items/:id/verify` | POST | Verify |
-| `/items/:id/reopen` | `/api/clawmark/:app/items/:id/reopen` | POST | Reopen |
 | `/items/:id/close` | `/api/clawmark/:app/items/:id/close` | POST | Close |
-| `/items/:id/respond` | `/api/clawmark/:app/items/:id/respond` | POST | AI respond |
-| `/items-full` | `/api/clawmark/:app/items-full` | GET | Items with messages |
-
----
-
-## Discussion API (Legacy)
-
-File-based discussion system (pre-V2). Still functional for backward compatibility.
-
-| Path | Method | Description |
-|------|--------|-------------|
-| `/discussions?doc=...` | GET | Get discussions for a document |
-| `/discussions` | POST | Create discussion or add message |
-| `/discussions/resolve` | POST | Resolve/reopen discussion |
-| `/respond` | POST | AI response to discussion |
-| `/submit-reply` | POST | Admin reply |
-| `/pending` | GET | List pending discussions |
-
----
-
-## Upload
-
-### POST /upload
-
-Upload an image (max 5MB, image formats only).
-
-```bash
-curl -X POST http://localhost:3458/upload \
-  -F "image=@screenshot.png"
-```
-
-```json
-{ "success": true, "url": "/images/1709123456-abc123.png" }
-```
-
-Rate limit: 10 uploads per minute.
-
----
-
-## Queue
-
-### GET /queue
-
-Get open and in-progress items sorted by priority.
-
-```bash
-curl http://localhost:3458/queue
-```
+| `/items/:id/reopen` | `/api/clawmark/:app/items/:id/reopen` | POST | Reopen |
 
 ---
 
@@ -312,6 +312,6 @@ curl http://localhost:3458/queue
 | Read endpoints (GET) | 120 req/min |
 | Write endpoints (POST) | 30 req/min |
 | Upload | 10 req/min |
-| Verify | 10 req/15 min |
+| AI endpoints | 15 req/min |
 
 Rate limit headers are included in responses (`RateLimit-*`).
