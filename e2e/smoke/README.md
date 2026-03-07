@@ -12,7 +12,7 @@ BASE_URL=https://clawmark.example.com node e2e/smoke/smoke.js
 BASE_URL=https://clawmark.example.com SMOKE_API_KEY=ak_xxx node e2e/smoke/smoke.js
 
 # Via Playwright (CI-friendly)
-BASE_URL=https://clawmark.example.com npx playwright test e2e/smoke/smoke.spec.js --project=api
+BASE_URL=https://clawmark.example.com npx playwright test e2e/smoke/smoke.spec.js --project=smoke
 ```
 
 ## Environment Variables

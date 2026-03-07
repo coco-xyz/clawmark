@@ -122,14 +122,14 @@ async function checkAuthEndpoint() {
 }
 
 async function checkItemsApi() {
-    const name = 'Items API: GET /items → 200 + {items: Array}';
+    const name = 'Items API: GET /api/v2/items → 200 + {items: Array}';
     if (!API_KEY) {
         return skip(name, 'SMOKE_API_KEY not set');
     }
-    const url = `${BASE_URL}/items`;
+    const url = `${BASE_URL}/api/v2/items`;
     try {
         const res = await fetchWithTimeout(url, {
-            headers: { 'X-API-Key': API_KEY },
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
         });
         if (res.status === 401) return fail(name, 'HTTP 401 — API key rejected');
         if (res.status !== 200) return fail(name, `HTTP ${res.status}`);

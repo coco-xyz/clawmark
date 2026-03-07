@@ -49,11 +49,11 @@ test.describe('Smoke — Auth', () => {
 });
 
 test.describe('Smoke — Items API', () => {
-    test('GET /items returns 200 with items array', async ({ request }) => {
+    test('GET /api/v2/items returns 200 with items array', async ({ request }) => {
         test.skip(!API_KEY, 'SMOKE_API_KEY not set — skipping authenticated check');
 
-        const res = await request.get(`${BASE_URL}/items`, {
-            headers: { 'X-API-Key': API_KEY },
+        const res = await request.get(`${BASE_URL}/api/v2/items`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}` },
         });
         expect(res.status()).toBe(200);
         const body = await res.json();

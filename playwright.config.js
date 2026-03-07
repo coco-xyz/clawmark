@@ -51,7 +51,7 @@ module.exports = defineConfig({
 
     // Start ClawMark server before tests (skipped when running smoke tests only)
     webServer: isSmokeOnly ? undefined : {
-        command: 'CLAWMARK_PORT=3459 CLAWMARK_DATA_DIR=./e2e/.tmp-data CLAWMARK_JWT_SECRET=e2e-test-secret-key node server/index.js',
+        command: 'CLAWMARK_PORT=3459 CLAWMARK_DATA_DIR=./e2e/.tmp-data CLAWMARK_JWT_SECRET=e2e-test-secret-key CLAWMARK_ENCRYPTION_KEY=e2e-test-encryption-key node server/index.js',
         port: 3459,
         reuseExistingServer: false,
         timeout: 10_000,
