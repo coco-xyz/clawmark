@@ -2118,15 +2118,6 @@ app.delete('/api/v2/orgs/:id/members/:userId', apiWriteLimiter, jwtAuth, (req, r
     res.json({ success: true });
 });
 
-// ================================================================= Dashboard
-//
-// Serve the endpoint management dashboard as a standalone HTML page.
-// =================================================================
-
-app.get('/dashboard/endpoints', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dashboard', 'endpoints.html'));
-});
-
 // ----------------------------------------------------------------- queue
 
 // Get the consumer queue — open + in-progress items sorted by priority
