@@ -1,6 +1,7 @@
 stages:
   - check
   - test
+  - e2e
 
 version-check:
   stage: check
@@ -42,6 +43,21 @@ test:
   script:
     - npm install --omit=dev 2>/dev/null || npm install
     - npm test
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+e2e-api:
+  stage: e2e
+  script:
+    - npm install --include=dev
+    - npx playwright test --project=api
+  artifacts:
+    when: always
+    paths:
+      - e2e-results.json
+    expire_in: 7 days
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "develop"'

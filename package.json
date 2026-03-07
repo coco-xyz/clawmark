@@ -27,5 +27,8 @@
     "js-yaml": "^4.1.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }
