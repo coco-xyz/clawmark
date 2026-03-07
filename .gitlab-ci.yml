@@ -1,0 +1,48 @@
+stages:
+  - check
+  - test
+
+version-check:
+  stage: check
+  script:
+    - |
+      PKG_VERSION=$(node -p "require('./package.json').version")
+      MANIFEST_VERSION=$(node -p "require('./extension/manifest.json').version")
+      echo "package.json: $PKG_VERSION"
+      echo "manifest.json: $MANIFEST_VERSION"
+      if [ "$PKG_VERSION" != "$MANIFEST_VERSION" ]; then
+        echo "ERROR: version mismatch between package.json ($PKG_VERSION) and manifest.json ($MANIFEST_VERSION)"
+        exit 1
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+env-check:
+  stage: check
+  script:
+    - |
+      if [ ! -f .env.example ]; then
+        echo "ERROR: .env.example is missing"
+        exit 1
+      fi
+      if [ ! -f config.example.json ]; then
+        echo "ERROR: config.example.json is missing"
+        exit 1
+      fi
+      echo "Config examples present"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+test:
+  stage: test
+  script:
+    - npm install --omit=dev 2>/dev/null || npm install
+    - npm test
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
