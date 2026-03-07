@@ -201,7 +201,7 @@ const apiReadLimiter = rateLimit({
 
 const apiWriteLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 30,
+    max: parseInt(process.env.CLAWMARK_WRITE_RATE_LIMIT_MAX || '30', 10),
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Rate limit exceeded, try again later' },
