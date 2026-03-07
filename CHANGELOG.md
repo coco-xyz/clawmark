@@ -2,6 +2,48 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号采用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.8.0] — 2026-03-06
+
+### 重大变更（Breaking Changes）
+
+- **所有 API 端点强制 JWT 认证** — V1 和 V2 接口均需 JWT token，不再支持匿名访问
+- **移除邀请码认证** — `auth.codes` 配置项废弃，Phase 1 数据隔离完成
+- **新增必填配置 `auth.jwtSecret`** — 生产环境未配置将拒绝启动
+
+### 新增
+
+- **凭证加密（AES-256-GCM）** — 第三方凭证（GitHub Token 等）加密存储，通过 `auth.encryptionKey` 配置
+- **安全审计修复** — 3 Critical + 3 High 漏洞全部修复（XSS 转义、SSRF 防护、安全头、rate limiting 等）
+- **Dashboard 刷新修复** — 修复 dashboard SPA 刷新后白屏问题
+- **dispatch_log 迁移修复** — 一次性迁移替代每次重启执行的 Phase 1 cleanup
+- **扩展双版本 zip** — test 和 production 环境独立打包
+
+### 安全
+
+- helmet 安全头
+- express-rate-limit 全局限流
+- multer 文件上传安全
+- SSRF webhook 防护
+- XSS 转义加固
+
+### 测试
+
+- 515 个测试全部通过
+
+## [0.7.0] — 2026-03-05
+
+### 新增
+
+- **Google OAuth 登录** — Chrome 扩展和 Dashboard 均支持 Google 一键登录
+- **JWT 认证体系** — 替代旧邀请码认证，所有端点 JWT 保护
+- **用户凭证管理** — Dashboard Auth 面板管理 9 种第三方凭证（GitHub、GitLab、Lark、Telegram、Slack 等）
+- **分发日志** — `dispatch_log` 记录每次分发结果，Dashboard 可查
+
+### 修复
+
+- GitLab Issue adapter 修复
+- 路由规则 ownership 校验
+
 ## [0.6.4] — 2026-03-05
 
 ### 新增
@@ -223,6 +265,8 @@
 - JSON body 大小限制（512KB）
 - 不存在 item 的状态操作返回 404
 
+[0.8.0]: https://git.coco.xyz/hxanet/clawmark/-/releases/v0.8.0
+[0.7.0]: https://github.com/coco-xyz/clawmark/releases/tag/v0.7.0
 [0.6.4]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.4
 [0.6.2]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.2
 [0.6.1]: https://github.com/coco-xyz/clawmark/releases/tag/v0.6.1

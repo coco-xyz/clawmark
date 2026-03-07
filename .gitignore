@@ -1,5 +1,6 @@
 node_modules/
 data/
+data-staging/
 *.db
 *.db-shm
 *.db-wal
@@ -7,5 +8,11 @@ uploads/
 dist/
 .env
 config.json
+config.staging.json
 *.zip
 extension/config.js
+.DS_Store
+*.log
+*.swp
+.vscode/
+.idea/
