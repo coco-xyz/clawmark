@@ -67,6 +67,19 @@ Every release MUST follow these steps. No exceptions.
 - All MRs target `develop` branch
 - GitHub (`coco-xyz/clawmark`) kept in sync via PRs
 
+## MR Metadata (Mandatory)
+
+Every MR must have **assignee** and **reviewer** set before submission. No exceptions.
+
+- **Assignee**: the person who wrote the code (MR author)
+- **Reviewer**: the person performing codex review
+- Set via GitLab UI or API at MR creation time
+
+## Merge Authority
+
+- **`develop` branch**: Team self-merge. Reviewer merges after codex review CLEAN + pipeline green. No Kevin approval needed.
+- **`main` branch**: Kevin approval required. Only develop→main sync MRs target main, and Kevin must approve before merge.
+
 ## Test Environment
 
 - Dashboard: `jessie.coco.site/clawmark-dashboard/`
