@@ -34,7 +34,7 @@ Each build generates `extension/config.js` (gitignored) and a zip file:
 - `clawmark-v{VERSION}-test.zip`
 - `clawmark-v{VERSION}-production.zip`
 
-Both zips are uploaded to GitHub Releases and hosted at `jessie.coco.site/`.
+Both zips are uploaded to GitLab Releases and hosted at `jessie.coco.site/`.
 
 ---
 
@@ -48,7 +48,9 @@ Both zips are uploaded to GitHub Releases and hosted at `jessie.coco.site/`.
 docker run -d \
   -p 3458:3458 \
   -v clawmark-data:/data \
-  -e CLAWMARK_INVITE_CODES_JSON='{"team-code":"Alice","guest":"Guest"}' \
+  -v ./config.json:/app/config.json:ro \
+  -e CLAWMARK_JWT_SECRET="$(openssl rand -hex 32)" \
+  -e CLAWMARK_ENCRYPTION_KEY="$(openssl rand -hex 32)" \
   ghcr.io/coco-xyz/clawmark:latest
 ```
 
@@ -58,7 +60,9 @@ Or build from source:
 git clone https://github.com/coco-xyz/clawmark.git
 cd clawmark
 docker build -t clawmark .
-docker run -d -p 3458:3458 -v clawmark-data:/data clawmark
+docker run -d -p 3458:3458 -v clawmark-data:/data \
+  -e CLAWMARK_JWT_SECRET="your-secret" \
+  clawmark
 ```
 
 ### Docker Compose
@@ -75,6 +79,8 @@ services:
     environment:
       - CLAWMARK_PORT=3458
       - CLAWMARK_DATA_DIR=/data
+      - CLAWMARK_JWT_SECRET=${CLAWMARK_JWT_SECRET}
+      - CLAWMARK_ENCRYPTION_KEY=${CLAWMARK_ENCRYPTION_KEY}
     restart: unless-stopped
 
 volumes:
@@ -88,19 +94,19 @@ git clone https://github.com/coco-xyz/clawmark.git
 cd clawmark
 npm install
 cp server/config.example.json config.json
-# Edit config.json with your settings
+# Edit config.json — at minimum set auth.jwtSecret
 npm start
 ```
 
 Server runs on `http://localhost:3458` by default.
 
-### Option 2: PM2 (Production)
+### Option 3: PM2 (Production)
 
 ```bash
 npm install -g pm2
 
 # Start with PM2
-pm2 start server/index.js --name clawmark -- --config ./config.json
+pm2 start server/index.js --name clawmark
 
 # Save PM2 process list
 pm2 save
@@ -109,7 +115,22 @@ pm2 save
 pm2 startup
 ```
 
-## Environment Variables
+## Configuration
+
+### config.json
+
+See `server/config.example.json` for a template. Key fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `auth.jwtSecret` | **Yes** | JWT signing secret. Generate: `openssl rand -hex 32` |
+| `auth.encryptionKey` | Recommended | AES-256-GCM key for credential encryption. Generate: `openssl rand -hex 32` |
+| `port` | No | Server port (default: 3458) |
+| `dataDir` | No | Data directory (default: `./data`) |
+| `webhook` | No | Global webhook config |
+| `distribution` | No | Server-side dispatch rules and channels |
+
+### Environment Variables
 
 Override config.json settings via environment variables:
 
@@ -118,10 +139,30 @@ Override config.json settings via environment variables:
 | `CLAWMARK_PORT` | `3458` | Server port |
 | `CLAWMARK_DATA_DIR` | `./data` | SQLite database + uploads directory |
 | `CLAWMARK_CONFIG` | `../config.json` | Path to config file |
-| `CLAWMARK_ENV` | `production` | Environment name (`production`, `staging`) |
+| `CLAWMARK_JWT_SECRET` | — | JWT signing secret (overrides `auth.jwtSecret`) |
+| `CLAWMARK_ENCRYPTION_KEY` | — | Credential encryption key (overrides `auth.encryptionKey`) |
+| `CLAWMARK_GOOGLE_CLIENT_ID` | — | Google OAuth client ID |
+| `CLAWMARK_GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
 | `CLAWMARK_WEBHOOK_URL` | — | Webhook endpoint (overrides config) |
 | `CLAWMARK_WEBHOOK_SECRET` | — | Webhook HMAC secret |
-| `CLAWMARK_INVITE_CODES_JSON` | — | JSON invite codes (overrides config) |
+| `GEMINI_API_KEY` | — | Gemini API key for AI features |
+| `NODE_ENV` | `production` | Environment name |
+
+See `.env.example` for a template.
+
+## Authentication
+
+ClawMark uses Google OAuth + JWT authentication (since v0.8.0):
+
+1. User signs in via Google OAuth in the extension or dashboard
+2. Server verifies the Google token and issues a JWT
+3. All API requests require `Authorization: Bearer <jwt>` or `Authorization: Bearer cmk_<api_key>`
+
+Configure Google OAuth credentials:
+- Set `CLAWMARK_GOOGLE_CLIENT_ID` and `CLAWMARK_GOOGLE_CLIENT_SECRET` environment variables
+- Or configure in your OAuth provider and pass tokens directly
+
+> **Note:** Invite code authentication was removed in v0.8.0.
 
 ## Reverse Proxy (Caddy)
 
@@ -154,7 +195,7 @@ All data is stored in the `dataDir` directory:
 
 ```
 data/
-├── clawmark.db          # SQLite database (items, messages, users)
+├── clawmark.db          # SQLite database (items, messages, users, credentials)
 └── uploads/             # Uploaded images
 ```
 
@@ -164,7 +205,7 @@ data/
 
 ```bash
 curl http://localhost:3458/health
-# Returns: {"status":"ok","version":"2.0.0"}
+# Returns: {"status":"ok","version":"0.8.0"}
 ```
 
 ## CORS (Cross-Origin Dashboard)
@@ -175,42 +216,6 @@ If the Dashboard is hosted on a different domain than the API (e.g., Dashboard o
 {
   "allowedOrigins": ["https://labs.coco.xyz"]
 }
-```
-
-Without this, the browser will block Dashboard → API requests with a CORS error ("Failed to fetch").
-
-## Authentication
-
-ClawMark uses an invite code system. Configure codes in `config.json`:
-
-```json
-{
-  "auth": {
-    "type": "invite-code",
-    "codes": {
-      "team-code-1": "Alice",
-      "team-code-2": "Bob",
-      "guest-code": "Guest"
-    }
-  }
-}
-```
-
-Each code maps to a display name. Users enter the code in the widget or extension popup to authenticate.
-
-## Multi-Tenant Mode
-
-Serve multiple apps from one server using path-based routing:
-
-```
-/api/clawmark/:app/items    → Items for specific app
-/items                       → Items using default app ID
-```
-
-The `app` parameter isolates data per application. Configure the widget with matching `app` values:
-
-```javascript
-const cm = new ClawMark({ api: 'https://clawmark.example.com', app: 'my-app' });
 ```
 
 ## Monitoring
