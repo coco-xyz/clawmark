@@ -67,6 +67,14 @@ Every release MUST follow these steps. No exceptions.
 - All MRs target `develop` branch
 - GitHub (`coco-xyz/clawmark`) kept in sync via PRs
 
+## MR Metadata (Mandatory)
+
+Every MR must have **assignee** and **reviewer** set before submission. No exceptions.
+
+- **Assignee**: the person who wrote the code (MR author)
+- **Reviewer**: the person performing codex review
+- Set via GitLab UI or API at MR creation time
+
 ## Test Environment
 
 - Dashboard: `jessie.coco.site/clawmark-dashboard/`
