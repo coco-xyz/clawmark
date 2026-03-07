@@ -27,8 +27,8 @@ env-check:
         echo "ERROR: .env.example is missing"
         exit 1
       fi
-      if [ ! -f config.example.json ]; then
-        echo "ERROR: config.example.json is missing"
+      if [ ! -f server/config.example.json ]; then
+        echo "ERROR: server/config.example.json is missing"
         exit 1
       fi
       echo "Config examples present"
