@@ -8,7 +8,7 @@
 'use strict';
 
 const { test, expect } = require('@playwright/test');
-const { authHeader, createTestToken } = require('../helpers/auth');
+const { createTestToken } = require('../helpers/auth');
 
 test.describe('Auth — /api/v2/auth', () => {
     test('POST /api/v2/auth/google rejects without credentials', async ({ request }) => {
