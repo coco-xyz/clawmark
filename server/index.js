@@ -68,15 +68,12 @@ credCrypto.init(ENCRYPTION_KEY);
 const { initDb } = require('./db');
 const itemsDb = initDb(DATA_DIR);
 
-// Startup check: encryption key vs existing encrypted data
+// Startup check: encryption key is mandatory
 if (!credCrypto.isEnabled()) {
-    // Check if DB already has encrypted credentials — fatal if key is missing
-    const probe = itemsDb.db.prepare('SELECT credentials FROM user_auths WHERE credentials LIKE ? LIMIT 1').get('enc:%');
-    if (probe) {
-        console.error('[FATAL] Database contains encrypted credentials but CLAWMARK_ENCRYPTION_KEY is not set. Cannot decrypt — refusing to start.');
-        process.exit(1);
-    }
-    console.warn('[SECURITY WARNING] CLAWMARK_ENCRYPTION_KEY not set — credentials stored in plaintext. Set it to enable encryption at rest.');
+    console.error('[FATAL] CLAWMARK_ENCRYPTION_KEY is not set. Credentials must be encrypted at rest.');
+    console.error('Generate one with: openssl rand -hex 32');
+    console.error('Set via environment variable CLAWMARK_ENCRYPTION_KEY or auth.encryptionKey in config.json.');
+    process.exit(1);
 }
 
 // ------------------------------------------------------------------ auth module
