@@ -19,6 +19,7 @@ module.exports = defineConfig({
     testDir: './e2e',
     timeout: 30_000,
     retries: 0,
+    workers: 1,
     reporter: [['list'], ['json', { outputFile: 'e2e-results.json' }]],
 
     use: {
@@ -51,7 +52,7 @@ module.exports = defineConfig({
 
     // Start ClawMark server before tests (skipped when running smoke tests only)
     webServer: isSmokeOnly ? undefined : {
-        command: 'CLAWMARK_PORT=3459 CLAWMARK_DATA_DIR=./e2e/.tmp-data CLAWMARK_JWT_SECRET=e2e-test-secret-key CLAWMARK_ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 node server/index.js',
+        command: 'CLAWMARK_PORT=3459 CLAWMARK_DATA_DIR=./e2e/.tmp-data CLAWMARK_JWT_SECRET=e2e-test-secret-key CLAWMARK_ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 CLAWMARK_WRITE_RATE_LIMIT_MAX=500 node server/index.js',
         port: 3459,
         reuseExistingServer: false,
         timeout: 10_000,
