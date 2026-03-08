@@ -16,3 +16,5 @@ extension/config.js
 *.swp
 .vscode/
 .idea/
+e2e/.tmp-data/
+e2e-results.json

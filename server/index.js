@@ -68,15 +68,12 @@ credCrypto.init(ENCRYPTION_KEY);
 const { initDb } = require('./db');
 const itemsDb = initDb(DATA_DIR);
 
-// Startup check: encryption key vs existing encrypted data
+// Startup check: encryption key is mandatory
 if (!credCrypto.isEnabled()) {
-    // Check if DB already has encrypted credentials — fatal if key is missing
-    const probe = itemsDb.db.prepare('SELECT credentials FROM user_auths WHERE credentials LIKE ? LIMIT 1').get('enc:%');
-    if (probe) {
-        console.error('[FATAL] Database contains encrypted credentials but CLAWMARK_ENCRYPTION_KEY is not set. Cannot decrypt — refusing to start.');
-        process.exit(1);
-    }
-    console.warn('[SECURITY WARNING] CLAWMARK_ENCRYPTION_KEY not set — credentials stored in plaintext. Set it to enable encryption at rest.');
+    console.error('[FATAL] CLAWMARK_ENCRYPTION_KEY is not set. Credentials must be encrypted at rest.');
+    console.error('Generate one with: openssl rand -hex 32');
+    console.error('Set via environment variable CLAWMARK_ENCRYPTION_KEY or auth.encryptionKey in config.json.');
+    process.exit(1);
 }
 
 // ------------------------------------------------------------------ auth module
@@ -204,7 +201,7 @@ const apiReadLimiter = rateLimit({
 
 const apiWriteLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 30,
+    max: parseInt(process.env.CLAWMARK_WRITE_RATE_LIMIT_MAX || '30', 10),
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Rate limit exceeded, try again later' },
@@ -2119,15 +2116,6 @@ app.delete('/api/v2/orgs/:id/members/:userId', apiWriteLimiter, jwtAuth, (req, r
     const result = itemsDb.removeOrgMember(req.params.id, req.params.userId);
     if (!result.success) return res.status(404).json({ error: 'Member not found' });
     res.json({ success: true });
-});
-
-// ================================================================= Dashboard
-//
-// Serve the endpoint management dashboard as a standalone HTML page.
-// =================================================================
-
-app.get('/dashboard/endpoints', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dashboard', 'endpoints.html'));
 });
 
 // ----------------------------------------------------------------- queue

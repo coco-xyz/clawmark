@@ -4,6 +4,16 @@
 
 ClawMark is a Chrome extension + dashboard for web annotation and feedback dispatch. Users select text on any webpage to create annotations, which are automatically dispatched to GitHub Issues, Lark, Telegram, etc. via configurable delivery rules.
 
+## Code Review (Mandatory)
+
+Every PR must complete a codex review before merge. No exceptions.
+
+1. Reviewer runs iterative review rounds (R1, R2, ...) checking 6 dimensions: Correctness, Security, Types & contracts, Edge cases, Integration, Dead code
+2. Each finding is classified P1 (crash/security), P2 (logic/type), or P3 (style). P1 + P2 = MUST FIX.
+3. Fix all issues, re-review the full PR (not just fixes), repeat until CLEAN (0 P1 + 0 P2)
+4. PR description must include the CLEAN report summary
+5. Full standard: `HxANet/hxa-teams/projects/engineering/codex-review-standard.md`
+
 ## Architecture
 
 ```
@@ -56,6 +66,19 @@ Every release MUST follow these steps. No exceptions.
 - Repo: `git.coco.xyz/hxanet/clawmark`
 - All MRs target `develop` branch
 - GitHub (`coco-xyz/clawmark`) kept in sync via PRs
+
+## MR Metadata (Mandatory)
+
+Every MR must have **assignee** and **reviewer** set before submission. No exceptions.
+
+- **Assignee**: the person who wrote the code (MR author)
+- **Reviewer**: the person performing codex review
+- Set via GitLab UI or API at MR creation time
+
+## Merge Authority
+
+- **`develop` branch**: Team self-merge. Reviewer merges after codex review CLEAN + pipeline green. No Kevin approval needed.
+- **`main` branch**: Kevin approval required. Only develop→main sync MRs target main, and Kevin must approve before merge.
 
 ## Test Environment
 

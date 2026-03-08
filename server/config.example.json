@@ -3,7 +3,7 @@
   "dataDir": "./data",
   "auth": {
     "jwtSecret": "REQUIRED — generate with: openssl rand -hex 32",
-    "encryptionKey": "RECOMMENDED — generate with: openssl rand -hex 32"
+    "encryptionKey": "REQUIRED — generate with: openssl rand -hex 32"
   },
   "webhook": {
     "url": "",
