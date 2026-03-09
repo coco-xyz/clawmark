@@ -23,13 +23,8 @@ import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } fro
 // ------------------------------------------------------------------ init
 
 async function init() {
-    // Try extension auth first
-    const extAuth = await getAuthFromExtension();
-    if (extAuth) {
-        setAuth(extAuth.token, extAuth.user);
-        showApp(extAuth.user);
-        return;
-    }
+    // Check if extension is authenticated (token is no longer shared for security)
+    // Dashboard must obtain its own token via OAuth login flow
 
     // Handle OAuth callback
     const code = extractAuthCode();
@@ -46,13 +41,8 @@ async function init() {
 
     const isWelcome = location.hash === '#welcome';
 
-    // If not logged in locally, try syncing auth from the Chrome extension
-    if (!isLoggedIn()) {
-        const extAuth = await getAuthFromExtension();
-        if (extAuth) {
-            setAuth(extAuth.authToken, extAuth.authUser);
-        }
-    }
+    // Extension no longer shares the auth token for security.
+    // Dashboard relies on its own OAuth login flow.
 
     if (isLoggedIn()) {
         // Verify token is still valid
@@ -248,7 +238,7 @@ function renderTopPages(topUrls) {
                 <div class="activity-title">${escHtml(page.source_title || page.source_url)}</div>
                 <div class="activity-meta">${Number(page.count) || 0} annotation${Number(page.count) !== 1 ? 's' : ''}</div>
             </div>`;
-        if (page.source_url) {
+        if (page.source_url && /^https?:\/\//i.test(page.source_url)) {
             el.addEventListener('click', () => window.open(page.source_url, '_blank'));
         }
         listEl.appendChild(el);
@@ -277,7 +267,15 @@ async function loadItemsList(typeFilter) {
         for (const item of items.slice(0, 50)) {
             const icon = item.type === 'issue' ? '\ud83d\udc1b' : '\ud83d\udcac';
             const time = item.created_at ? new Date(item.created_at).toLocaleString() : '';
-            const sourceLabel = item.source_title || (item.source_url ? new URL(item.source_url).hostname + new URL(item.source_url).pathname.substring(0, 30) : '');
+            let sourceLabel = item.source_title || '';
+            if (!sourceLabel && item.source_url) {
+                try {
+                    const parsed = new URL(item.source_url);
+                    sourceLabel = parsed.hostname + parsed.pathname.substring(0, 30);
+                } catch {
+                    sourceLabel = item.source_url.substring(0, 40);
+                }
+            }
             const el = document.createElement('div');
             el.className = 'activity-item' + (item.source_url ? ' activity-item-link' : '');
             el.innerHTML = `
@@ -288,7 +286,7 @@ async function loadItemsList(typeFilter) {
                     ${renderItemDispatches(item.dispatches)}
                     <div class="activity-meta">${time ? escHtml(time) : ''}</div>
                 </div>`;
-            if (item.source_url) {
+            if (item.source_url && /^https?:\/\//i.test(item.source_url)) {
                 el.addEventListener('click', (e) => {
                     if (e.target.closest('.dispatch-ext-link')) return;
                     window.open(item.source_url, '_blank');
@@ -881,7 +879,10 @@ function renderAuthsTable() {
 
     for (const auth of allAuths) {
         const creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : (auth.credentials || {});
-        const credSummary = Object.entries(creds).map(([k, v]) => `${k}: ${v}`).join(', ');
+        const credSummary = Object.entries(creds).map(([k, v]) => {
+            const masked = typeof v === 'string' && v.length > 4 ? '••••' + v.slice(-4) : '••••';
+            return `${k}: ${masked}`;
+        }).join(', ');
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td>${escHtml(auth.name)}</td>
