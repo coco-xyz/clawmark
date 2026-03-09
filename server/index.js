@@ -316,6 +316,18 @@ async function sendWebhook(event, payload) {
                     console.warn(`[routing] Auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
                 }
             }
+
+            // For auto-detected targets (github_auto, system_default) without a token,
+            // look up the user's first matching auth credential (#264).
+            if (t.target_type === 'github-issue' && !t.target_config.token && payload.created_by) {
+                const userAuths = itemsDb.getUserAuths(payload.created_by);
+                const ghAuth = userAuths.find(a => a.auth_type === 'github_pat' || a.auth_type === 'github_oauth');
+                if (ghAuth) {
+                    let creds;
+                    try { creds = typeof ghAuth.credentials === 'string' ? JSON.parse(ghAuth.credentials) : ghAuth.credentials; } catch { creds = {}; }
+                    t.target_config = { ...t.target_config, ...creds };
+                }
+            }
         }
 
         console.log(`[routing] ${event}: ${filteredTargets.length} target(s) — ${filteredTargets.map(t => `${t.method}→${t.target_type}`).join(', ')}`);
