@@ -1106,9 +1106,10 @@ app.get('/api/v2/adapters', (req, res) => {
 
 // -- GET /api/v2/distributions/:item_id — get dispatch log for an item
 app.get('/api/v2/distributions/:item_id', apiReadLimiter, v2Auth, (req, res) => {
-    // Verify item belongs to caller's app
+    // Verify item exists and belongs to caller's app
     const item = itemsDb.getItem(req.params.item_id);
-    if (item && req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
         return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
     }
     const log = itemsDb.getDispatchLog(req.params.item_id);
@@ -1123,9 +1124,10 @@ app.get('/api/v2/distributions/:item_id', apiReadLimiter, v2Auth, (req, res) => 
 
 // -- POST /api/v2/distributions/:item_id/retry — retry failed dispatches for an item
 app.post('/api/v2/distributions/:item_id/retry', apiWriteLimiter, v2Auth, async (req, res) => {
-    // Verify item belongs to caller's app
+    // Verify item exists and belongs to caller's app
     const item = itemsDb.getItem(req.params.item_id);
-    if (item && req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
         return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
     }
     const log = itemsDb.getDispatchLog(req.params.item_id);
