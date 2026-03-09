@@ -592,6 +592,9 @@ function handleGetItems(req, res) {
 function handleGetItem(req, res) {
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     res.json(item);
 }
 
@@ -635,6 +638,9 @@ function handleAddMessage(req, res) {
 
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
 
     const result = itemsDb.addMessage({
         item_id: req.params.id,
@@ -650,6 +656,11 @@ function handleAddMessage(req, res) {
 function handleAssignItem(req, res) {
     const { assignee } = req.body;
     if (!assignee) return res.status(400).json({ error: 'Missing assignee' });
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.assignItem(req.params.id, assignee);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.assigned', { id: req.params.id, assignee });
@@ -658,6 +669,11 @@ function handleAssignItem(req, res) {
 
 // -- POST /items/:id/resolve
 function handleResolveItem(req, res) {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.resolveItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.resolved', { id: req.params.id });
@@ -666,6 +682,11 @@ function handleResolveItem(req, res) {
 
 // -- POST /items/:id/verify
 function handleVerifyItem(req, res) {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.verifyItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
@@ -673,6 +694,11 @@ function handleVerifyItem(req, res) {
 
 // -- POST /items/:id/reopen
 function handleReopenItem(req, res) {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.reopenItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
@@ -680,6 +706,11 @@ function handleReopenItem(req, res) {
 
 // -- POST /items/:id/close
 function handleCloseItem(req, res) {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.closeItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
@@ -692,6 +723,9 @@ function handleRespondToItem(req, res) {
 
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
 
     itemsDb.respondToItem(req.params.id, response);
     res.json({ success: true });
