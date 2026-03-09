@@ -835,6 +835,19 @@ function initDb(dataDir) {
 
     // ---------------------------------------------------- endpoint methods
 
+    /** Decrypt config field in an endpoints row (in-place). */
+    function decryptEndpointRow(row) {
+        if (!row) return row;
+        if (isEncrypted(row.config)) {
+            try {
+                row.config = decrypt(row.config);
+            } catch (err) {
+                throw new Error(`Failed to decrypt config for endpoint ${row.id}: ${err.message}. Check CLAWMARK_ENCRYPTION_KEY.`);
+            }
+        }
+        return row;
+    }
+
     function createEndpoint({ user_name, name, type, config, is_default = 0 }) {
         const now = new Date().toISOString();
         const id = genId('ep');
@@ -850,7 +863,7 @@ function initDb(dataDir) {
 
         endpointStmts.insertEndpoint.run({
             id, user_name, name, type,
-            config: configStr,
+            config: encrypt(configStr),
             is_default: shouldDefault,
             created_at: now, updated_at: now,
         });
@@ -858,28 +871,33 @@ function initDb(dataDir) {
     }
 
     function getEndpoints(user_name) {
-        return endpointStmts.getEndpointsByUser.all(user_name);
+        return endpointStmts.getEndpointsByUser.all(user_name).map(decryptEndpointRow);
     }
 
     function getEndpoint(id) {
-        return endpointStmts.getEndpointById.get(id) || null;
+        return decryptEndpointRow(endpointStmts.getEndpointById.get(id)) || null;
     }
 
     function updateEndpoint(id, updates) {
         const existing = endpointStmts.getEndpointById.get(id);
         if (!existing) return null;
         const now = new Date().toISOString();
+        let configStr;
+        if (updates.config) {
+            configStr = typeof updates.config === 'string' ? updates.config : JSON.stringify(updates.config);
+            configStr = encrypt(configStr);
+        } else {
+            configStr = existing.config; // already encrypted (or plaintext legacy)
+        }
         const merged = {
             id,
             name: updates.name ?? existing.name,
             type: updates.type ?? existing.type,
-            config: updates.config
-                ? (typeof updates.config === 'string' ? updates.config : JSON.stringify(updates.config))
-                : existing.config,
+            config: configStr,
             updated_at: now,
         };
         endpointStmts.updateEndpoint.run(merged);
-        return endpointStmts.getEndpointById.get(id);
+        return decryptEndpointRow(endpointStmts.getEndpointById.get(id));
     }
 
     function deleteEndpoint(id) {
@@ -903,7 +921,7 @@ function initDb(dataDir) {
         const now = new Date().toISOString();
         endpointStmts.clearDefaultForUser.run(now, existing.user_name);
         endpointStmts.setDefault.run(now, id);
-        return endpointStmts.getEndpointById.get(id);
+        return decryptEndpointRow(endpointStmts.getEndpointById.get(id));
     }
 
     // ---------------------------------------------------------- app methods
