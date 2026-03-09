@@ -222,16 +222,16 @@ export async function detectExtension() {
 }
 
 /**
- * Try to get auth token from the extension.
- * Returns { token, user } or null if extension not available.
+ * Try to get auth state from the extension.
+ * Returns { user } or null if extension not available or not authenticated.
  */
 export async function getAuthFromExtension() {
     const extId = await detectExtension();
     if (!extId) return null;
     try {
         const resp = await chrome.runtime.sendMessage(extId, { type: 'GET_AUTH_STATE' });
-        if (resp?.authToken && resp?.authUser) {
-            return { token: resp.authToken, user: resp.authUser };
+        if (resp?.authenticated && resp?.authUser) {
+            return { user: resp.authUser };
         }
     } catch {
         // Extension unavailable
