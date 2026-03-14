@@ -624,15 +624,15 @@ function initDb(dataDir) {
     }
 
     function getItemsByTag({ app_id, tag }) {
-        // SQLite JSON: tags is stored as '["bug","ui"]', search with LIKE
+        // Use json_each() for proper JSON array searching (avoids LIKE injection)
         if (app_id) {
             return db.prepare(
-                `SELECT * FROM items WHERE app_id = ? AND tags LIKE ? ORDER BY created_at DESC`
-            ).all(app_id, `%"${tag}"%`);
+                `SELECT i.* FROM items i, json_each(i.tags) t WHERE i.app_id = ? AND t.value = ? ORDER BY i.created_at DESC`
+            ).all(app_id, tag);
         }
         return db.prepare(
-            `SELECT * FROM items WHERE tags LIKE ? ORDER BY created_at DESC`
-        ).all(`%"${tag}"%`);
+            `SELECT i.* FROM items i, json_each(i.tags) t WHERE t.value = ? ORDER BY i.created_at DESC`
+        ).all(tag);
     }
 
     function getDistinctUrls(app_id = 'default') {
