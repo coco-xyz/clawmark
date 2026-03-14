@@ -377,6 +377,20 @@ function saveDiscussions(docId, data) {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
+// Per-document write lock to prevent concurrent read-modify-write data loss (#250)
+const discussionLocks = new Map();
+
+function withDiscussionLock(docId, fn) {
+    if (!discussionLocks.has(docId)) {
+        discussionLocks.set(docId, Promise.resolve());
+    }
+    const prev = discussionLocks.get(docId);
+    let resolve;
+    const next = new Promise(r => resolve = r);
+    discussionLocks.set(docId, next);
+    return prev.then(() => fn()).finally(() => resolve());
+}
+
 // --------------------------------------------------------- discussion endpoints
 
 // Get discussions for a document (auth added per #239 C-2)
@@ -399,45 +413,53 @@ app.post('/discussions', v2Auth, (req, res) => {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const data = loadDiscussions(doc);
+    withDiscussionLock(doc, () => {
+        const data = loadDiscussions(doc);
 
-    if (discussionId) {
-        // Append to existing discussion
-        const discussion = data.discussions.find(d => d.id === discussionId);
-        if (!discussion) return res.status(404).json({ error: 'Discussion not found' });
+        if (discussionId) {
+            // Append to existing discussion
+            const discussion = data.discussions.find(d => d.id === discussionId);
+            if (!discussion) {
+                res.status(404).json({ error: 'Discussion not found' });
+                return;
+            }
 
-        discussion.messages.push({
-            role: 'user',
-            content: message,
-            userName,
-            timestamp: new Date().toISOString()
-        });
-
-        saveDiscussions(doc, data);
-
-        sendWebhook('discussion.message', { doc, discussionId, userName, message });
-        res.json({ success: true, discussionId });
-    } else {
-        // New discussion
-        const newDiscussion = {
-            id: `disc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            quote: quote || '',
-            version: version || 'latest',
-            createdAt: new Date().toISOString(),
-            messages: [{
+            discussion.messages.push({
                 role: 'user',
                 content: message,
                 userName,
                 timestamp: new Date().toISOString()
-            }]
-        };
+            });
 
-        data.discussions.push(newDiscussion);
-        saveDiscussions(doc, data);
+            saveDiscussions(doc, data);
 
-        sendWebhook('discussion.created', { doc, discussionId: newDiscussion.id, userName, quote, message });
-        res.json({ success: true, discussionId: newDiscussion.id });
-    }
+            sendWebhook('discussion.message', { doc, discussionId, userName, message });
+            res.json({ success: true, discussionId });
+        } else {
+            // New discussion
+            const newDiscussion = {
+                id: `disc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                quote: quote || '',
+                version: version || 'latest',
+                createdAt: new Date().toISOString(),
+                messages: [{
+                    role: 'user',
+                    content: message,
+                    userName,
+                    timestamp: new Date().toISOString()
+                }]
+            };
+
+            data.discussions.push(newDiscussion);
+            saveDiscussions(doc, data);
+
+            sendWebhook('discussion.created', { doc, discussionId: newDiscussion.id, userName, quote, message });
+            res.json({ success: true, discussionId: newDiscussion.id });
+        }
+    }).catch(err => {
+        console.error('Discussion write error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    });
 });
 
 // Post a response to a discussion (called by an AI agent or admin)
@@ -447,27 +469,35 @@ app.post('/respond', v2Auth, (req, res) => {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const data = loadDiscussions(doc);
-    const discussion = data.discussions.find(d => d.id === discussionId);
-    if (!discussion) return res.status(404).json({ error: 'Discussion not found' });
+    withDiscussionLock(doc, () => {
+        const data = loadDiscussions(doc);
+        const discussion = data.discussions.find(d => d.id === discussionId);
+        if (!discussion) {
+            res.status(404).json({ error: 'Discussion not found' });
+            return;
+        }
 
-    const pendingIdx = discussion.messages.findIndex(m => m.pending);
-    if (pendingIdx !== -1) {
-        discussion.messages[pendingIdx] = {
-            role: 'assistant',
-            content: response,
-            timestamp: new Date().toISOString()
-        };
-    } else {
-        discussion.messages.push({
-            role: 'assistant',
-            content: response,
-            timestamp: new Date().toISOString()
-        });
-    }
+        const pendingIdx = discussion.messages.findIndex(m => m.pending);
+        if (pendingIdx !== -1) {
+            discussion.messages[pendingIdx] = {
+                role: 'assistant',
+                content: response,
+                timestamp: new Date().toISOString()
+            };
+        } else {
+            discussion.messages.push({
+                role: 'assistant',
+                content: response,
+                timestamp: new Date().toISOString()
+            });
+        }
 
-    saveDiscussions(doc, data);
-    res.json({ success: true });
+        saveDiscussions(doc, data);
+        res.json({ success: true });
+    }).catch(err => {
+        console.error('Discussion write error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    });
 });
 
 // Resolve or reopen a discussion
@@ -475,20 +505,28 @@ app.post('/discussions/resolve', v2Auth, (req, res) => {
     const { doc, discussionId, action } = req.body;
     if (!doc || !discussionId) return res.status(400).json({ error: 'Missing doc or discussionId' });
 
-    const data = loadDiscussions(doc);
-    const disc = data.discussions.find(d => d.id === discussionId);
-    if (!disc) return res.status(404).json({ error: 'Discussion not found' });
+    withDiscussionLock(doc, () => {
+        const data = loadDiscussions(doc);
+        const disc = data.discussions.find(d => d.id === discussionId);
+        if (!disc) {
+            res.status(404).json({ error: 'Discussion not found' });
+            return;
+        }
 
-    if (action === 'reopen') {
-        disc.applied = false;
-        disc.appliedAt = null;
-    } else {
-        disc.applied = true;
-        disc.appliedAt = new Date().toISOString();
-    }
+        if (action === 'reopen') {
+            disc.applied = false;
+            disc.appliedAt = null;
+        } else {
+            disc.applied = true;
+            disc.appliedAt = new Date().toISOString();
+        }
 
-    saveDiscussions(doc, data);
-    res.json({ success: true });
+        saveDiscussions(doc, data);
+        res.json({ success: true });
+    }).catch(err => {
+        console.error('Discussion write error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    });
 });
 
 // Submit a reply via API (for AI agent or admin use)
@@ -498,27 +536,35 @@ app.post('/submit-reply', v2Auth, (req, res) => {
         return res.status(400).json({ error: 'Missing doc, discussionId, or reply' });
     }
 
-    const data = loadDiscussions(doc);
-    const discussion = data.discussions.find(d => d.id === discussionId);
-    if (!discussion) return res.status(404).json({ error: 'Discussion not found' });
+    withDiscussionLock(doc, () => {
+        const data = loadDiscussions(doc);
+        const discussion = data.discussions.find(d => d.id === discussionId);
+        if (!discussion) {
+            res.status(404).json({ error: 'Discussion not found' });
+            return;
+        }
 
-    const pendingIdx = discussion.messages.findIndex(m => m.pending);
-    if (pendingIdx !== -1) {
-        discussion.messages[pendingIdx] = {
-            role: 'assistant',
-            content: reply,
-            timestamp: new Date().toISOString()
-        };
-    } else {
-        discussion.messages.push({
-            role: 'assistant',
-            content: reply,
-            timestamp: new Date().toISOString()
-        });
-    }
+        const pendingIdx = discussion.messages.findIndex(m => m.pending);
+        if (pendingIdx !== -1) {
+            discussion.messages[pendingIdx] = {
+                role: 'assistant',
+                content: reply,
+                timestamp: new Date().toISOString()
+            };
+        } else {
+            discussion.messages.push({
+                role: 'assistant',
+                content: reply,
+                timestamp: new Date().toISOString()
+            });
+        }
 
-    saveDiscussions(doc, data);
-    res.json({ success: true });
+        saveDiscussions(doc, data);
+        res.json({ success: true });
+    }).catch(err => {
+        console.error('Discussion write error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    });
 });
 
 // List pending discussions (discussions that have an unanswered pending message)
