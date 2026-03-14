@@ -377,6 +377,20 @@ function saveDiscussions(docId, data) {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
+// Per-document write lock to prevent concurrent read-modify-write data loss (#250)
+const discussionLocks = new Map();
+
+function withDiscussionLock(docId, fn) {
+    if (!discussionLocks.has(docId)) {
+        discussionLocks.set(docId, Promise.resolve());
+    }
+    const prev = discussionLocks.get(docId);
+    let resolve;
+    const next = new Promise(r => resolve = r);
+    discussionLocks.set(docId, next);
+    return prev.then(() => fn()).finally(() => resolve());
+}
+
 // --------------------------------------------------------- discussion endpoints
 
 // Get discussions for a document (auth added per #239 C-2)
@@ -399,45 +413,53 @@ app.post('/discussions', v2Auth, (req, res) => {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const data = loadDiscussions(doc);
+    withDiscussionLock(doc, () => {
+        const data = loadDiscussions(doc);
 
-    if (discussionId) {
-        // Append to existing discussion
-        const discussion = data.discussions.find(d => d.id === discussionId);
-        if (!discussion) return res.status(404).json({ error: 'Discussion not found' });
+        if (discussionId) {
+            // Append to existing discussion
+            const discussion = data.discussions.find(d => d.id === discussionId);
+            if (!discussion) {
+                res.status(404).json({ error: 'Discussion not found' });
+                return;
+            }
 
-        discussion.messages.push({
-            role: 'user',
-            content: message,
-            userName,
-            timestamp: new Date().toISOString()
-        });
-
-        saveDiscussions(doc, data);
-
-        sendWebhook('discussion.message', { doc, discussionId, userName, message });
-        res.json({ success: true, discussionId });
-    } else {
-        // New discussion
-        const newDiscussion = {
-            id: `disc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            quote: quote || '',
-            version: version || 'latest',
-            createdAt: new Date().toISOString(),
-            messages: [{
+            discussion.messages.push({
                 role: 'user',
                 content: message,
                 userName,
                 timestamp: new Date().toISOString()
-            }]
-        };
+            });
 
-        data.discussions.push(newDiscussion);
-        saveDiscussions(doc, data);
+            saveDiscussions(doc, data);
 
-        sendWebhook('discussion.created', { doc, discussionId: newDiscussion.id, userName, quote, message });
-        res.json({ success: true, discussionId: newDiscussion.id });
-    }
+            sendWebhook('discussion.message', { doc, discussionId, userName, message });
+            res.json({ success: true, discussionId });
+        } else {
+            // New discussion
+            const newDiscussion = {
+                id: `disc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                quote: quote || '',
+                version: version || 'latest',
+                createdAt: new Date().toISOString(),
+                messages: [{
+                    role: 'user',
+                    content: message,
+                    userName,
+                    timestamp: new Date().toISOString()
+                }]
+            };
+
+            data.discussions.push(newDiscussion);
+            saveDiscussions(doc, data);
+
+            sendWebhook('discussion.created', { doc, discussionId: newDiscussion.id, userName, quote, message });
+            res.json({ success: true, discussionId: newDiscussion.id });
+        }
+    }).catch(err => {
+        console.error('Discussion write error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    });
 });
 
 // Post a response to a discussion (called by an AI agent or admin)
@@ -447,27 +469,35 @@ app.post('/respond', v2Auth, (req, res) => {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const data = loadDiscussions(doc);
-    const discussion = data.discussions.find(d => d.id === discussionId);
-    if (!discussion) return res.status(404).json({ error: 'Discussion not found' });
+    withDiscussionLock(doc, () => {
+        const data = loadDiscussions(doc);
+        const discussion = data.discussions.find(d => d.id === discussionId);
+        if (!discussion) {
+            res.status(404).json({ error: 'Discussion not found' });
+            return;
+        }
 
-    const pendingIdx = discussion.messages.findIndex(m => m.pending);
-    if (pendingIdx !== -1) {
-        discussion.messages[pendingIdx] = {
-            role: 'assistant',
-            content: response,
-            timestamp: new Date().toISOString()
-        };
-    } else {
-        discussion.messages.push({
-            role: 'assistant',
-            content: response,
-            timestamp: new Date().toISOString()
-        });
-    }
+        const pendingIdx = discussion.messages.findIndex(m => m.pending);
+        if (pendingIdx !== -1) {
+            discussion.messages[pendingIdx] = {
+                role: 'assistant',
+                content: response,
+                timestamp: new Date().toISOString()
+            };
+        } else {
+            discussion.messages.push({
+                role: 'assistant',
+                content: response,
+                timestamp: new Date().toISOString()
+            });
+        }
 
-    saveDiscussions(doc, data);
-    res.json({ success: true });
+        saveDiscussions(doc, data);
+        res.json({ success: true });
+    }).catch(err => {
+        console.error('Discussion write error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    });
 });
 
 // Resolve or reopen a discussion
@@ -475,20 +505,28 @@ app.post('/discussions/resolve', v2Auth, (req, res) => {
     const { doc, discussionId, action } = req.body;
     if (!doc || !discussionId) return res.status(400).json({ error: 'Missing doc or discussionId' });
 
-    const data = loadDiscussions(doc);
-    const disc = data.discussions.find(d => d.id === discussionId);
-    if (!disc) return res.status(404).json({ error: 'Discussion not found' });
+    withDiscussionLock(doc, () => {
+        const data = loadDiscussions(doc);
+        const disc = data.discussions.find(d => d.id === discussionId);
+        if (!disc) {
+            res.status(404).json({ error: 'Discussion not found' });
+            return;
+        }
 
-    if (action === 'reopen') {
-        disc.applied = false;
-        disc.appliedAt = null;
-    } else {
-        disc.applied = true;
-        disc.appliedAt = new Date().toISOString();
-    }
+        if (action === 'reopen') {
+            disc.applied = false;
+            disc.appliedAt = null;
+        } else {
+            disc.applied = true;
+            disc.appliedAt = new Date().toISOString();
+        }
 
-    saveDiscussions(doc, data);
-    res.json({ success: true });
+        saveDiscussions(doc, data);
+        res.json({ success: true });
+    }).catch(err => {
+        console.error('Discussion write error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    });
 });
 
 // Submit a reply via API (for AI agent or admin use)
@@ -498,27 +536,35 @@ app.post('/submit-reply', v2Auth, (req, res) => {
         return res.status(400).json({ error: 'Missing doc, discussionId, or reply' });
     }
 
-    const data = loadDiscussions(doc);
-    const discussion = data.discussions.find(d => d.id === discussionId);
-    if (!discussion) return res.status(404).json({ error: 'Discussion not found' });
+    withDiscussionLock(doc, () => {
+        const data = loadDiscussions(doc);
+        const discussion = data.discussions.find(d => d.id === discussionId);
+        if (!discussion) {
+            res.status(404).json({ error: 'Discussion not found' });
+            return;
+        }
 
-    const pendingIdx = discussion.messages.findIndex(m => m.pending);
-    if (pendingIdx !== -1) {
-        discussion.messages[pendingIdx] = {
-            role: 'assistant',
-            content: reply,
-            timestamp: new Date().toISOString()
-        };
-    } else {
-        discussion.messages.push({
-            role: 'assistant',
-            content: reply,
-            timestamp: new Date().toISOString()
-        });
-    }
+        const pendingIdx = discussion.messages.findIndex(m => m.pending);
+        if (pendingIdx !== -1) {
+            discussion.messages[pendingIdx] = {
+                role: 'assistant',
+                content: reply,
+                timestamp: new Date().toISOString()
+            };
+        } else {
+            discussion.messages.push({
+                role: 'assistant',
+                content: reply,
+                timestamp: new Date().toISOString()
+            });
+        }
 
-    saveDiscussions(doc, data);
-    res.json({ success: true });
+        saveDiscussions(doc, data);
+        res.json({ success: true });
+    }).catch(err => {
+        console.error('Discussion write error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    });
 });
 
 // List pending discussions (discussions that have an unanswered pending message)
@@ -593,6 +639,9 @@ function handleGetItems(req, res) {
 function handleGetItem(req, res) {
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     res.json(item);
 }
 
@@ -636,6 +685,9 @@ function handleAddMessage(req, res) {
 
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
 
     const result = itemsDb.addMessage({
         item_id: req.params.id,
@@ -651,6 +703,11 @@ function handleAddMessage(req, res) {
 function handleAssignItem(req, res) {
     const { assignee } = req.body;
     if (!assignee) return res.status(400).json({ error: 'Missing assignee' });
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.assignItem(req.params.id, assignee);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.assigned', { id: req.params.id, assignee });
@@ -659,6 +716,11 @@ function handleAssignItem(req, res) {
 
 // -- POST /items/:id/resolve
 function handleResolveItem(req, res) {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.resolveItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     sendWebhook('item.resolved', { id: req.params.id });
@@ -667,6 +729,11 @@ function handleResolveItem(req, res) {
 
 // -- POST /items/:id/verify
 function handleVerifyItem(req, res) {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.verifyItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
@@ -674,6 +741,11 @@ function handleVerifyItem(req, res) {
 
 // -- POST /items/:id/reopen
 function handleReopenItem(req, res) {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.reopenItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
@@ -681,6 +753,11 @@ function handleReopenItem(req, res) {
 
 // -- POST /items/:id/close
 function handleCloseItem(req, res) {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
     const result = itemsDb.closeItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
@@ -693,6 +770,9 @@ function handleRespondToItem(req, res) {
 
     const item = itemsDb.getItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
+    }
 
     itemsDb.respondToItem(req.params.id, response);
     res.json({ success: true });
@@ -1232,7 +1312,7 @@ app.post('/api/v2/auth/apikey-legacy', apiWriteLimiter, (req, res) => {
 });
 
 // -- GET /api/v2/adapters — list adapter channels and their status
-app.get('/api/v2/adapters', (req, res) => {
+app.get('/api/v2/adapters', apiReadLimiter, v2Auth, (req, res) => {
     res.json({ channels: registry.getStatus(), rules: registry.rules.length });
 });
 
@@ -1243,9 +1323,10 @@ app.get('/api/v2/adapters', (req, res) => {
 
 // -- GET /api/v2/distributions/:item_id — get dispatch log for an item
 app.get('/api/v2/distributions/:item_id', apiReadLimiter, v2Auth, (req, res) => {
-    // Verify item belongs to caller's app
+    // Verify item exists and belongs to caller's app
     const item = itemsDb.getItem(req.params.item_id);
-    if (item && req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
         return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
     }
     const log = itemsDb.getDispatchLog(req.params.item_id);
@@ -1260,9 +1341,10 @@ app.get('/api/v2/distributions/:item_id', apiReadLimiter, v2Auth, (req, res) => 
 
 // -- POST /api/v2/distributions/:item_id/retry — retry failed dispatches for an item
 app.post('/api/v2/distributions/:item_id/retry', apiWriteLimiter, v2Auth, async (req, res) => {
-    // Verify item belongs to caller's app
+    // Verify item exists and belongs to caller's app
     const item = itemsDb.getItem(req.params.item_id);
-    if (item && req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
         return res.status(403).json({ error: 'Access denied — item belongs to a different app' });
     }
     const log = itemsDb.getDispatchLog(req.params.item_id);
