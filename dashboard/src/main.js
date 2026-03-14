@@ -16,6 +16,7 @@ import {
     checkLatestVersion,
     getUserSettings, updateUserSettings,
     syncLoginToExtension, syncLogoutToExtension, getAuthFromExtension,
+    previewIssues, batchFileIssues,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -100,6 +101,7 @@ function showApp(user) {
     loadConnection();
     loadAuthsList();
     loadRules();
+    loadFileIssues();
     loadAbout();
 
     // Handle old hash routes that were consolidated
@@ -1018,6 +1020,156 @@ async function doDeleteAuth(id) {
 }
 
 // ------------------------------------------------------------------ About
+
+// ------------------------------------------------------------------ file issues (#44)
+
+let fileIssuesDrafts = [];
+
+async function loadFileIssues() {
+    // Populate auth dropdown with GitLab-type credentials
+    try {
+        const { auths } = await getAuths();
+        const select = document.getElementById('file-auth-select');
+        select.innerHTML = '<option value="">Select a GitLab credential...</option>';
+        for (const auth of auths) {
+            if (auth.auth_type === 'gitlab_pat' || auth.auth_type === 'custom_header' || auth.auth_type === 'custom_bearer') {
+                const opt = document.createElement('option');
+                opt.value = auth.id;
+                opt.textContent = `${auth.label || auth.auth_type} (${auth.auth_type})`;
+                select.appendChild(opt);
+            }
+        }
+    } catch { /* ignore */ }
+}
+
+document.getElementById('btn-load-items')?.addEventListener('click', async () => {
+    const list = document.getElementById('file-items-list');
+    list.innerHTML = '<div class="empty-state">Loading...</div>';
+
+    try {
+        const { items } = await getItems({ type: 'issue' });
+        // Also load comment-type items classified as bugs
+        const { items: comments } = await getItems({ type: 'comment' });
+        const allItems = [...items, ...comments.filter(c => c.classification === 'bug')];
+
+        if (allItems.length === 0) {
+            list.innerHTML = '<div class="empty-state">No items found. Create annotations first.</div>';
+            return;
+        }
+
+        // Get preview with severity
+        const ids = allItems.map(i => i.id);
+        const { drafts } = await previewIssues(ids);
+        fileIssuesDrafts = drafts;
+
+        renderFileItems(drafts);
+    } catch (err) {
+        list.innerHTML = `<div class="empty-state">Error: ${escHtml(err.message)}</div>`;
+    }
+});
+
+function renderFileItems(drafts) {
+    const list = document.getElementById('file-items-list');
+    if (drafts.length === 0) {
+        list.innerHTML = '<div class="empty-state">No items to file.</div>';
+        return;
+    }
+
+    const severityColors = { P0: '#dc2626', P1: '#ea580c', P2: '#ca8a04', P3: '#65a30d' };
+
+    list.innerHTML = drafts.map(d => `
+        <label class="file-item ${d.has_dispatches ? 'already-filed' : ''}" data-item-id="${escHtml(d.item_id)}">
+            <input type="checkbox" class="file-item-check" value="${escHtml(d.item_id)}" ${d.has_dispatches ? '' : 'checked'}>
+            <span class="severity-badge" style="background:${severityColors[d.severity] || '#666'}">${escHtml(d.severity)}</span>
+            <span class="file-item-classification">${escHtml(d.classification)}</span>
+            <span class="file-item-title">${escHtml(d.title)}</span>
+            ${d.source_url ? `<span class="file-item-url" title="${escHtml(d.source_url)}">${escHtml(new URL(d.source_url).pathname)}</span>` : ''}
+            ${d.has_dispatches ? '<span class="file-item-badge">already filed</span>' : ''}
+        </label>
+    `).join('');
+
+    updateSelectedCount();
+
+    list.querySelectorAll('.file-item-check').forEach(cb => {
+        cb.addEventListener('change', updateSelectedCount);
+    });
+}
+
+function updateSelectedCount() {
+    const checks = document.querySelectorAll('.file-item-check:checked');
+    const count = checks.length;
+    document.getElementById('file-selected-count').textContent = `${count} item${count !== 1 ? 's' : ''} selected`;
+    document.getElementById('btn-file-issues').disabled = count === 0;
+}
+
+document.getElementById('btn-select-all')?.addEventListener('click', () => {
+    document.querySelectorAll('.file-item-check').forEach(cb => { cb.checked = true; });
+    updateSelectedCount();
+});
+
+document.getElementById('btn-deselect-all')?.addEventListener('click', () => {
+    document.querySelectorAll('.file-item-check').forEach(cb => { cb.checked = false; });
+    updateSelectedCount();
+});
+
+document.getElementById('btn-file-issues')?.addEventListener('click', async () => {
+    const authId = document.getElementById('file-auth-select').value;
+    const projectId = document.getElementById('file-project-id').value.trim();
+    const baseUrl = document.getElementById('file-base-url').value.trim();
+    const extraLabels = document.getElementById('file-labels').value.trim();
+    const autoSeverity = document.getElementById('file-auto-severity').checked;
+
+    if (!projectId) {
+        showToast('Please enter a GitLab project ID', 'error');
+        return;
+    }
+
+    const selectedIds = [...document.querySelectorAll('.file-item-check:checked')].map(cb => cb.value);
+    if (selectedIds.length === 0) {
+        showToast('No items selected', 'error');
+        return;
+    }
+
+    const target = {
+        adapter: 'gitlab-issue',
+        project_id: projectId,
+        auto_severity: autoSeverity,
+    };
+    if (authId) target.auth_id = Number(authId);
+    if (baseUrl) target.base_url = baseUrl;
+    if (extraLabels) target.labels = extraLabels.split(',').map(l => l.trim()).filter(Boolean);
+
+    const btn = document.getElementById('btn-file-issues');
+    btn.disabled = true;
+    btn.textContent = 'Filing...';
+
+    try {
+        const result = await batchFileIssues(selectedIds, target);
+        const resultsDiv = document.getElementById('file-results');
+        resultsDiv.style.display = 'block';
+
+        const lines = result.results.map(r => {
+            if (r.status === 'filed') {
+                return `<div class="file-result-success">${escHtml(r.severity)} - Item ${escHtml(r.item_id)} filed${r.url ? ` - <a href="${escHtml(r.url)}" target="_blank">View</a>` : ''}</div>`;
+            }
+            return `<div class="file-result-error">Item ${escHtml(r.item_id)}: ${escHtml(r.error)}</div>`;
+        });
+
+        resultsDiv.innerHTML = `
+            <h4>Results: ${result.summary.filed} filed, ${result.summary.failed} failed</h4>
+            ${lines.join('')}
+        `;
+
+        showToast(`${result.summary.filed} issues filed successfully`, result.summary.failed > 0 ? 'warning' : 'success');
+    } catch (err) {
+        showToast('Batch file failed: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'File Selected as GitLab Issues';
+    }
+});
+
+// ------------------------------------------------------------------ about
 
 async function loadAbout() {
     // Server version
