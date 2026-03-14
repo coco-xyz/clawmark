@@ -1232,7 +1232,7 @@ app.post('/api/v2/auth/apikey-legacy', apiWriteLimiter, (req, res) => {
 });
 
 // -- GET /api/v2/adapters — list adapter channels and their status
-app.get('/api/v2/adapters', (req, res) => {
+app.get('/api/v2/adapters', apiReadLimiter, v2Auth, (req, res) => {
     res.json({ channels: registry.getStatus(), rules: registry.rules.length });
 });
 
