@@ -88,6 +88,9 @@
                 <li class="nav-item active" data-tab="overview">
                     <span class="nav-icon">&#x1f4ca;</span> Overview
                 </li>
+                <li class="nav-item" data-tab="file-issues">
+                    <span class="nav-icon">&#x1f4e4;</span> File Issues
+                </li>
                 <li class="nav-item" data-tab="settings">
                     <span class="nav-icon">&#x2699;&#xfe0f;</span> Settings
                 </li>
@@ -151,6 +154,64 @@
                 <h2 id="activity-heading">Top Annotated Pages</h2>
                 <div class="activity-list" id="activity-list">
                     <div class="empty-state">Loading...</div>
+                </div>
+            </section>
+
+            <!-- File Issues Tab (#44) -->
+            <section class="tab-panel" id="tab-file-issues">
+                <h1>File Issues</h1>
+                <p class="help-text">Review annotations and batch-file them as GitLab issues with auto-severity labels.</p>
+
+                <!-- Target Config -->
+                <div class="card" id="file-target-config">
+                    <h3>Target Project</h3>
+                    <div class="form-row">
+                        <label class="form-label" for="file-auth-select">Auth Credential</label>
+                        <select class="input" id="file-auth-select">
+                            <option value="">Select a GitLab credential...</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label" for="file-project-id">GitLab Project</label>
+                        <input type="text" class="input" id="file-project-id" placeholder="namespace/project or numeric ID">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label" for="file-base-url">GitLab URL</label>
+                        <input type="text" class="input" id="file-base-url" placeholder="https://gitlab.com" value="https://gitlab.com">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label" for="file-labels">Extra Labels (comma-separated)</label>
+                        <input type="text" class="input" id="file-labels" placeholder="clawmark, qa">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">
+                            <input type="checkbox" id="file-auto-severity" checked> Auto-severity labels (P0-P3)
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Items to file -->
+                <div class="card">
+                    <div class="card-header-row">
+                        <h3>Annotations</h3>
+                        <div>
+                            <button class="btn btn-secondary btn-small" id="btn-load-items">Load Items</button>
+                            <button class="btn btn-secondary btn-small" id="btn-select-all">Select All</button>
+                            <button class="btn btn-secondary btn-small" id="btn-deselect-all">Deselect All</button>
+                        </div>
+                    </div>
+                    <div id="file-items-list" class="file-items-list">
+                        <div class="empty-state">Click "Load Items" to fetch annotations.</div>
+                    </div>
+                </div>
+
+                <!-- Submit -->
+                <div class="card">
+                    <div class="file-summary" id="file-summary">
+                        <span id="file-selected-count">0 items selected</span>
+                    </div>
+                    <button class="btn btn-primary" id="btn-file-issues" disabled>File Selected as GitLab Issues</button>
+                    <div id="file-results" class="file-results" style="display:none;"></div>
                 </div>
             </section>
 

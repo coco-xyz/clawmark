@@ -119,6 +119,7 @@ const { JiraAdapter } = require('./adapters/jira');
 const { HxaConnectAdapter } = require('./adapters/hxa-connect');
 const { GitLabIssueAdapter } = require('./adapters/gitlab-issue');
 const { resolveTarget, resolveTargets } = require('./routing');
+const { autoSeverity } = require('./severity');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
 
@@ -1076,6 +1077,142 @@ app.post('/api/v2/items/:id/reopen', apiWriteLimiter, v2Auth, (req, res) => {
     const result = itemsDb.reopenItem(req.params.id);
     if (!result.changes) return res.status(404).json({ error: 'Item not found' });
     res.json({ success: true });
+});
+
+// -- POST /api/v2/items/batch-file — batch file items as GitLab issues (#44)
+app.post('/api/v2/items/batch-file', apiWriteLimiter, v2Auth, async (req, res) => {
+    const { item_ids, target } = req.body;
+
+    if (!Array.isArray(item_ids) || item_ids.length === 0) {
+        return res.status(400).json({ error: 'item_ids must be a non-empty array' });
+    }
+    if (item_ids.length > 50) {
+        return res.status(400).json({ error: 'Maximum 50 items per batch' });
+    }
+    if (!target || !target.adapter || !target.project_id) {
+        return res.status(400).json({ error: 'target must include adapter and project_id' });
+    }
+
+    const resolvedAppId = req.v2Auth?.app_id;
+    if (!resolvedAppId) {
+        return res.status(400).json({ error: 'Could not resolve app_id' });
+    }
+
+    // Resolve auth credentials if auth_id is provided
+    let targetConfig = { ...target };
+    if (target.auth_id) {
+        const auth = itemsDb.getUserAuth(target.auth_id);
+        if (!auth) {
+            return res.status(400).json({ error: `Auth credential ${target.auth_id} not found` });
+        }
+        let creds;
+        try { creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials; } catch { creds = {}; }
+        targetConfig = { ...targetConfig, ...creds };
+    }
+
+    const results = [];
+    for (const itemId of item_ids) {
+        const item = itemsDb.getItem(itemId);
+        if (!item) {
+            results.push({ item_id: itemId, status: 'error', error: 'Item not found' });
+            continue;
+        }
+        if (item.app_id !== resolvedAppId) {
+            results.push({ item_id: itemId, status: 'error', error: 'Access denied' });
+            continue;
+        }
+
+        // Auto-severity labeling
+        const { severity } = autoSeverity(item);
+        const severityLabels = target.auto_severity !== false
+            ? [severity]
+            : [];
+
+        // Build adapter config with severity labels
+        const adapterConfig = {
+            ...targetConfig,
+            labels: [...(targetConfig.labels || ['clawmark']), ...severityLabels],
+        };
+
+        try {
+            const adapterResult = await registry.dispatchToTarget(
+                'item.created', item, target.adapter, adapterConfig, {}
+            );
+            results.push({
+                item_id: itemId,
+                status: 'filed',
+                severity,
+                url: adapterResult?.url || null,
+                issue_iid: adapterResult?.issue_iid || null,
+            });
+        } catch (err) {
+            results.push({
+                item_id: itemId,
+                status: 'error',
+                severity,
+                error: err.message,
+            });
+        }
+    }
+
+    const filed = results.filter(r => r.status === 'filed').length;
+    const failed = results.filter(r => r.status === 'error').length;
+
+    res.json({
+        success: failed === 0,
+        summary: { total: item_ids.length, filed, failed },
+        results,
+    });
+});
+
+// -- GET /api/v2/items/:id/severity — preview auto-severity for an item (#44)
+app.get('/api/v2/items/:id/severity', apiReadLimiter, v2Auth, (req, res) => {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied' });
+    }
+    res.json(autoSeverity(item));
+});
+
+// -- POST /api/v2/items/preview-issues — preview draft issues before filing (#44)
+app.post('/api/v2/items/preview-issues', apiReadLimiter, v2Auth, (req, res) => {
+    const { item_ids } = req.body;
+    if (!Array.isArray(item_ids) || item_ids.length === 0) {
+        return res.status(400).json({ error: 'item_ids must be a non-empty array' });
+    }
+
+    const resolvedAppId = req.v2Auth?.app_id;
+    if (!resolvedAppId) {
+        return res.status(400).json({ error: 'Could not resolve app_id' });
+    }
+
+    const drafts = [];
+    for (const itemId of item_ids) {
+        const item = itemsDb.getItem(itemId);
+        if (!item || item.app_id !== resolvedAppId) continue;
+
+        const { severity, label: severityLabel } = autoSeverity(item);
+        const tags = typeof item.tags === 'string' ? JSON.parse(item.tags || '[]') : (item.tags || []);
+        const screenshots = typeof item.screenshots === 'string' ? JSON.parse(item.screenshots || '[]') : (item.screenshots || []);
+
+        drafts.push({
+            item_id: item.id,
+            title: item.title || item.quote?.slice(0, 80) || 'Untitled',
+            classification: item.classification || 'general',
+            severity,
+            severity_label: severityLabel,
+            source_url: item.source_url,
+            source_title: item.source_title,
+            quote: item.quote,
+            tags,
+            screenshots,
+            created_at: item.created_at,
+            has_dispatches: (itemsDb.getDispatchLog(item.id) || []).length > 0,
+        });
+    }
+
+    res.json({ drafts });
 });
 
 // -- GET /api/v2/urls — list all annotated URLs for an app
