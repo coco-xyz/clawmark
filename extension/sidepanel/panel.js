@@ -116,7 +116,7 @@ async function loadItems(skipCache = false) {
         updateCounts();
         renderItems();
     } catch (err) {
-        itemsContainer.innerHTML = `<div class="error-msg">${err.message}</div>`;
+        itemsContainer.innerHTML = `<div class="error-msg">${escapeHtml(err.message)}</div>`;
     }
 }
 
@@ -134,7 +134,7 @@ async function loadThread(itemId) {
         renderThread(response);
         showThreadView();
     } catch (err) {
-        threadMessages.innerHTML = `<div class="error-msg">${err.message}</div>`;
+        threadMessages.innerHTML = `<div class="error-msg">${escapeHtml(err.message)}</div>`;
     }
 }
 
@@ -191,18 +191,18 @@ function renderItems() {
         const sourceHost = item.source_url ? (() => { try { return new URL(item.source_url).hostname; } catch { return ''; } })() : '';
 
         return `
-            <div class="item-card" data-id="${item.id}">
+            <div class="item-card" data-id="${escapeHtml(String(item.id))}">
                 <div class="item-header">
-                    <span class="item-type ${item.type}">${item.type}</span>
-                    ${item.priority !== 'normal' ? `<span class="item-priority ${priorityClass}">${item.priority}</span>` : ''}
-                    <span class="item-priority">${item.status}</span>
+                    <span class="item-type ${escapeHtml(item.type)}">${escapeHtml(item.type)}</span>
+                    ${item.priority !== 'normal' ? `<span class="item-priority ${priorityClass}">${escapeHtml(item.priority)}</span>` : ''}
+                    <span class="item-priority">${escapeHtml(item.status)}</span>
                 </div>
                 ${item.title ? `<div class="item-title">${escapeHtml(item.title)}</div>` : ''}
                 ${item.quote ? `<div class="item-quote">${escapeHtml(item.quote)}</div>` : ''}
                 ${sourceHost ? `<div class="item-source" title="${escapeHtml(item.source_url)}"><span class="source-icon">\ud83d\udcc4</span> ${escapeHtml(item.source_title || sourceHost)}</div>` : ''}
                 ${renderDispatchBadges(item.dispatches)}
                 <div class="item-meta">
-                    <span>${item.created_by}</span>
+                    <span>${escapeHtml(item.created_by)}</span>
                     <span>${time}</span>
                 </div>
                 ${tags.length > 0 ? `<div class="item-tags">${tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
@@ -224,8 +224,8 @@ function renderThread(item) {
     threadHeader.innerHTML = `
         <div class="item-card" style="cursor:default;margin-bottom:0;">
             <div class="item-header">
-                <span class="item-type ${item.type}">${item.type}</span>
-                <span class="item-priority">${item.status}</span>
+                <span class="item-type ${escapeHtml(item.type)}">${escapeHtml(item.type)}</span>
+                <span class="item-priority">${escapeHtml(item.status)}</span>
             </div>
             ${item.title ? `<div class="item-title">${escapeHtml(item.title)}</div>` : ''}
             ${item.quote ? `<div class="item-quote">${escapeHtml(item.quote)}</div>` : ''}
@@ -302,7 +302,7 @@ function formatTime(isoString) {
 
 function escapeHtml(str) {
     if (!str) return '';
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ------------------------------------------------------------------ dispatch display (#115)
