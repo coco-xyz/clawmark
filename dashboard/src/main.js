@@ -24,13 +24,8 @@ import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } fro
 // ------------------------------------------------------------------ init
 
 async function init() {
-    // Try extension auth first
-    const extAuth = await getAuthFromExtension();
-    if (extAuth) {
-        setAuth(extAuth.token, extAuth.user);
-        showApp(extAuth.user);
-        return;
-    }
+    // Check if extension is authenticated (token is no longer shared for security)
+    // Dashboard must obtain its own token via OAuth login flow
 
     // Handle OAuth callback
     const code = extractAuthCode();
@@ -47,13 +42,8 @@ async function init() {
 
     const isWelcome = location.hash === '#welcome';
 
-    // If not logged in locally, try syncing auth from the Chrome extension
-    if (!isLoggedIn()) {
-        const extAuth = await getAuthFromExtension();
-        if (extAuth) {
-            setAuth(extAuth.authToken, extAuth.authUser);
-        }
-    }
+    // Extension no longer shares the auth token for security.
+    // Dashboard relies on its own OAuth login flow.
 
     if (isLoggedIn()) {
         // Verify token is still valid
