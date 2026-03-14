@@ -342,15 +342,31 @@ async function handleExternalMessage(message, sender) {
     switch (message.type) {
         case 'GET_AUTH_STATE': {
             const state = await getAuthState();
+            const authenticated = !!(state.authToken && state.authUser);
             return {
-                authToken: state.authToken || '',
-                authUser: state.authUser || null,
+                authenticated,
+                authUser: authenticated
+                    ? { name: state.authUser.name, email: state.authUser.email }
+                    : null,
             };
         }
         case 'DASHBOARD_LOGIN': {
             // Dashboard completed OAuth and wants to sync token to extension
             if (!message.token || !message.user) return { error: 'Missing token or user' };
-            await setAuthState(message.token, message.user);
+            // Validate token with the server before accepting
+            try {
+                const config = await getConfig();
+                const serverUrl = config.serverUrl.replace(/\/$/, '');
+                const verifyResp = await fetch(`${serverUrl}/api/v2/auth/me`, {
+                    headers: { 'Authorization': `Bearer ${message.token}` },
+                });
+                if (!verifyResp.ok) return { error: 'Invalid or expired token' };
+                const data = await verifyResp.json();
+                const verifiedUser = data.user || data;
+                await setAuthState(message.token, verifiedUser);
+            } catch {
+                return { error: 'Token validation failed' };
+            }
             chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
             return { success: true };
         }

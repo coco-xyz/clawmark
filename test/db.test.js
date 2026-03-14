@@ -433,6 +433,25 @@ describe('DB — V2 queries', () => {
         assert.equal(items.length, 1);
     });
 
+    it('getItemsByTag is not vulnerable to LIKE wildcards', () => {
+        dbApi.createItem({
+            doc: 'd', created_by: 'A',
+            tags: ['bug', 'ui'],
+        });
+        dbApi.createItem({
+            doc: 'd', created_by: 'B',
+            tags: ['feature'],
+        });
+
+        // '%' should not match all items (was vulnerable with LIKE pattern)
+        const wildcard = dbApi.getItemsByTag({ tag: '%' });
+        assert.equal(wildcard.length, 0);
+
+        // Partial match should not work — must be exact
+        const partial = dbApi.getItemsByTag({ tag: 'bu' });
+        assert.equal(partial.length, 0);
+    });
+
     it('getDistinctUrls returns unique source_urls with counts', () => {
         dbApi.createItem({ doc: 'd', created_by: 'A', source_url: 'https://a.com' });
         dbApi.createItem({ doc: 'd', created_by: 'B', source_url: 'https://a.com' });

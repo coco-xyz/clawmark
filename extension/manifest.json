@@ -19,7 +19,7 @@
         "matches": [
             "*://*.coco.site/*",
             "*://*.coco.xyz/*",
-            "*://localhost/*"
+            "*://localhost:3462/*"
         ]
     },
     "background": {
