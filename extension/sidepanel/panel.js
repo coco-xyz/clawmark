@@ -12,6 +12,9 @@ let items = [];
 let currentFilter = 'all';
 let currentUrl = '';
 let currentItemId = null;
+let currentTabId = null;
+let capturedErrors = [];
+let dismissedErrorIds = new Set();
 
 // ------------------------------------------------------------------ debounce + cache
 
@@ -61,29 +64,35 @@ async function init() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
         currentUrl = tab.url;
+        currentTabId = tab.id;
         pageInfo.textContent = tab.title || tab.url;
     }
 
     loadItems();
+    loadErrors();
 
     // Listen for tab changes (debounced to avoid rapid-fire API calls)
     chrome.tabs.onActivated.addListener(async (info) => {
         const tab = await chrome.tabs.get(info.tabId);
+        currentTabId = info.tabId;
         if (tab.url !== currentUrl) {
             currentUrl = tab.url;
             pageInfo.textContent = tab.title || tab.url;
             showListView();
             debouncedLoadItems();
         }
+        loadErrors();
     });
 
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         if (changeInfo.url && tab.active) {
             currentUrl = changeInfo.url;
+            currentTabId = tabId;
             pageInfo.textContent = tab.title || changeInfo.url;
             showListView();
             debouncedLoadItems();
         }
+        if (tab.active) loadErrors();
     });
 }
 
@@ -171,9 +180,18 @@ function updateCounts() {
     document.getElementById('count-all').textContent = items.length;
     document.getElementById('count-comment').textContent = items.filter(i => i.type === 'comment').length;
     document.getElementById('count-issue').textContent = items.filter(i => i.type === 'issue').length;
+    const errCount = capturedErrors.length;
+    const errEl = document.getElementById('count-errors');
+    errEl.textContent = errCount;
+    errEl.classList.toggle('has-errors', errCount > 0);
 }
 
 function renderItems() {
+    if (currentFilter === 'errors') {
+        renderErrors();
+        return;
+    }
+
     const filtered = currentFilter === 'all'
         ? items
         : items.filter(i => i.type === currentFilter);
@@ -270,6 +288,9 @@ document.querySelectorAll('.tab').forEach(tab => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         currentFilter = tab.dataset.filter;
+        if (currentFilter === 'errors' && currentTabId) {
+            chrome.runtime.sendMessage({ type: 'MARK_ERRORS_READ', tabId: currentTabId }).catch(() => {});
+        }
         renderItems();
     });
 });
@@ -279,6 +300,7 @@ refreshBtn.addEventListener('click', () => {
     invalidateCache(`items:${currentUrl}`);
     if (currentItemId) loadThread(currentItemId);
     else loadItems(true);
+    loadErrors();
 });
 replySubmit.addEventListener('click', sendReply);
 replyInput.addEventListener('keydown', (e) => {
@@ -368,6 +390,166 @@ document.addEventListener('click', async (e) => {
     }
 });
 
+// ------------------------------------------------------------------ errors (#56)
+
+const ERROR_TYPE_LABELS = {
+    'js-error': 'JS Error',
+    'unhandled-rejection': 'Promise',
+    'console-error': 'Console',
+    'network-error': 'Network',
+    'resource-error': 'Resource',
+    'long-task': 'Slow Task',
+};
+
+async function loadErrors() {
+    if (!currentTabId) return;
+    try {
+        const errors = await chrome.runtime.sendMessage({
+            type: 'GET_ERRORS',
+            tabId: currentTabId,
+        });
+        const allErrors = Array.isArray(errors) ? errors : [];
+        // Load persisted dismissed IDs for this tab
+        const storeKey = `dismissed_errors_${currentTabId}`;
+        const stored = await chrome.storage.local.get({ [storeKey]: [] });
+        dismissedErrorIds = new Set(stored[storeKey]);
+        capturedErrors = allErrors.filter(e => !dismissedErrorIds.has(e.id));
+    } catch {
+        capturedErrors = [];
+    }
+    updateCounts();
+    if (currentFilter === 'errors') renderErrors();
+}
+
+function renderErrors() {
+    if (capturedErrors.length === 0) {
+        itemsContainer.innerHTML = '<div class="empty">No errors captured on this page.</div>';
+        return;
+    }
+
+    // Show newest first
+    const sorted = [...capturedErrors].reverse();
+
+    const toolbar = `<div class="errors-toolbar">
+        <button id="clear-all-errors">Clear All</button>
+    </div>`;
+
+    const cards = sorted.map(err => {
+        const typeLabel = ERROR_TYPE_LABELS[err.type] || err.type;
+        const isWarning = err.severity === 'warning';
+        const time = formatTime(new Date(err.timestamp).toISOString());
+        const message = escapeHtml(err.message || '(no message)');
+        const stack = err.stack ? escapeHtml(err.stack.split('\n').slice(0, 2).join('\n')) : '';
+
+        return `
+            <div class="error-card" data-error-id="${escapeHtml(err.id)}">
+                <div class="error-header">
+                    <span class="error-severity ${isWarning ? 'warning' : 'error'}"></span>
+                    <span class="error-type-badge ${isWarning ? 'warning' : ''}">${typeLabel}</span>
+                    <span style="flex:1"></span>
+                    <span style="font-size:11px;color:#666">${time}</span>
+                </div>
+                <div class="error-message">${message}</div>
+                ${stack ? `<div class="error-stack">${stack}</div>` : ''}
+                <div class="error-meta">
+                    <span></span>
+                    <div class="error-actions">
+                        <button class="error-action-btn file-issue" data-error-id="${escapeHtml(err.id)}">File Issue</button>
+                        <button class="error-action-btn dismiss" data-error-id="${escapeHtml(err.id)}">Dismiss</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    itemsContainer.innerHTML = toolbar + cards;
+
+    // Clear all button
+    document.getElementById('clear-all-errors')?.addEventListener('click', async () => {
+        await chrome.runtime.sendMessage({ type: 'CLEAR_ERRORS', tabId: currentTabId });
+        capturedErrors = [];
+        dismissedErrorIds.clear();
+        await chrome.storage.local.remove(`dismissed_errors_${currentTabId}`);
+        updateCounts();
+        renderErrors();
+    });
+
+    // File Issue buttons
+    itemsContainer.querySelectorAll('.error-action-btn.file-issue').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            fileIssueFromError(btn.dataset.errorId);
+        });
+    });
+
+    // Dismiss buttons
+    itemsContainer.querySelectorAll('.error-action-btn.dismiss').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dismissError(btn.dataset.errorId);
+        });
+    });
+}
+
+async function fileIssueFromError(errorId) {
+    const err = capturedErrors.find(e => e.id === errorId);
+    if (!err) return;
+
+    const typeLabel = ERROR_TYPE_LABELS[err.type] || err.type;
+    const title = `[${typeLabel}] ${(err.message || '').slice(0, 120)}`;
+    const content = [
+        `**Error Type:** ${typeLabel}`,
+        `**Severity:** ${err.severity}`,
+        `**URL:** ${err.url}`,
+        `**Time:** ${new Date(err.timestamp).toISOString()}`,
+        err.stack ? `\n**Stack:**\n\`\`\`\n${err.stack}\n\`\`\`` : '',
+    ].filter(Boolean).join('\n');
+
+    const btn = itemsContainer.querySelector(`.file-issue[data-error-id="${errorId}"]`);
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Filing...';
+    }
+
+    try {
+        const result = await chrome.runtime.sendMessage({
+            type: 'CREATE_ITEM',
+            data: {
+                type: 'issue',
+                title,
+                content,
+                source_url: err.url,
+                source_title: document.title || err.url,
+                priority: err.severity === 'error' ? 'high' : 'normal',
+                tags: ['auto-detected', err.type],
+            },
+        });
+
+        if (result.error) throw new Error(result.error);
+
+        if (btn) btn.textContent = 'Filed!';
+
+        // Refresh items list since we created a new item
+        invalidateCache(`items:${currentUrl}`);
+        loadItems(true);
+    } catch (e) {
+        if (btn) {
+            btn.textContent = 'Failed';
+            btn.disabled = false;
+        }
+    }
+}
+
+async function dismissError(errorId) {
+    dismissedErrorIds.add(errorId);
+    capturedErrors = capturedErrors.filter(e => e.id !== errorId);
+    // Persist dismissed IDs so they survive panel reopens
+    const storeKey = `dismissed_errors_${currentTabId}`;
+    await chrome.storage.local.set({ [storeKey]: [...dismissedErrorIds] });
+    updateCounts();
+    renderErrors();
+}
+
 // ------------------------------------------------------------------ cross-script events
 
 // Auto-refresh when content script creates a new item or auth state changes
@@ -375,6 +557,9 @@ chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'ITEM_CREATED' || message.type === 'AUTH_STATE_CHANGED') {
         invalidateCache(`items:${currentUrl}`);
         loadItems(true);
+    }
+    if (message.type === 'ERRORS_UPDATED') {
+        loadErrors();
     }
 });
 
