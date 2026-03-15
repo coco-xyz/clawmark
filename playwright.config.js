@@ -47,6 +47,17 @@ module.exports = defineConfig({
             },
         },
         {
+            // Extension E2E tests — loads real Chrome extension via --load-extension.
+            // Requires headed Chromium (extensions don't work in headless).
+            // Server must be running (uses webServer config above).
+            name: 'extension',
+            testMatch: /extension\/.*\.spec\.js/,
+            use: {
+                browserName: 'chromium',
+                headless: false,
+            },
+        },
+        {
             // Smoke tests run against an already-deployed environment.
             // Does NOT start webServer — set BASE_URL env var instead.
             name: 'smoke',

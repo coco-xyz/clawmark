@@ -46,14 +46,32 @@ server/             Node.js API server
 
 ## Release Checklist (MANDATORY)
 
-Every release MUST follow these steps. No exceptions.
+Every release MUST use the automated release script. No manual releases.
 
-1. **Version bump**: Update `extension/manifest.json` version
-2. **Build zip**: `zip -r clawmark-v{VERSION}.zip extension/`
-3. **Publish zip**: Copy to `~/zylos/http/public/clawmark-v{VERSION}.zip` + update `clawmark-latest.zip`
-4. **Tag**: `git tag -a v{VERSION} -m "v{VERSION}: {summary}"` → `git push gitlab v{VERSION}`
-5. **GitLab Release**: Create release via API with release notes + attach zip as asset link
-6. **Notify**: Post to Lark testing group with download link + install instructions
+```bash
+./scripts/release.sh <version>        # interactive
+./scripts/release.sh <version> --yes  # non-interactive (CI)
+./scripts/release.sh <version> --dry-run  # preview only
+```
+
+The script automates all 9 steps:
+1. **Validate** version (semver, must be > current)
+2. **Version bump** `package.json` + `manifest.json` + `CHANGELOG.md`
+3. **Commit + tag** on current branch
+4. **Build** test + production zips (`scripts/build.sh test` + `production`)
+5. **Publish** zips to `~/zylos/http/public/` (versioned + latest)
+6. **Push** to GitLab (branch + develop→main merge + tag)
+7. **GitLab Release** via API with release notes + asset download links
+8. **Restart** PM2 services + verify version
+9. **Self-verify** all download links return 200 + notify Lark
+
+**Self-verification checks:**
+- All download URLs return HTTP 200
+- GitLab Release exists
+- Manifest version inside zip matches target version
+- PM2 services running correct version
+
+If any verification fails, the script warns but does not roll back.
 
 ### RC (Release Candidate) Flow
 

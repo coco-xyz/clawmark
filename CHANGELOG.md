@@ -4,6 +4,30 @@
 
 ## [0.8.0] — 2026-03-06
 
+## [0.8.2] — 2026-03-16
+
+### ✨ 新增
+
+- full release pipeline with self-verification
+
+### 🐛 修复
+
+- #51 upload screenshots to GitLab via Uploads API
+
+### 📋 文档
+
+- #43 QA passive monitoring design doc
+
+### 🔧 其他
+
+- chore: bump package.json to 0.8.1 to match manifest.json
+- chore: bump package.json to 0.8.1 to match manifest.json
+- test(e2e): #50 extension integration tests — Playwright + --load-extension
+
+
+---
+
+
 ### 重大变更（Breaking Changes）
 
 - **所有 API 端点强制 JWT 认证** — V1 和 V2 接口均需 JWT token，不再支持匿名访问
