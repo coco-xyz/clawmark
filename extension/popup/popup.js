@@ -222,9 +222,13 @@ const TARGET_AUTH_TYPES = {
  */
 function extractGitLabProject(url) {
     if (!url) return null;
-    const m = url.match(/(?:gitlab\.com|git\.coco\.xyz)\/([^/?#]+(?:\/[^/?#]+)+?)(?:\/-\/|\/(?:issues|merge_requests|tree|blob|raw|commits|pipelines)|\?|#|$)/);
+    const m = url.match(/(https?:\/\/[^/]+)\/([^/?#]+(?:\/[^/?#]+)+?)(?:\/-\/|\/(?:issues|merge_requests|tree|blob|raw|commits|pipelines)|\?|#|$)/);
     if (!m) return null;
-    return { project_id: m[1].replace(/\.git$/, '') };
+    const base_url = m[1];
+    const project_id = m[2].replace(/\.git$/, '');
+    // Only include base_url for self-hosted instances (not gitlab.com)
+    const isDefault = base_url === 'https://gitlab.com';
+    return { project_id, base_url: isDefault ? undefined : base_url };
 }
 
 function extractGitHubRepo(url) {
@@ -364,6 +368,11 @@ document.getElementById('qa-save').addEventListener('click', async () => {
             return;
         }
         target_config = { project_id: projectId, labels: ['clawmark'], assignees: [] };
+        // Include base_url for self-hosted GitLab instances (#41)
+        const gl = extractGitLabProject(currentUrl);
+        if (gl && gl.base_url) {
+            target_config.base_url = gl.base_url;
+        }
     }
 
     qaStatus.textContent = 'Saving...';

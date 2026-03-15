@@ -37,6 +37,7 @@ try {
 }
 
 const PORT = process.env.CLAWMARK_PORT || config.port || 3458;
+const PUBLIC_URL = (process.env.CLAWMARK_PUBLIC_URL || config.publicUrl || '').replace(/\/+$/, '');
 
 const DATA_DIR = path.resolve(
     process.env.CLAWMARK_DATA_DIR || config.dataDir || path.join(__dirname, '..', 'data')
@@ -315,6 +316,15 @@ async function sendWebhook(event, payload) {
                     t.target_config = { ...t.target_config, ...creds };
                 } else {
                     console.warn(`[routing] Auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
+                }
+            }
+        }
+
+        // Inject ClawMark server URL for adapters that need to resolve relative image paths (#45)
+        if (PUBLIC_URL) {
+            for (const t of filteredTargets) {
+                if (!t.target_config.server_url) {
+                    t.target_config = { ...t.target_config, server_url: PUBLIC_URL };
                 }
             }
         }
