@@ -335,14 +335,13 @@ function renderDispatchDetails(dispatches, itemId) {
             const color = STATUS_COLORS[d.status] || '#888';
             const statusLabel = d.status === 'exhausted' ? 'failed' : d.status;
             const errorTitle = d.last_error ? ` — ${d.last_error}` : '';
-            const linkHtml = d.external_url
-                ? `<a href="${escapeHtml(d.external_url)}" target="_blank" class="dispatch-link">\u2197</a>`
-                : '';
+            const typeHtml = d.external_url
+                ? `<a href="${escapeHtml(d.external_url)}" target="_blank" class="dispatch-link dispatch-type-link">${escapeHtml(d.target_type)} \u2197</a>`
+                : `<span class="dispatch-detail-type">${escapeHtml(d.target_type)}</span>`;
             return `<div class="dispatch-detail-row">
                 <span>${icon}</span>
-                <span class="dispatch-detail-type">${escapeHtml(d.target_type)}</span>
+                ${typeHtml}
                 <span class="dispatch-detail-status" style="color:${color}" title="${escapeHtml(errorTitle)}">${statusLabel}</span>
-                ${linkHtml}
             </div>`;
         }).join('')}
         ${hasFailed && itemId ? `<button class="dispatch-retry-btn" data-item-id="${escapeHtml(String(itemId))}">重试失败的投递</button>` : ''}
