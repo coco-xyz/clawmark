@@ -2,6 +2,7 @@ stages:
   - check
   - test
   - e2e
+  - e2e-staging
 
 version-check:
   stage: check
@@ -62,3 +63,44 @@ e2e-api:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "develop"'
     - if: '$CI_COMMIT_BRANCH == "main"'
+
+e2e-staging:
+  stage: e2e-staging
+  # Runs on shell executor (jessie-shell-runner) — same host as staging server
+  script:
+    # 1. Deploy: pull latest develop and restart staging server
+    - cd ~/zylos/workspace/clawmark-staging
+    - git fetch origin
+    - git checkout develop
+    - git pull origin develop
+    - npm install --omit=dev
+    - pm2 restart clawmark-staging
+    # 2. Wait for staging server to be ready (max 30s)
+    - |
+      echo "Waiting for staging server..."
+      for i in $(seq 1 15); do
+        if curl -sf https://jessie.coco.site/health > /dev/null; then
+          echo "Staging ready (attempt ${i})"
+          break
+        fi
+        if [ "$i" -eq 15 ]; then
+          echo "ERROR: Staging server not ready after 30s"
+          exit 1
+        fi
+        echo "Attempt $i failed, retrying in 2s..."
+        sleep 2
+      done
+    # 3. Run full E2E suite against staging
+    - cd $CI_PROJECT_DIR
+    - npm install --include=dev
+    - STAGING_BASE_URL=https://jessie.coco.site npx playwright test --config playwright.staging.config.js
+  artifacts:
+    when: always
+    paths:
+      - e2e-staging-results.json
+      - test-results/
+    expire_in: 14 days
+  rules:
+    # Only trigger on develop→main MRs (merge gate)
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+  allow_failure: false

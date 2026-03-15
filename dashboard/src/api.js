@@ -273,6 +273,22 @@ export async function syncLogoutToExtension() {
 
 // ---- Version check (GitHub API, no auth needed)
 
+// ---- Batch Issue Filing (#44)
+
+export async function previewIssues(itemIds) {
+    return apiFetch('/api/v2/items/preview-issues', {
+        method: 'POST',
+        body: { item_ids: itemIds },
+    });
+}
+
+export async function batchFileIssues(itemIds, target) {
+    return apiFetch('/api/v2/items/batch-file', {
+        method: 'POST',
+        body: { item_ids: itemIds, target },
+    });
+}
+
 export async function checkLatestVersion() {
     try {
         const controller = new AbortController();

@@ -1195,6 +1195,31 @@ function initDb(dataDir) {
         return dispatchStmts.getById.get(id) || null;
     }
 
+    /**
+     * Get recent unique dispatch targets for a user (#48).
+     * Queries dispatch_log joined with items to find distinct targets
+     * the user has successfully dispatched to, ordered by most recent.
+     *
+     * @param {string} userName  The user's name/email
+     * @param {string} appId    The app_id scope
+     * @param {number} [limit=10] Max results
+     * @returns {Array<{ target_type, target_config, method, auth_id, last_used, use_count }>}
+     */
+    const recentTargetsStmt = db.prepare(`
+        SELECT dl.target_type, dl.target_config, dl.method, dl.auth_id,
+               MAX(dl.created_at) as last_used, COUNT(*) as use_count
+        FROM dispatch_log dl
+        JOIN items i ON dl.item_id = i.id
+        WHERE i.created_by = ? AND dl.app_id = ? AND dl.status = 'sent'
+        GROUP BY dl.target_type, dl.target_config
+        ORDER BY last_used DESC
+        LIMIT ?
+    `);
+
+    function getRecentTargets(userName, appId, limit = 10) {
+        return recentTargetsStmt.all(userName, appId, limit);
+    }
+
     // ------------------------------------------------- adapter mapping methods
 
     function setAdapterMapping({ item_id, adapter, channel = '', external_id, external_url }) {
@@ -1495,6 +1520,7 @@ function initDb(dataDir) {
         getDispatchLog,
         getPendingDispatches,
         getDispatchEntry,
+        getRecentTargets,
         // User routing rules
         createUserRule,
         getUserRules,

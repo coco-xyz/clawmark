@@ -684,6 +684,7 @@
     }
 
     let resolvedTargets = [];
+    let cachedRecentTargets = [];
 
     async function loadDispatchPreview() {
         const previewEl = inputOverlay.querySelector('.cm-dispatch-preview');
@@ -701,13 +702,30 @@
             });
 
             resolvedTargets = result.targets || [];
+            const recentTargets = result.recent_targets || [];
+            cachedRecentTargets = recentTargets;
 
             // Check if user has no custom rules (only system_default)
             const hasCustomRules = resolvedTargets.some(t => t.method && t.method !== 'system_default');
 
             let html = '';
 
-            if (!hasCustomRules) {
+            if (!hasCustomRules && recentTargets.length > 0) {
+                // Show recent targets as suggestions (#48)
+                html += `<div class="cm-dispatch-guide">
+                    <span class="cm-guide-icon">\u{1F4CB}</span>
+                    <span>No rules for this URL. Recent targets:</span>
+                </div>`;
+                html += recentTargets.map((t, i) => {
+                    const label = formatTargetLabel(t);
+                    return `<label class="cm-dispatch-target cm-dispatch-recent">
+                        <input type="checkbox" data-recent-idx="${i}" />
+                        <span class="cm-target-icon">${getTargetIcon(t.target_type)}</span>
+                        <span class="cm-target-label">${escHtml(label)}</span>
+                        <span class="cm-target-method">recent \u00d7${t.use_count}</span>
+                    </label>`;
+                }).join('');
+            } else if (!hasCustomRules) {
                 html += `<div class="cm-dispatch-guide">
                     <span class="cm-guide-icon">\u{1F4CB}</span>
                     <span>No delivery rules configured. Annotations will be saved but not dispatched.
@@ -897,18 +915,27 @@
             } catch {}
         }
 
-        // Collect selected dispatch targets (#115)
+        // Collect selected dispatch targets (#115) + recent targets (#48)
         let selected_targets = undefined;
         const checkboxes = inputOverlay.querySelectorAll('.cm-dispatch-target input[type="checkbox"]');
         if (checkboxes.length > 0) {
             const selected = [];
+            const selectedRecent = [];
             checkboxes.forEach(cb => {
                 if (cb.checked) {
                     const idx = parseInt(cb.dataset.idx, 10);
-                    if (resolvedTargets[idx]) {
+                    const recentIdx = parseInt(cb.dataset.recentIdx, 10);
+                    if (!isNaN(idx) && resolvedTargets[idx]) {
                         selected.push({
                             target_type: resolvedTargets[idx].target_type,
                             method: resolvedTargets[idx].method,
+                        });
+                    } else if (!isNaN(recentIdx) && cachedRecentTargets[recentIdx]) {
+                        selectedRecent.push({
+                            target_type: cachedRecentTargets[recentIdx].target_type,
+                            target_config: cachedRecentTargets[recentIdx].target_config,
+                            auth_id: cachedRecentTargets[recentIdx].auth_id,
+                            method: 'recent_target',
                         });
                     }
                 }
@@ -916,6 +943,10 @@
             // Only send selection if user deselected something (otherwise let server use all)
             if (selected.length < resolvedTargets.length && selected.length > 0) {
                 selected_targets = selected;
+            }
+            // Append any checked recent targets (#48)
+            if (selectedRecent.length > 0) {
+                selected_targets = [...(selected_targets || []), ...selectedRecent];
             }
         }
 

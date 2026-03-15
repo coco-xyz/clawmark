@@ -37,6 +37,7 @@ try {
 }
 
 const PORT = process.env.CLAWMARK_PORT || config.port || 3458;
+const PUBLIC_URL = (process.env.CLAWMARK_PUBLIC_URL || config.publicUrl || '').replace(/\/+$/, '');
 
 const DATA_DIR = path.resolve(
     process.env.CLAWMARK_DATA_DIR || config.dataDir || path.join(__dirname, '..', 'data')
@@ -119,6 +120,7 @@ const { JiraAdapter } = require('./adapters/jira');
 const { HxaConnectAdapter } = require('./adapters/hxa-connect');
 const { GitLabIssueAdapter } = require('./adapters/gitlab-issue');
 const { resolveTarget, resolveTargets } = require('./routing');
+const { autoSeverity } = require('./severity');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
 
@@ -293,12 +295,32 @@ async function sendWebhook(event, payload) {
         // If user selected specific targets in the UI, filter to only those
         let filteredTargets = targets;
         if (payload._selected_targets && Array.isArray(payload._selected_targets)) {
-            const selected = new Set(payload._selected_targets.map(s =>
-                `${s.target_type}:${s.method}`
-            ));
-            filteredTargets = targets.filter(t => selected.has(`${t.target_type}:${t.method}`));
-            // Fall back to all targets if filter results in empty (safety net)
-            if (filteredTargets.length === 0) filteredTargets = targets;
+            // Separate recent targets (#48) from regular selections
+            const recentSelections = payload._selected_targets.filter(s => s.method === 'recent_target');
+            const regularSelections = payload._selected_targets.filter(s => s.method !== 'recent_target');
+
+            if (regularSelections.length > 0) {
+                const selected = new Set(regularSelections.map(s =>
+                    `${s.target_type}:${s.method}`
+                ));
+                filteredTargets = targets.filter(t => selected.has(`${t.target_type}:${t.method}`));
+                // Fall back to all targets if filter results in empty (safety net)
+                if (filteredTargets.length === 0) filteredTargets = targets;
+            }
+
+            // Append recent targets as additional dispatch destinations (#48)
+            for (const rt of recentSelections) {
+                if (rt.target_type && rt.target_config) {
+                    const config = typeof rt.target_config === 'string' ? JSON.parse(rt.target_config) : rt.target_config;
+                    filteredTargets.push({
+                        target_type: rt.target_type,
+                        target_config: config,
+                        matched_rule: rt.auth_id ? { auth_id: rt.auth_id } : null,
+                        method: 'recent_target',
+                    });
+                }
+            }
+
             delete payload._selected_targets;
         }
 
@@ -314,6 +336,15 @@ async function sendWebhook(event, payload) {
                     t.target_config = { ...t.target_config, ...creds };
                 } else {
                     console.warn(`[routing] Auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
+                }
+            }
+        }
+
+        // Inject ClawMark server URL for adapters that need to resolve relative image paths (#45)
+        if (PUBLIC_URL) {
+            for (const t of filteredTargets) {
+                if (!t.target_config.server_url) {
+                    t.target_config = { ...t.target_config, server_url: PUBLIC_URL };
                 }
             }
         }
@@ -1078,6 +1109,142 @@ app.post('/api/v2/items/:id/reopen', apiWriteLimiter, v2Auth, (req, res) => {
     res.json({ success: true });
 });
 
+// -- POST /api/v2/items/batch-file — batch file items as GitLab issues (#44)
+app.post('/api/v2/items/batch-file', apiWriteLimiter, v2Auth, async (req, res) => {
+    const { item_ids, target } = req.body;
+
+    if (!Array.isArray(item_ids) || item_ids.length === 0) {
+        return res.status(400).json({ error: 'item_ids must be a non-empty array' });
+    }
+    if (item_ids.length > 50) {
+        return res.status(400).json({ error: 'Maximum 50 items per batch' });
+    }
+    if (!target || !target.adapter || !target.project_id) {
+        return res.status(400).json({ error: 'target must include adapter and project_id' });
+    }
+
+    const resolvedAppId = req.v2Auth?.app_id;
+    if (!resolvedAppId) {
+        return res.status(400).json({ error: 'Could not resolve app_id' });
+    }
+
+    // Resolve auth credentials if auth_id is provided
+    let targetConfig = { ...target };
+    if (target.auth_id) {
+        const auth = itemsDb.getUserAuth(target.auth_id);
+        if (!auth) {
+            return res.status(400).json({ error: `Auth credential ${target.auth_id} not found` });
+        }
+        let creds;
+        try { creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials; } catch { creds = {}; }
+        targetConfig = { ...targetConfig, ...creds };
+    }
+
+    const results = [];
+    for (const itemId of item_ids) {
+        const item = itemsDb.getItem(itemId);
+        if (!item) {
+            results.push({ item_id: itemId, status: 'error', error: 'Item not found' });
+            continue;
+        }
+        if (item.app_id !== resolvedAppId) {
+            results.push({ item_id: itemId, status: 'error', error: 'Access denied' });
+            continue;
+        }
+
+        // Auto-severity labeling
+        const { severity } = autoSeverity(item);
+        const severityLabels = target.auto_severity !== false
+            ? [severity]
+            : [];
+
+        // Build adapter config with severity labels
+        const adapterConfig = {
+            ...targetConfig,
+            labels: [...(targetConfig.labels || ['clawmark']), ...severityLabels],
+        };
+
+        try {
+            const adapterResult = await registry.dispatchToTarget(
+                'item.created', item, target.adapter, adapterConfig, {}
+            );
+            results.push({
+                item_id: itemId,
+                status: 'filed',
+                severity,
+                url: adapterResult?.url || null,
+                issue_iid: adapterResult?.issue_iid || null,
+            });
+        } catch (err) {
+            results.push({
+                item_id: itemId,
+                status: 'error',
+                severity,
+                error: err.message,
+            });
+        }
+    }
+
+    const filed = results.filter(r => r.status === 'filed').length;
+    const failed = results.filter(r => r.status === 'error').length;
+
+    res.json({
+        success: failed === 0,
+        summary: { total: item_ids.length, filed, failed },
+        results,
+    });
+});
+
+// -- GET /api/v2/items/:id/severity — preview auto-severity for an item (#44)
+app.get('/api/v2/items/:id/severity', apiReadLimiter, v2Auth, (req, res) => {
+    const item = itemsDb.getItem(req.params.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (req.v2Auth?.app_id && item.app_id !== req.v2Auth.app_id) {
+        return res.status(403).json({ error: 'Access denied' });
+    }
+    res.json(autoSeverity(item));
+});
+
+// -- POST /api/v2/items/preview-issues — preview draft issues before filing (#44)
+app.post('/api/v2/items/preview-issues', apiReadLimiter, v2Auth, (req, res) => {
+    const { item_ids } = req.body;
+    if (!Array.isArray(item_ids) || item_ids.length === 0) {
+        return res.status(400).json({ error: 'item_ids must be a non-empty array' });
+    }
+
+    const resolvedAppId = req.v2Auth?.app_id;
+    if (!resolvedAppId) {
+        return res.status(400).json({ error: 'Could not resolve app_id' });
+    }
+
+    const drafts = [];
+    for (const itemId of item_ids) {
+        const item = itemsDb.getItem(itemId);
+        if (!item || item.app_id !== resolvedAppId) continue;
+
+        const { severity, label: severityLabel } = autoSeverity(item);
+        const tags = typeof item.tags === 'string' ? JSON.parse(item.tags || '[]') : (item.tags || []);
+        const screenshots = typeof item.screenshots === 'string' ? JSON.parse(item.screenshots || '[]') : (item.screenshots || []);
+
+        drafts.push({
+            item_id: item.id,
+            title: item.title || item.quote?.slice(0, 80) || 'Untitled',
+            classification: item.classification || 'general',
+            severity,
+            severity_label: severityLabel,
+            source_url: item.source_url,
+            source_title: item.source_title,
+            quote: item.quote,
+            tags,
+            screenshots,
+            created_at: item.created_at,
+            has_dispatches: (itemsDb.getDispatchLog(item.id) || []).length > 0,
+        });
+    }
+
+    res.json({ drafts });
+});
+
 // -- GET /api/v2/urls — list all annotated URLs for an app
 app.get('/api/v2/urls', apiReadLimiter, v2Auth, (req, res) => {
     const app_id = req.v2Auth?.app_id;
@@ -1280,6 +1447,25 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
         declaration,
     });
 
+    // Include recent targets for recommendation (#48)
+    const appId = req.v2Auth?.app_id;
+    let recentTargets = [];
+    if (user && appId) {
+        try {
+            recentTargets = itemsDb.getRecentTargets(user, appId, 5).map(r => {
+                let config;
+                try { config = JSON.parse(r.target_config); } catch { config = {}; }
+                return {
+                    target_type: r.target_type,
+                    target_config: redactConfig(config),
+                    auth_id: r.auth_id,
+                    last_used: r.last_used,
+                    use_count: r.use_count,
+                };
+            });
+        } catch { /* non-critical */ }
+    }
+
     res.json({
         targets: targets.map(t => ({
             target_type: t.target_type,
@@ -1289,11 +1475,35 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
             method: t.method,
             matched_rule: t.matched_rule ? { id: t.matched_rule.id, pattern: t.matched_rule.pattern, auth_id: t.matched_rule.auth_id || null } : null,
         })),
+        recent_targets: recentTargets,
         // Legacy single-target fields for backward compatibility (e.g., checkTargetInjection)
         target_type: targets[0]?.target_type,
         target_config: targets[0]?.target_config,
         method: targets[0]?.method,
         js_injection: declaration?.js_injection ?? true,
+    });
+});
+
+// -- GET /api/v2/routing/recent-targets — user's recent dispatch targets (#48)
+app.get('/api/v2/routing/recent-targets', apiReadLimiter, v2Auth, (req, res) => {
+    const user = req.v2Auth?.user;
+    const appId = req.v2Auth?.app_id;
+    if (!user) return res.status(400).json({ error: 'Could not determine user' });
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+    const rows = itemsDb.getRecentTargets(user, appId, limit);
+    res.json({
+        recent_targets: rows.map(r => {
+            let config;
+            try { config = JSON.parse(r.target_config); } catch { config = {}; }
+            return {
+                target_type: r.target_type,
+                target_config: redactConfig(config),
+                method: r.method,
+                auth_id: r.auth_id,
+                last_used: r.last_used,
+                use_count: r.use_count,
+            };
+        }),
     });
 });
 
