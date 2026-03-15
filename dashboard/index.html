@@ -219,6 +219,39 @@
             <section class="tab-panel" id="tab-settings">
                 <h1>Settings</h1>
 
+                <!-- Passive Monitoring (#57) -->
+                <div class="card" id="passive-monitor-card">
+                    <h3>Passive Error Monitoring</h3>
+                    <p class="help-text">Automatically capture JavaScript errors, network failures, and performance issues on web pages. Settings sync to the Chrome extension.</p>
+                    <div id="passive-monitor-no-ext" style="display:none;">
+                        <p class="help-text" style="color:var(--warning-color);">Chrome extension not detected. Install and enable the ClawMark extension to configure passive monitoring.</p>
+                    </div>
+                    <div id="passive-monitor-controls">
+                        <div class="form-row">
+                            <label class="form-label toggle-label">
+                                <input type="checkbox" id="opt-passive-enabled">
+                                <span>Enable passive monitoring</span>
+                            </label>
+                        </div>
+                        <div class="form-row">
+                            <label class="form-label toggle-label">
+                                <input type="checkbox" id="opt-passive-error-only" checked>
+                                <span>Errors only (skip warnings)</span>
+                            </label>
+                            <p class="help-text" style="margin-top:2px;">When enabled, only captures errors (console.error, uncaught exceptions, 5xx). When disabled, also captures warnings (4xx responses, resource load failures, long tasks).</p>
+                        </div>
+                        <div class="form-row">
+                            <label class="form-label" for="opt-passive-disabled-sites">Disabled Sites</label>
+                            <p class="help-text">Sites where passive monitoring is disabled. One hostname per line (e.g. <code>example.com</code>).</p>
+                            <textarea class="input" id="opt-passive-disabled-sites" rows="4" placeholder="example.com&#10;localhost&#10;internal.mycompany.com" style="resize:vertical;font-family:monospace;font-size:12px;"></textarea>
+                        </div>
+                        <div style="margin-top:8px;">
+                            <button class="btn btn-primary btn-small" id="btn-save-passive">Save</button>
+                            <span class="help-text" id="passive-save-status" style="margin-left:8px;"></span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Auth Section -->
                 <div class="card">
                     <h3>Auth Credentials</h3>
