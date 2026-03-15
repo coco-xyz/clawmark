@@ -14,6 +14,7 @@ let currentUrl = '';
 let currentItemId = null;
 let currentTabId = null;
 let capturedErrors = [];
+let dismissedErrorIds = new Set();
 
 // ------------------------------------------------------------------ debounce + cache
 
@@ -407,7 +408,12 @@ async function loadErrors() {
             type: 'GET_ERRORS',
             tabId: currentTabId,
         });
-        capturedErrors = Array.isArray(errors) ? errors : [];
+        const allErrors = Array.isArray(errors) ? errors : [];
+        // Load persisted dismissed IDs for this tab
+        const storeKey = `dismissed_errors_${currentTabId}`;
+        const stored = await chrome.storage.local.get({ [storeKey]: [] });
+        dismissedErrorIds = new Set(stored[storeKey]);
+        capturedErrors = allErrors.filter(e => !dismissedErrorIds.has(e.id));
     } catch {
         capturedErrors = [];
     }
@@ -462,6 +468,8 @@ function renderErrors() {
     document.getElementById('clear-all-errors')?.addEventListener('click', async () => {
         await chrome.runtime.sendMessage({ type: 'CLEAR_ERRORS', tabId: currentTabId });
         capturedErrors = [];
+        dismissedErrorIds.clear();
+        await chrome.storage.local.remove(`dismissed_errors_${currentTabId}`);
         updateCounts();
         renderErrors();
     });
@@ -532,12 +540,14 @@ async function fileIssueFromError(errorId) {
     }
 }
 
-function dismissError(errorId) {
+async function dismissError(errorId) {
+    dismissedErrorIds.add(errorId);
     capturedErrors = capturedErrors.filter(e => e.id !== errorId);
+    // Persist dismissed IDs so they survive panel reopens
+    const storeKey = `dismissed_errors_${currentTabId}`;
+    await chrome.storage.local.set({ [storeKey]: [...dismissedErrorIds] });
     updateCounts();
     renderErrors();
-    // Note: we don't persist the dismissal to storage — it's a UI-only action.
-    // The error will reappear on reload if still captured. Full clear uses "Clear All".
 }
 
 // ------------------------------------------------------------------ cross-script events
