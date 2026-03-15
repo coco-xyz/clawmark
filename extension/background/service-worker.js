@@ -360,6 +360,34 @@ async function handleExternalMessage(message, sender) {
             chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
             return { success: true };
         }
+        case 'GET_PASSIVE_MONITOR_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                passiveMonitorEnabled: false,
+                passiveMonitorErrorOnly: true,
+                passiveMonitorDisabledSites: [],
+            });
+            return {
+                passiveMonitorEnabled: settings.passiveMonitorEnabled,
+                passiveMonitorErrorOnly: settings.passiveMonitorErrorOnly,
+                passiveMonitorDisabledSites: settings.passiveMonitorDisabledSites,
+            };
+        }
+        case 'SET_PASSIVE_MONITOR_SETTINGS': {
+            const updates = {};
+            if (typeof message.passiveMonitorEnabled === 'boolean') {
+                updates.passiveMonitorEnabled = message.passiveMonitorEnabled;
+            }
+            if (typeof message.passiveMonitorErrorOnly === 'boolean') {
+                updates.passiveMonitorErrorOnly = message.passiveMonitorErrorOnly;
+            }
+            if (Array.isArray(message.passiveMonitorDisabledSites)) {
+                updates.passiveMonitorDisabledSites = message.passiveMonitorDisabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
         case 'PING':
             return { pong: true, version: chrome.runtime.getManifest().version };
         default:

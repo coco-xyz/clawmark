@@ -207,7 +207,10 @@ function formatTargetName(type, config) {
     const cfg = typeof config === 'string' ? JSON.parse(config || '{}') : (config || {});
     switch (type) {
         case 'github-issue': return `GitHub: ${cfg.repo || '?'}`;
-        case 'gitlab-issue': return `GitLab: ${cfg.project_id || '?'}`;
+        case 'gitlab-issue': {
+            const host = cfg.base_url ? new URL(cfg.base_url).hostname : 'gitlab.com';
+            return `GitLab: ${host}/${cfg.project_id || '?'}`;
+        }
         case 'lark': return 'Lark Webhook';
         case 'telegram': return `Telegram: ${cfg.chat_id || '?'}`;
         case 'slack': return `Slack: ${cfg.channel || 'webhook'}`;
@@ -318,6 +321,7 @@ function prefillQuickAdd(recentTarget) {
         updateQuickAddFields();
         if (cfg.repo) qaRepo.value = cfg.repo;
         if (cfg.project_id) qaRepo.value = cfg.project_id;
+        if (cfg.base_url) document.getElementById('qa-base-url').value = cfg.base_url;
         try {
             const domain = new URL(currentUrl).hostname;
             qaPattern.value = `*${domain}*`;
@@ -345,6 +349,9 @@ function autoPopulateQuickAdd() {
     } else if (gl) {
         qaTargetType.value = 'gitlab-issue';
         qaRepo.value = gl.project_id;
+        if (gl.base_url) {
+            document.getElementById('qa-base-url').value = gl.base_url;
+        }
         try {
             const domain = new URL(currentUrl).hostname;
             qaPattern.value = `*${domain}/${gl.project_id}*`;
@@ -369,6 +376,7 @@ function updateQuickAddFields() {
     const repoLabel = document.querySelector('#qa-repo-field label');
     if (repoLabel) repoLabel.textContent = type === 'gitlab-issue' ? 'Project (namespace/project or ID)' : 'Repository (owner/repo)';
     document.getElementById('qa-repo-field').style.display = needsProject ? 'block' : 'none';
+    document.getElementById('qa-base-url-field').style.display = type === 'gitlab-issue' ? 'block' : 'none';
     populateAuthDropdown(type);
 }
 
@@ -415,10 +423,10 @@ document.getElementById('qa-save').addEventListener('click', async () => {
             return;
         }
         target_config = { project_id: projectId, labels: ['clawmark'], assignees: [] };
-        // Include base_url for self-hosted GitLab instances (#41)
-        const gl = extractGitLabProject(currentUrl);
-        if (gl && gl.base_url) {
-            target_config.base_url = gl.base_url;
+        // Include base_url for self-hosted GitLab instances (#41, #58)
+        const baseUrl = (document.getElementById('qa-base-url').value || '').trim();
+        if (baseUrl && baseUrl !== 'https://gitlab.com') {
+            target_config.base_url = baseUrl;
         }
     }
 

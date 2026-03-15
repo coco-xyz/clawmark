@@ -17,6 +17,7 @@ import {
     getUserSettings, updateUserSettings,
     syncLoginToExtension, syncLogoutToExtension, getAuthFromExtension,
     previewIssues, batchFileIssues,
+    getPassiveMonitorSettings, setPassiveMonitorSettings,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -99,6 +100,7 @@ function showApp(user) {
 
     loadOverview();
     loadConnection();
+    loadPassiveMonitor();
     loadAuthsList();
     loadRules();
     loadFileIssues();
@@ -866,6 +868,53 @@ document.getElementById('btn-import-rules').addEventListener('change', async (e)
         showToast(`Import failed: ${err.message}`, 'error');
     }
     e.target.value = '';
+});
+
+// ------------------------------------------------------------------ Passive Monitor (#57)
+
+async function loadPassiveMonitor() {
+    const controls = document.getElementById('passive-monitor-controls');
+    const noExt = document.getElementById('passive-monitor-no-ext');
+    const settings = await getPassiveMonitorSettings();
+
+    if (!settings) {
+        controls.style.display = 'none';
+        noExt.style.display = 'block';
+        return;
+    }
+
+    controls.style.display = 'block';
+    noExt.style.display = 'none';
+
+    document.getElementById('opt-passive-enabled').checked = settings.passiveMonitorEnabled;
+    document.getElementById('opt-passive-error-only').checked = settings.passiveMonitorErrorOnly;
+    document.getElementById('opt-passive-disabled-sites').value =
+        (settings.passiveMonitorDisabledSites || []).join('\n');
+}
+
+document.getElementById('btn-save-passive').addEventListener('click', async () => {
+    const statusEl = document.getElementById('passive-save-status');
+    statusEl.textContent = 'Saving...';
+
+    const enabled = document.getElementById('opt-passive-enabled').checked;
+    const errorOnly = document.getElementById('opt-passive-error-only').checked;
+    const sitesRaw = document.getElementById('opt-passive-disabled-sites').value;
+    const sites = sitesRaw.split('\n').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+    const ok = await setPassiveMonitorSettings({
+        passiveMonitorEnabled: enabled,
+        passiveMonitorErrorOnly: errorOnly,
+        passiveMonitorDisabledSites: sites,
+    });
+
+    if (ok) {
+        statusEl.textContent = 'Saved';
+        showToast('Passive monitoring settings saved');
+    } else {
+        statusEl.textContent = 'Failed — extension not available';
+        showToast('Failed to save settings', 'error');
+    }
+    setTimeout(() => { statusEl.textContent = ''; }, 3000);
 });
 
 // ------------------------------------------------------------------ Auth Management

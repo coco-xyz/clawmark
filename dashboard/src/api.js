@@ -271,6 +271,32 @@ export async function syncLogoutToExtension() {
     }
 }
 
+// ---- Passive Monitor Settings (extension bridge, #57)
+
+export async function getPassiveMonitorSettings() {
+    const extId = await detectExtension();
+    if (!extId) return null;
+    try {
+        return await chrome.runtime.sendMessage(extId, { type: 'GET_PASSIVE_MONITOR_SETTINGS' });
+    } catch {
+        return null;
+    }
+}
+
+export async function setPassiveMonitorSettings(settings) {
+    const extId = await detectExtension();
+    if (!extId) return false;
+    try {
+        const resp = await chrome.runtime.sendMessage(extId, {
+            ...settings,
+            type: 'SET_PASSIVE_MONITOR_SETTINGS',
+        });
+        return !!resp?.success;
+    } catch {
+        return false;
+    }
+}
+
 // ---- Version check (GitHub API, no auth needed)
 
 // ---- Batch Issue Filing (#44)
