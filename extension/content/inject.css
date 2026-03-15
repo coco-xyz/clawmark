@@ -210,6 +210,12 @@
     flex-shrink: 0;
 }
 
+#clawmark-input-overlay .cm-dispatch-recent {
+    opacity: 0.85;
+    border-left: 2px solid #5865f2;
+    padding-left: 8px;
+}
+
 #clawmark-input-overlay .cm-dispatch-fallback {
     opacity: 0.6;
     border-top: 1px solid #333;

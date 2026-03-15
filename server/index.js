@@ -295,12 +295,32 @@ async function sendWebhook(event, payload) {
         // If user selected specific targets in the UI, filter to only those
         let filteredTargets = targets;
         if (payload._selected_targets && Array.isArray(payload._selected_targets)) {
-            const selected = new Set(payload._selected_targets.map(s =>
-                `${s.target_type}:${s.method}`
-            ));
-            filteredTargets = targets.filter(t => selected.has(`${t.target_type}:${t.method}`));
-            // Fall back to all targets if filter results in empty (safety net)
-            if (filteredTargets.length === 0) filteredTargets = targets;
+            // Separate recent targets (#48) from regular selections
+            const recentSelections = payload._selected_targets.filter(s => s.method === 'recent_target');
+            const regularSelections = payload._selected_targets.filter(s => s.method !== 'recent_target');
+
+            if (regularSelections.length > 0) {
+                const selected = new Set(regularSelections.map(s =>
+                    `${s.target_type}:${s.method}`
+                ));
+                filteredTargets = targets.filter(t => selected.has(`${t.target_type}:${t.method}`));
+                // Fall back to all targets if filter results in empty (safety net)
+                if (filteredTargets.length === 0) filteredTargets = targets;
+            }
+
+            // Append recent targets as additional dispatch destinations (#48)
+            for (const rt of recentSelections) {
+                if (rt.target_type && rt.target_config) {
+                    const config = typeof rt.target_config === 'string' ? JSON.parse(rt.target_config) : rt.target_config;
+                    filteredTargets.push({
+                        target_type: rt.target_type,
+                        target_config: config,
+                        matched_rule: rt.auth_id ? { auth_id: rt.auth_id } : null,
+                        method: 'recent_target',
+                    });
+                }
+            }
+
             delete payload._selected_targets;
         }
 
@@ -1427,6 +1447,25 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
         declaration,
     });
 
+    // Include recent targets for recommendation (#48)
+    const appId = req.v2Auth?.app_id;
+    let recentTargets = [];
+    if (user && appId) {
+        try {
+            recentTargets = itemsDb.getRecentTargets(user, appId, 5).map(r => {
+                let config;
+                try { config = JSON.parse(r.target_config); } catch { config = {}; }
+                return {
+                    target_type: r.target_type,
+                    target_config: redactConfig(config),
+                    auth_id: r.auth_id,
+                    last_used: r.last_used,
+                    use_count: r.use_count,
+                };
+            });
+        } catch { /* non-critical */ }
+    }
+
     res.json({
         targets: targets.map(t => ({
             target_type: t.target_type,
@@ -1436,11 +1475,35 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
             method: t.method,
             matched_rule: t.matched_rule ? { id: t.matched_rule.id, pattern: t.matched_rule.pattern, auth_id: t.matched_rule.auth_id || null } : null,
         })),
+        recent_targets: recentTargets,
         // Legacy single-target fields for backward compatibility (e.g., checkTargetInjection)
         target_type: targets[0]?.target_type,
         target_config: targets[0]?.target_config,
         method: targets[0]?.method,
         js_injection: declaration?.js_injection ?? true,
+    });
+});
+
+// -- GET /api/v2/routing/recent-targets — user's recent dispatch targets (#48)
+app.get('/api/v2/routing/recent-targets', apiReadLimiter, v2Auth, (req, res) => {
+    const user = req.v2Auth?.user;
+    const appId = req.v2Auth?.app_id;
+    if (!user) return res.status(400).json({ error: 'Could not determine user' });
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+    const rows = itemsDb.getRecentTargets(user, appId, limit);
+    res.json({
+        recent_targets: rows.map(r => {
+            let config;
+            try { config = JSON.parse(r.target_config); } catch { config = {}; }
+            return {
+                target_type: r.target_type,
+                target_config: redactConfig(config),
+                method: r.method,
+                auth_id: r.auth_id,
+                last_used: r.last_used,
+                use_count: r.use_count,
+            };
+        }),
     });
 });
 
