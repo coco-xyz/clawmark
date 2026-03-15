@@ -11,6 +11,7 @@
 'use strict';
 
 importScripts('../config.js');
+importScripts('./error-storage.js');
 
 // ------------------------------------------------------------------ config
 
@@ -444,6 +445,29 @@ async function handleMessage(message, sender) {
         // Target declaration check (#86) — checks if site disables JS injection
         case 'CHECK_TARGET_INJECTION':
             return checkTargetInjection(message.url);
+
+        // ── Error monitoring (#55) ──────────────────────────────────
+        case 'error:captured':
+            await handleCapturedError(message.payload, sender.tab?.id);
+            return { success: true };
+
+        case 'GET_ERRORS':
+            return getErrors(message.tabId || sender.tab?.id);
+
+        case 'GET_ALL_ERRORS':
+            return getAllErrors();
+
+        case 'CLEAR_ERRORS':
+            await clearErrors(message.tabId || sender.tab?.id);
+            return { success: true };
+
+        case 'CLEAR_ALL_ERRORS':
+            await clearAllErrors();
+            return { success: true };
+
+        case 'MARK_ERRORS_READ':
+            await markErrorsRead(message.tabId || sender.tab?.id);
+            return { success: true };
 
         // Screenshot + upload messages
         case 'CAPTURE_TAB':
