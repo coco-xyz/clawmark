@@ -89,8 +89,10 @@ class GitLabIssueAdapter {
     }
 
     async _createIssue(item, context) {
+        // Upload screenshots to GitLab first (#51) so they render in issue previews
+        const uploadedUrls = await this._uploadScreenshots(item);
         const title = this._buildTitle(item);
-        const description = this._buildBody(item, context);
+        const description = this._buildBody(item, context, uploadedUrls);
 
         const labels = [...this.labels];
         if (item.priority && item.priority !== 'normal') {
@@ -163,7 +165,110 @@ class GitLabIssueAdapter {
         return `[ClawMark] ${summary || 'New item'}`;
     }
 
-    _buildBody(item, context) {
+    /**
+     * Upload screenshots to GitLab via Uploads API (#51).
+     * Returns a Map of original URL → GitLab markdown image string.
+     */
+    async _uploadScreenshots(item) {
+        const urlMap = new Map();
+        const screenshots = typeof item.screenshots === 'string'
+            ? JSON.parse(item.screenshots || '[]') : (item.screenshots || []);
+        if (screenshots.length === 0) return urlMap;
+
+        const encodedProject = encodeURIComponent(this.projectId);
+
+        for (const url of screenshots) {
+            const absoluteUrl = (url.startsWith('/') && this.serverUrl)
+                ? `${this.serverUrl}${url}` : url;
+            try {
+                const imageBuffer = await this._downloadFile(absoluteUrl);
+                const filename = url.split('/').pop() || 'screenshot.png';
+                const result = await this._uploadFile(encodedProject, imageBuffer, filename);
+                if (result && result.markdown) {
+                    urlMap.set(url, result.markdown);
+                }
+            } catch (err) {
+                console.error(`[gitlab-issue] Failed to upload screenshot ${absoluteUrl}:`, err.message);
+            }
+        }
+        return urlMap;
+    }
+
+    /** Download a file from a URL, returns a Buffer. */
+    _downloadFile(url) {
+        return new Promise((resolve, reject) => {
+            const parsedUrl = new URL(url);
+            const transport = parsedUrl.protocol === 'https:' ? https : http;
+            const req = transport.get(url, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    return this._downloadFile(res.headers.location).then(resolve, reject);
+                }
+                if (res.statusCode !== 200) {
+                    return reject(new Error(`Download failed: ${res.statusCode}`));
+                }
+                const chunks = [];
+                res.on('data', chunk => chunks.push(chunk));
+                res.on('end', () => resolve(Buffer.concat(chunks)));
+                res.on('error', reject);
+            });
+            req.on('error', reject);
+            req.setTimeout(10000, () => req.destroy(new Error('Download timeout')));
+        });
+    }
+
+    /** Upload a file buffer to GitLab Uploads API. Returns { alt, url, markdown }. */
+    _uploadFile(encodedProject, buffer, filename) {
+        const parsed = new URL(this.baseUrl);
+        const boundary = `----ClawMark${Date.now()}`;
+        const disposition = `Content-Disposition: form-data; name="file"; filename="${filename}"`;
+        const contentType = filename.endsWith('.png') ? 'image/png' : 'image/jpeg';
+
+        const header = Buffer.from(
+            `--${boundary}\r\n${disposition}\r\nContent-Type: ${contentType}\r\n\r\n`
+        );
+        const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+        const body = Buffer.concat([header, buffer, footer]);
+
+        return new Promise((resolve, reject) => {
+            const isHttps = parsed.protocol === 'https:';
+            const transport = isHttps ? https : http;
+            const options = {
+                hostname: parsed.hostname,
+                port: parsed.port || (isHttps ? 443 : 80),
+                path: `/api/v4/projects/${encodedProject}/uploads`,
+                method: 'POST',
+                headers: {
+                    'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                    'Content-Length': body.length,
+                    'PRIVATE-TOKEN': this.token,
+                    'User-Agent': 'ClawMark/2.0',
+                },
+            };
+
+            const req = transport.request(options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    try {
+                        const result = JSON.parse(data);
+                        if (res.statusCode >= 200 && res.statusCode < 300) {
+                            resolve(result);
+                        } else {
+                            reject(new Error(`Upload failed ${res.statusCode}: ${result.message || data.slice(0, 200)}`));
+                        }
+                    } catch {
+                        reject(new Error(`Upload parse error: ${data.slice(0, 200)}`));
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.setTimeout(30000, () => req.destroy(new Error('Upload timeout')));
+            req.write(body);
+            req.end();
+        });
+    }
+
+    _buildBody(item, context, uploadedUrls = new Map()) {
         const lines = [];
         lines.push('## ClawMark Item');
         lines.push('');
@@ -199,11 +304,15 @@ class GitLabIssueAdapter {
         if (screenshots.length > 0) {
             lines.push('### Screenshots');
             for (const url of screenshots) {
-                // Resolve relative URLs (e.g. /images/...) to absolute using server URL
-                const absoluteUrl = (url.startsWith('/') && this.serverUrl)
-                    ? `${this.serverUrl}${url}`
-                    : url;
-                lines.push(`![screenshot](${absoluteUrl})`);
+                // Use GitLab-uploaded URL if available (#51), fall back to absolute URL
+                const gitlabMarkdown = uploadedUrls.get(url);
+                if (gitlabMarkdown) {
+                    lines.push(gitlabMarkdown);
+                } else {
+                    const absoluteUrl = (url.startsWith('/') && this.serverUrl)
+                        ? `${this.serverUrl}${url}` : url;
+                    lines.push(`![screenshot](${absoluteUrl})`);
+                }
             }
             lines.push('');
         }
