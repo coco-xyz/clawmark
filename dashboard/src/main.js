@@ -480,9 +480,11 @@ function renderRulesTable() {
             <td>${rule.priority || 0}</td>
             <td class="actions-cell">
                 <button class="edit-btn" data-id="${escHtml(rule.id)}">Edit</button>
+                <button class="dup-btn" data-id="${escHtml(rule.id)}" title="Duplicate this rule">Fork</button>
                 <button class="del-btn" data-id="${escHtml(rule.id)}">Delete</button>
             </td>`;
         tr.querySelector('.edit-btn').addEventListener('click', () => openRuleModal(rule));
+        tr.querySelector('.dup-btn').addEventListener('click', () => duplicateRule(rule));
         tr.querySelector('.del-btn').addEventListener('click', () => doDeleteRule(rule.id));
         tbody.appendChild(tr);
     }
@@ -505,6 +507,18 @@ let editingRuleOrigConfig = null; // preserve original config for inline credent
 function hasInlineCredentials(cfg) {
     if (!cfg) return false;
     return INLINE_CRED_KEYS.some(k => cfg[k]);
+}
+
+function duplicateRule(rule) {
+    // Open modal pre-filled with rule data but as a new rule (fork)
+    const forked = { ...rule, id: null };
+    // Append " (copy)" to pattern to avoid exact duplicate
+    if (forked.pattern) forked.pattern += ' (copy)';
+    openRuleModal(forked);
+    // Override title to indicate fork
+    document.getElementById('rule-modal-title').textContent = 'Fork Rule';
+    document.getElementById('rule-modal-save').textContent = 'Save Rule';
+    editingRuleId = null; // ensure it creates a new rule
 }
 
 function openRuleModal(rule) {

@@ -475,10 +475,10 @@ label {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    overflow: hidden;
+    overflow-x: auto;
 }
 
-.rules-table { width: 100%; border-collapse: collapse; }
+.rules-table { width: 100%; min-width: 640px; border-collapse: collapse; }
 
 .rules-table th {
     text-align: left;
@@ -496,10 +496,14 @@ label {
     padding: 10px 14px;
     font-size: 13px;
     border-bottom: 1px solid var(--border);
-    max-width: 200px;
+    max-width: 320px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.rules-table td[title] {
+    cursor: help;
 }
 
 .rules-table tr:last-child td { border-bottom: none; }
@@ -526,6 +530,7 @@ label {
 }
 
 .rules-table .actions-cell button:hover { background: rgba(255,255,255,0.12); color: var(--text); }
+.rules-table .actions-cell .dup-btn:hover { background: rgba(88,101,242,0.2); color: #7c8af2; }
 .rules-table .actions-cell .del-btn:hover { background: rgba(239,68,68,0.2); color: var(--danger); }
 
 /* ---- Modal ---- */
