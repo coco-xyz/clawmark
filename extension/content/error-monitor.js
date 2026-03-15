@@ -86,13 +86,14 @@
 
     // ── Listeners ────────────────────────────────────────────────────
 
-    // 1. window.onerror
-    function onWindowError(message, source, lineno, colno, errorObj) {
+    // 1. window error event (addEventListener receives ErrorEvent, not 5 args)
+    function onWindowError(event) {
+        if (!(event instanceof ErrorEvent)) return;
         emit({
             type: 'js-error',
-            message: String(message),
-            stack: errorObj?.stack || `${source}:${lineno}:${colno}`,
-            source: source || '',
+            message: event.message || String(event),
+            stack: event.error?.stack || `${event.filename || ''}:${event.lineno || 0}:${event.colno || 0}`,
+            source: event.filename || '',
             severity: 'error',
         });
     }
@@ -127,10 +128,22 @@
         });
     }
 
-    // 4. fetch intercept for 4xx/5xx
+    // 4. fetch intercept for 4xx/5xx + network failures
     const originalFetch = window.fetch;
     async function patchedFetch(...args) {
-        const response = await originalFetch.apply(window, args);
+        let response;
+        try {
+            response = await originalFetch.apply(window, args);
+        } catch (err) {
+            const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+            emit({
+                type: 'network-error',
+                message: `fetch failed: ${err.message} — ${url.slice(0, 200)}`,
+                stack: err.stack || '',
+                severity: 'error',
+            });
+            throw err; // re-throw so caller sees the original error
+        }
         if (response.status >= 400) {
             const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
             emit({
@@ -162,7 +175,7 @@
                     severity: this.status >= 500 ? 'error' : 'warning',
                 });
             }
-        });
+        }, { once: true });
         return originalXHRSend.apply(this, args);
     }
 
