@@ -4,6 +4,26 @@
 
 ## [0.8.0] — 2026-03-06
 
+## [0.8.3] — 2026-03-16
+
+### ✨ 新增
+
+- #57 passive monitoring configuration UI
+- #56 side panel Errors tab with File Issue action
+- #55 service worker error storage + badge
+- #54 ErrorMonitor — passive error capture content script
+
+### 🐛 修复
+
+- T1 codex fix — prevent settings spread from overwriting message type
+- #58 #59 GitLab URL field in quick-add + clear target display
+- #56 persist dismissed error IDs to storage
+- #54 ErrorMonitor P2 fixes from Lova review
+
+
+---
+
+
 ## [0.8.2] — 2026-03-16
 
 ### ✨ 新增

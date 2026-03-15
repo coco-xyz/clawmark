@@ -11,6 +11,7 @@
 'use strict';
 
 importScripts('../config.js');
+importScripts('./error-storage.js');
 
 // ------------------------------------------------------------------ config
 
@@ -359,6 +360,34 @@ async function handleExternalMessage(message, sender) {
             chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
             return { success: true };
         }
+        case 'GET_PASSIVE_MONITOR_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                passiveMonitorEnabled: false,
+                passiveMonitorErrorOnly: true,
+                passiveMonitorDisabledSites: [],
+            });
+            return {
+                passiveMonitorEnabled: settings.passiveMonitorEnabled,
+                passiveMonitorErrorOnly: settings.passiveMonitorErrorOnly,
+                passiveMonitorDisabledSites: settings.passiveMonitorDisabledSites,
+            };
+        }
+        case 'SET_PASSIVE_MONITOR_SETTINGS': {
+            const updates = {};
+            if (typeof message.passiveMonitorEnabled === 'boolean') {
+                updates.passiveMonitorEnabled = message.passiveMonitorEnabled;
+            }
+            if (typeof message.passiveMonitorErrorOnly === 'boolean') {
+                updates.passiveMonitorErrorOnly = message.passiveMonitorErrorOnly;
+            }
+            if (Array.isArray(message.passiveMonitorDisabledSites)) {
+                updates.passiveMonitorDisabledSites = message.passiveMonitorDisabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
         case 'PING':
             return { pong: true, version: chrome.runtime.getManifest().version };
         default:
@@ -444,6 +473,29 @@ async function handleMessage(message, sender) {
         // Target declaration check (#86) — checks if site disables JS injection
         case 'CHECK_TARGET_INJECTION':
             return checkTargetInjection(message.url);
+
+        // ── Error monitoring (#55) ──────────────────────────────────
+        case 'error:captured':
+            await handleCapturedError(message.payload, sender.tab?.id);
+            return { success: true };
+
+        case 'GET_ERRORS':
+            return getErrors(message.tabId || sender.tab?.id);
+
+        case 'GET_ALL_ERRORS':
+            return getAllErrors();
+
+        case 'CLEAR_ERRORS':
+            await clearErrors(message.tabId || sender.tab?.id);
+            return { success: true };
+
+        case 'CLEAR_ALL_ERRORS':
+            await clearAllErrors();
+            return { success: true };
+
+        case 'MARK_ERRORS_READ':
+            await markErrorsRead(message.tabId || sender.tab?.id);
+            return { success: true };
 
         // Screenshot + upload messages
         case 'CAPTURE_TAB':

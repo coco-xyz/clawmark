@@ -821,3 +821,16 @@ label {
     margin-bottom: 4px;
     color: var(--text-secondary, var(--text-muted));
 }
+
+.toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.toggle-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
