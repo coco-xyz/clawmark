@@ -288,8 +288,8 @@ export async function setPassiveMonitorSettings(settings) {
     if (!extId) return false;
     try {
         const resp = await chrome.runtime.sendMessage(extId, {
-            type: 'SET_PASSIVE_MONITOR_SETTINGS',
             ...settings,
+            type: 'SET_PASSIVE_MONITOR_SETTINGS',
         });
         return !!resp?.success;
     } catch {
