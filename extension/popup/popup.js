@@ -32,6 +32,7 @@ let currentUrl = '';
 let currentHostname = '';
 let disabledSites = [];
 let isLoggedIn = false;
+let cachedRecentTargets = [];
 
 // ------------------------------------------------------------------ master toggle
 
@@ -151,7 +152,10 @@ async function loadDeliveryTargets() {
         });
 
         const targets = result.targets || [];
-        if (targets.length === 0) {
+        const recentTargets = result.recent_targets || [];
+        cachedRecentTargets = recentTargets;
+
+        if (targets.length === 0 && recentTargets.length === 0) {
             noTargetsEl.style.display = 'block';
             return;
         }
@@ -169,6 +173,28 @@ async function loadDeliveryTargets() {
                 <span class="target-name">${escHtml(name)}</span>
                 <span class="target-type">${escHtml(t.target_type)}</span>`;
             targetListEl.appendChild(div);
+        }
+
+        // Show recent targets if no custom rules match (#48)
+        const hasCustomRules = targets.some(t => t.method && t.method !== 'system_default');
+        if (!hasCustomRules && recentTargets.length > 0) {
+            const header = document.createElement('div');
+            header.className = 'target-recent-header';
+            header.textContent = 'Recent targets:';
+            targetListEl.appendChild(header);
+
+            for (const rt of recentTargets) {
+                const div = document.createElement('div');
+                div.className = 'target-item target-recent';
+                const name = formatTargetName(rt.target_type, rt.target_config);
+                div.innerHTML = `
+                    <span style="width:12px;display:inline-block;color:#5865f2">\u2022</span>
+                    <span class="target-name">${escHtml(name)}</span>
+                    <span class="target-type">\u00d7${rt.use_count}</span>`;
+                div.style.cursor = 'pointer';
+                div.addEventListener('click', () => prefillQuickAdd(rt));
+                targetListEl.appendChild(div);
+            }
         }
     } catch {
         // Server may not support resolve endpoint yet
@@ -282,6 +308,27 @@ document.getElementById('btn-quick-add').addEventListener('click', async () => {
         autoPopulateQuickAdd();
     }
 });
+
+// Pre-fill quick-add form from a recent target (#48)
+function prefillQuickAdd(recentTarget) {
+    quickAddForm.style.display = 'block';
+    loadAuths().then(() => {
+        const cfg = recentTarget.target_config || {};
+        qaTargetType.value = recentTarget.target_type;
+        updateQuickAddFields();
+        if (cfg.repo) qaRepo.value = cfg.repo;
+        if (cfg.project_id) qaRepo.value = cfg.project_id;
+        try {
+            const domain = new URL(currentUrl).hostname;
+            qaPattern.value = `*${domain}*`;
+        } catch {}
+        if (recentTarget.auth_id && qaAuthSelect) {
+            qaAuthSelect.value = recentTarget.auth_id;
+        }
+        qaSuggestion.textContent = `Pre-filled from recent target`;
+        qaSuggestion.style.display = 'block';
+    });
+}
 
 document.getElementById('qa-add-auth-link').addEventListener('click', () => openDashboard('auths'));
 
