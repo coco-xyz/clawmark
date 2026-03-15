@@ -36,7 +36,8 @@
       ],
       "js": [
         "content/screenshot.js",
-        "content/inject.js"
+        "content/inject.js",
+        "content/error-monitor.js"
       ],
       "css": [
         "content/inject.css",
