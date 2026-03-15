@@ -10,6 +10,7 @@
  *     token: "glpat-...",
  *     project_id: "hxanet/clawmark" or "123",
  *     base_url: "https://git.coco.xyz",   // optional, defaults to https://gitlab.com
+ *     server_url: "https://jessie.coco.site/clawmark",  // optional: ClawMark server URL for resolving relative image paths
  *     labels: ["clawmark", "bug"],         // optional: default labels
  *     assignees: [42],                     // optional: default assignee user IDs
  *   }
@@ -37,6 +38,7 @@ class GitLabIssueAdapter {
         this.assignees = config.assignees || [];
         this.channelName = config.channelName || '';
         this.db = config.db || null;
+        this.serverUrl = (config.server_url || '').replace(/\/+$/, '');
         this._memoryMap = new Map();
     }
 
@@ -197,7 +199,11 @@ class GitLabIssueAdapter {
         if (screenshots.length > 0) {
             lines.push('### Screenshots');
             for (const url of screenshots) {
-                lines.push(`![screenshot](${url})`);
+                // Resolve relative URLs (e.g. /images/...) to absolute using server URL
+                const absoluteUrl = (url.startsWith('/') && this.serverUrl)
+                    ? `${this.serverUrl}${url}`
+                    : url;
+                lines.push(`![screenshot](${absoluteUrl})`);
             }
             lines.push('');
         }
