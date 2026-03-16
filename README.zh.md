@@ -139,7 +139,7 @@ cp server/config.example.json config.json
   "dataDir": "./data",             // 数据目录（也可通过 CLAWMARK_DATA_DIR 覆盖）
   "auth": {
     "jwtSecret": "<随机字符串>",    // JWT 签名密钥（必填，建议 64 字符 hex）
-    "encryptionKey": "<32字节hex>", // 凭证加密密钥（推荐，64 字符 hex = 32 字节）
+    "encryptionKey": "<32字节hex>", // 凭证加密密钥（必填，64 字符 hex = 32 字节）
   },
   "webhook": {                     // 全局 Webhook（可选）
     "url": "",
@@ -158,7 +158,7 @@ cp server/config.example.json config.json
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `auth.jwtSecret` | 是 | JWT 签名密钥。用于 API 认证，所有 V1/V2 接口均需 JWT。建议使用 `openssl rand -hex 32` 生成 |
-| `auth.encryptionKey` | 推荐 | AES-256-GCM 凭证加密密钥（32 字节 hex）。用于加密存储用户的第三方凭证（GitHub Token 等）。未设置时凭证明文存储。使用 `openssl rand -hex 32` 生成 |
+| `auth.encryptionKey` | 是 | AES-256-GCM 凭证加密密钥（32 字节 hex）。用于加密存储用户的第三方凭证（GitHub Token 等）。未设置时凭证明文存储。使用 `openssl rand -hex 32` 生成 |
 | `port` | 否 | 服务端口，默认 3458 |
 | `dataDir` | 否 | 数据存储路径，默认 `./data` |
 | `webhook` | 否 | 全局 Webhook 配置 |

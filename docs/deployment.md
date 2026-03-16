@@ -124,7 +124,7 @@ See `server/config.example.json` for a template. Key fields:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `auth.jwtSecret` | **Yes** | JWT signing secret. Generate: `openssl rand -hex 32` |
-| `auth.encryptionKey` | Recommended | AES-256-GCM key for credential encryption. Generate: `openssl rand -hex 32` |
+| `auth.encryptionKey` | **Yes** | AES-256-GCM key for credential encryption. Generate: `openssl rand -hex 32` |
 | `port` | No | Server port (default: 3458) |
 | `dataDir` | No | Data directory (default: `./data`) |
 | `webhook` | No | Global webhook config |
