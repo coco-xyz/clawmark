@@ -139,7 +139,7 @@ Key fields:
   "dataDir": "./data",                // Data directory (can also be set via CLAWMARK_DATA_DIR)
   "auth": {
     "jwtSecret": "<random-string>",   // JWT signing secret (required, recommend 64-char hex)
-    "encryptionKey": "<32-byte-hex>", // Credential encryption key (recommended, 64-char hex = 32 bytes)
+    "encryptionKey": "<32-byte-hex>", // Credential encryption key (required, 64-char hex = 32 bytes)
   },
   "webhook": {                        // Global webhook (optional)
     "url": "",
@@ -158,7 +158,7 @@ Key fields:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `auth.jwtSecret` | Yes | JWT signing secret. Required for API authentication — all V1/V2 endpoints require JWT. Generate with `openssl rand -hex 32` |
-| `auth.encryptionKey` | Recommended | AES-256-GCM encryption key (32 bytes hex). Encrypts third-party credentials (GitHub tokens, etc.) at rest. Without it, credentials are stored in plaintext. Generate with `openssl rand -hex 32` |
+| `auth.encryptionKey` | **Yes** | AES-256-GCM encryption key (32 bytes hex). Encrypts third-party credentials (GitHub tokens, etc.) at rest. Without it, credentials are stored in plaintext. Generate with `openssl rand -hex 32` |
 | `port` | No | Server port, defaults to 3458 |
 | `dataDir` | No | Data storage path, defaults to `./data` |
 | `webhook` | No | Global webhook configuration |
