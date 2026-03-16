@@ -124,7 +124,7 @@ class GitLabIssueAdapter {
             this._setMapping(itemId, result.iid, result.web_url);
         }
 
-        return { status: 'created', issue_iid: result.iid, url: result.web_url };
+        return { status: 'created', issue_iid: result.iid, url: result.web_url, external_id: String(result.iid), external_url: result.web_url };
     }
 
     async _closeIssue(item, context) {
