@@ -46,6 +46,8 @@
 
     // ── Helpers ────────────────────────────────────────────────────────
 
+    // NOTE: Duplicated in privacy-filter.js. This script may load before
+    // privacy-filter.js so it keeps its own copy for independence.
     function sanitizeUrl(rawUrl) {
         try {
             const u = new URL(rawUrl, location.origin);

@@ -13,6 +13,7 @@
 importScripts('../config.js');
 importScripts('./error-storage.js');
 importScripts('./perception-storage.js');
+importScripts('./session-storage.js');
 
 // ------------------------------------------------------------------ config
 
@@ -412,6 +413,20 @@ async function handleExternalMessage(message, sender) {
             await chrome.storage.sync.set(updates);
             return { success: true };
         }
+        case 'GET_SESSION_RECORDING_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                sessionRecordingEnabled: true,
+            });
+            return { sessionRecordingEnabled: settings.sessionRecordingEnabled };
+        }
+        case 'SET_SESSION_RECORDING_SETTINGS': {
+            const updates = {};
+            if (typeof message.sessionRecordingEnabled === 'boolean') {
+                updates.sessionRecordingEnabled = message.sessionRecordingEnabled;
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
         case 'PING':
             return { pong: true, version: chrome.runtime.getManifest().version };
         default:
@@ -538,6 +553,28 @@ async function handleMessage(message, sender) {
 
         case 'CLEAR_ALL_PERCEPTION_EVENTS':
             await clearAllPerceptionEvents();
+            return { success: true };
+
+        // ── Session recording (#72) ───────────────────────────────────
+        case 'session:batch':
+            await handleSessionBatch(message.payload, sender.tab?.id);
+            return { success: true };
+
+        case 'GET_SESSION_INDEX':
+            return getSessionIndex(message.tabId || sender.tab?.id);
+
+        case 'GET_SESSION':
+            return getSession(message.tabId || sender.tab?.id, message.sessionId);
+
+        case 'GET_TAB_SESSIONS':
+            return getTabSessions(message.tabId || sender.tab?.id);
+
+        case 'CLEAR_TAB_SESSIONS':
+            await clearTabSessions(message.tabId || sender.tab?.id);
+            return { success: true };
+
+        case 'CLEAR_ALL_SESSIONS':
+            await clearAllSessions();
             return { success: true };
 
         // Screenshot + upload messages
