@@ -1,6 +1,8 @@
 # PRD: Agent Embed — 让 AI Agent 寄生在浏览器中
 
 > ClawMark 从「反馈工具」进化为「Agent 的眼睛和手」
+>
+> **参考方案**：[OpenClaw Browser Relay](https://docs.openclaw.ai/tools/browser)（CDP 远程控制） · [Claude Code /chrome](https://code.claude.com/docs/en/chrome.md)（Native Messaging + per-site permission） · [Sentry](https://sentry.io)（错误采集基准线）
 
 ## 愿景
 
@@ -254,12 +256,14 @@ All Agent endpoints require: Authorization: Bearer cmak_xxxxxxxx
 
 ### 站点级权限（Per-Site Permission）
 
+**权限粒度：每个 Agent 独立一份设置。** 不同 Agent 可以对同一站点有不同的权限级别。例如 QA Agent 有操作权限，而监控 Agent 只有感知权限。
+
 参考 Claude in Chrome 插件的权限管理：
 
 ```
-Extension Settings → Agent Permissions
+Extension Settings → Agent Permissions → [选择 Agent]
 ┌─────────────────────────────────────────┐
-│ Site Permissions                         │
+│ QA Bot — Site Permissions                │
 │                                          │
 │ ✅ jessie.coco.site   [感知][操作][录制] │
 │ ✅ *.coco.xyz         [感知][  ][  ]    │
@@ -329,6 +333,12 @@ Agent 可发送任意 CDP 命令：
 | **开关控制** | 用户可一键暂停所有 Agent 感知（插件图标 → 暂停） |
 | **操作审计** | 所有 Agent 行动记录在案，用户可在 Side Panel 查看历史 |
 | **CDP 可选** | CDP 模式默认关闭，仅在用户显式启用后激活，命令白名单过滤 |
+
+## 任务跟踪
+
+**GitLab Issue**: [#61 Agent Embed — 浏览器内 AI Agent 感知与操作能力](https://git.coco.xyz/hxanet/clawmark/-/issues/61)
+
+子任务将在 #61 下拆分为独立 issue，按 Phase 分配。
 
 ## 实现分期
 
