@@ -14,6 +14,7 @@ importScripts('../config.js');
 importScripts('./error-storage.js');
 importScripts('./perception-storage.js');
 importScripts('./session-storage.js');
+importScripts('./action-queue.js');
 
 // ------------------------------------------------------------------ config
 
@@ -427,6 +428,29 @@ async function handleExternalMessage(message, sender) {
             await chrome.storage.sync.set(updates);
             return { success: true };
         }
+        case 'GET_AGENT_ACTION_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                agentActionEnabled: false,
+                agentActionDisabledSites: [],
+            });
+            return {
+                agentActionEnabled: settings.agentActionEnabled,
+                agentActionDisabledSites: settings.agentActionDisabledSites,
+            };
+        }
+        case 'SET_AGENT_ACTION_SETTINGS': {
+            const updates = {};
+            if (typeof message.agentActionEnabled === 'boolean') {
+                updates.agentActionEnabled = message.agentActionEnabled;
+            }
+            if (Array.isArray(message.agentActionDisabledSites)) {
+                updates.agentActionDisabledSites = message.agentActionDisabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
         case 'PING':
             return { pong: true, version: chrome.runtime.getManifest().version };
         default:
@@ -673,6 +697,53 @@ async function handleMessage(message, sender) {
             const dashUrl = ClawMarkConfig.DASHBOARD_URL || 'https://labs.coco.xyz/clawmark/dashboard';
             const hash = message.hash ? '#' + message.hash : '';
             chrome.tabs.create({ url: dashUrl + hash });
+            return { success: true };
+        }
+
+        // ── Action execution (#77) ──────────────────────────────────
+        case 'action:dispatch': {
+            const tabId = message.tabId || sender.tab?.id;
+            const result = await dispatchAction(tabId, message.payload);
+            return result;
+        }
+
+        case 'GET_TAB_ACTIONS':
+            return getTabActions(message.tabId || sender.tab?.id);
+
+        case 'GET_ACTION_HISTORY':
+            return getGlobalActionHistory();
+
+        case 'CLEAR_TAB_ACTIONS':
+            await clearTabActions(message.tabId || sender.tab?.id);
+            return { success: true };
+
+        case 'CLEAR_ALL_ACTIONS':
+            await clearAllActions();
+            return { success: true };
+
+        // ── Action settings (#77) ───────────────────────────────────
+        case 'GET_AGENT_ACTION_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                agentActionEnabled: false,
+                agentActionDisabledSites: [],
+            });
+            return {
+                agentActionEnabled: settings.agentActionEnabled,
+                agentActionDisabledSites: settings.agentActionDisabledSites,
+            };
+        }
+
+        case 'SET_AGENT_ACTION_SETTINGS': {
+            const updates = {};
+            if (typeof message.agentActionEnabled === 'boolean') {
+                updates.agentActionEnabled = message.agentActionEnabled;
+            }
+            if (Array.isArray(message.agentActionDisabledSites)) {
+                updates.agentActionDisabledSites = message.agentActionDisabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
+            }
+            await chrome.storage.sync.set(updates);
             return { success: true };
         }
 

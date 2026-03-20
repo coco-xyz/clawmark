@@ -41,7 +41,9 @@
         "content/network-monitor.js",
         "content/console-proxy.js",
         "content/privacy-filter.js",
-        "content/session-recorder.js"
+        "content/session-recorder.js",
+        "content/element-finder.js",
+        "content/action-executor.js"
       ],
       "css": [
         "content/inject.css",
