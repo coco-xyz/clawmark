@@ -37,7 +37,9 @@
       "js": [
         "content/screenshot.js",
         "content/inject.js",
-        "content/error-monitor.js"
+        "content/error-monitor.js",
+        "content/network-monitor.js",
+        "content/console-proxy.js"
       ],
       "css": [
         "content/inject.css",
