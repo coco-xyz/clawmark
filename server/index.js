@@ -2344,6 +2344,116 @@ app.get('/stats', v2Auth, (req, res) => {
     res.json({ stats });
 });
 
+// ----------------------------------------------------------------- agent channel (#69 Error Sentinel)
+
+// POST /api/v2/agent-channel/perception — upload perception events from extension
+app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { events } = req.body;
+    if (!Array.isArray(events) || events.length === 0) {
+        return res.status(400).json({ error: 'events must be a non-empty array' });
+    }
+    if (events.length > 100) {
+        return res.status(400).json({ error: 'Max 100 events per request' });
+    }
+
+    const enriched = events.map(e => ({
+        app_id,
+        type: e.type || 'unknown',
+        message: (e.message || '').slice(0, 4096),
+        stack: (e.stack || '').slice(0, 8192) || null,
+        source: (e.source || '').slice(0, 2048) || null,
+        line: e.line || null,
+        severity: e.severity || 'error',
+        url: (e.url || '').slice(0, 2048) || null,
+        fingerprint: e.fingerprint || '',
+        context: e.context || {},
+    }));
+
+    // Reject events without fingerprints
+    const valid = enriched.filter(e => e.fingerprint);
+    if (valid.length === 0) {
+        return res.status(400).json({ error: 'All events missing fingerprint' });
+    }
+
+    try {
+        const results = itemsDb.createPerceptionEvents(valid);
+        res.json({ created: results.length, events: results });
+    } catch (err) {
+        console.error('[agent-channel] perception POST error:', err.message);
+        res.status(500).json({ error: 'Failed to store events' });
+    }
+});
+
+// GET /api/v2/agent-channel/perception — query perception events (agent consumer)
+app.get('/api/v2/agent-channel/perception', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const cursor = req.query.cursor || null;
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+
+    try {
+        const events = itemsDb.getPerceptionEvents({ app_id, cursor, limit });
+        const nextCursor = events.length > 0 ? events[events.length - 1].created_at : cursor;
+        res.json({ events, cursor: nextCursor, count: events.length });
+    } catch (err) {
+        console.error('[agent-channel] perception GET error:', err.message);
+        res.status(500).json({ error: 'Failed to query events' });
+    }
+});
+
+// GET /api/v2/agent-channel/perception/stats — aggregated error stats by fingerprint
+app.get('/api/v2/agent-channel/perception/stats', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    try {
+        const stats = itemsDb.getPerceptionStats({ app_id, limit });
+        res.json({ stats });
+    } catch (err) {
+        console.error('[agent-channel] perception stats error:', err.message);
+        res.status(500).json({ error: 'Failed to query stats' });
+    }
+});
+
+// GET /api/v2/agent-channel/perception/issues — tracked perception issues
+app.get('/api/v2/agent-channel/perception/issues', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const issues = itemsDb.getOpenPerceptionIssues({ app_id });
+        res.json({ issues });
+    } catch (err) {
+        console.error('[agent-channel] perception issues error:', err.message);
+        res.status(500).json({ error: 'Failed to query issues' });
+    }
+});
+
+// POST /api/v2/agent-channel/perception/issues — upsert a tracked issue (agent creates after dedup)
+app.post('/api/v2/agent-channel/perception/issues', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { fingerprint, count, first_seen, last_seen, gitlab_issue_id, gitlab_issue_url } = req.body;
+    if (!fingerprint) return res.status(400).json({ error: 'fingerprint required' });
+
+    try {
+        const result = itemsDb.upsertPerceptionIssue({
+            app_id, fingerprint, count, first_seen, last_seen,
+            gitlab_issue_id, gitlab_issue_url,
+        });
+        res.json(result);
+    } catch (err) {
+        console.error('[agent-channel] perception issue upsert error:', err.message);
+        res.status(500).json({ error: 'Failed to upsert issue' });
+    }
+});
+
 // ----------------------------------------------------------------- health
 
 app.get('/health', (req, res) => {
