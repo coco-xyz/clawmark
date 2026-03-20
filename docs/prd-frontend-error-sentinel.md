@@ -248,16 +248,87 @@ All Agent endpoints require: Authorization: Bearer cmak_xxxxxxxx
 - 每个 Agent 有独立的权限控制（只感知 / 可操作 / 可读 session）
 - 用户可以随时解绑 / 暂停任意 Agent
 
+## 权限模型（参考 Claude Code /chrome + OpenClaw Browser Relay）
+
+借鉴 Claude Code `/chrome` 的 per-site permission 模型和 OpenClaw Browser Relay 的 CDP 架构，设计三层权限：
+
+### 站点级权限（Per-Site Permission）
+
+参考 Claude in Chrome 插件的权限管理：
+
+```
+Extension Settings → Agent Permissions
+┌─────────────────────────────────────────┐
+│ Site Permissions                         │
+│                                          │
+│ ✅ jessie.coco.site   [感知][操作][录制] │
+│ ✅ *.coco.xyz         [感知][  ][  ]    │
+│ ❌ github.com         (blocked)          │
+│                                          │
+│ [+ Add site]                             │
+│                                          │
+│ Default: Ask on first visit              │
+└─────────────────────────────────────────┘
+```
+
+- **每个站点独立授权**：用户控制 Agent 能在哪些站点感知/操作
+- **三种权限粒度**：感知（只读 console/network/DOM）、操作（能 click/type/navigate）、录制（记录 session）
+- **首次访问询问**：Agent 首次请求访问新站点时，弹窗询问用户
+- **权限持久化**：存储在 `chrome.storage.sync`，跨设备同步
+
+### 操作风险分级
+
+| 风险级别 | 操作类型 | 授权方式 |
+|---------|---------|---------|
+| **低** | 读取 console/network/DOM | 站点权限授权后自动允许 |
+| **中** | 点击、输入、导航、截图 | 站点操作权限授权后允许 |
+| **高** | 表单提交、文件上传、删除操作 | 每次弹窗确认 |
+| **禁止** | 密码输入、支付操作、账户设置 | 始终阻止 |
+
+### CDP 升级路径（Phase 3+）
+
+Phase 1-2 使用 Content Script 实现感知和基本操作。Phase 3 引入 CDP（Chrome DevTools Protocol）作为高级通道：
+
+**为什么需要 CDP：**
+- Content Script 无法获取 Performance Profile、Memory Snapshot
+- Content Script 无法拦截 Service Worker 内部请求
+- Content Script 的 DOM 操作能力有限（无法模拟真实鼠标事件）
+- CDP 能提供完整的 debugger 能力（断点、变量检查、网络节流）
+
+**CDP 实现方式（参考 OpenClaw）：**
+```
+Extension 使用 chrome.debugger API
+    │ attach 到目标 tab
+    │
+    ▼
+CDP Session → 暴露给 Agent Bridge
+    │
+    ▼
+Agent 可发送任意 CDP 命令：
+  · Page.navigate
+  · Runtime.evaluate
+  · DOM.querySelector + click
+  · Network.enable + 拦截
+  · Performance.getMetrics
+  · HeapProfiler.takeHeapSnapshot
+```
+
+**安全约束：**
+- CDP 模式仅在用户显式启用后激活（默认关闭）
+- 使用 CDP 时插件图标变为橙色（视觉提示）
+- CDP 命令白名单：只允许安全的只读/操作命令，禁止 `Target.disposeBrowserContext` 等危险操作
+
 ## 安全模型
 
 | 层级 | 约束 |
 |------|------|
-| **域名白名单** | Agent 只能感知白名单域名的数据（默认 `*.coco.site`, `*.coco.xyz`） |
-| **行动授权** | 高风险操作（删除、支付、设置变更）需用户确认弹窗 |
+| **站点级权限** | Per-site permission：每个站点独立授权感知/操作/录制权限 |
+| **操作风险分级** | 低/中/高/禁止四级，高风险每次确认，支付等始终阻止 |
 | **数据脱敏** | 密码字段、token、敏感 cookie 自动脱敏后上报 |
 | **会话隔离** | Agent 只能访问绑定用户的数据，不能跨用户 |
 | **开关控制** | 用户可一键暂停所有 Agent 感知（插件图标 → 暂停） |
 | **操作审计** | 所有 Agent 行动记录在案，用户可在 Side Panel 查看历史 |
+| **CDP 可选** | CDP 模式默认关闭，仅在用户显式启用后激活，命令白名单过滤 |
 
 ## 实现分期
 
