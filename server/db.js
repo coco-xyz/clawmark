@@ -352,6 +352,46 @@ function initDb(dataDir) {
         console.log('[db] migrated: added column items.analyzed_at');
     }
 
+    // ----------------------------------------- schema: perception_events (#69 Error Sentinel)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS perception_events (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            type            TEXT NOT NULL,
+            message         TEXT NOT NULL,
+            stack           TEXT,
+            source          TEXT,
+            line            INTEGER,
+            severity        TEXT NOT NULL DEFAULT 'error',
+            url             TEXT,
+            fingerprint     TEXT NOT NULL,
+            context         TEXT DEFAULT '{}',
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_perception_app ON perception_events(app_id);
+        CREATE INDEX IF NOT EXISTS idx_perception_fingerprint ON perception_events(app_id, fingerprint);
+        CREATE INDEX IF NOT EXISTS idx_perception_created ON perception_events(app_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_perception_type ON perception_events(app_id, type);
+    `);
+
+    // ----------------------------------------- schema: perception_issues (#69 dedup tracking)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS perception_issues (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            fingerprint     TEXT NOT NULL,
+            gitlab_issue_id TEXT,
+            gitlab_issue_url TEXT,
+            first_seen      TEXT NOT NULL,
+            last_seen       TEXT NOT NULL,
+            count           INTEGER NOT NULL DEFAULT 1,
+            status          TEXT NOT NULL DEFAULT 'open',
+            UNIQUE(app_id, fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pissues_app ON perception_issues(app_id);
+        CREATE INDEX IF NOT EXISTS idx_pissues_fp ON perception_issues(app_id, fingerprint);
+    `);
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -427,6 +467,55 @@ function initDb(dataDir) {
         ),
         setDefault: db.prepare(
             'UPDATE endpoints SET is_default = 1, updated_at = ? WHERE id = ?'
+        ),
+    };
+
+    // ------------------------------------------------- perception statements (#69)
+    const perceptionStmts = {
+        insertEvent: db.prepare(`
+            INSERT INTO perception_events
+                (id, app_id, type, message, stack, source, line, severity, url, fingerprint, context, created_at)
+            VALUES
+                (@id, @app_id, @type, @message, @stack, @source, @line, @severity, @url, @fingerprint, @context, @created_at)
+        `),
+        getEvents: db.prepare(`
+            SELECT * FROM perception_events
+            WHERE app_id = ? AND created_at > ?
+            ORDER BY created_at ASC
+            LIMIT ?
+        `),
+        getEventsByFingerprint: db.prepare(`
+            SELECT * FROM perception_events
+            WHERE app_id = ? AND fingerprint = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        countByFingerprint: db.prepare(`
+            SELECT fingerprint, COUNT(*) as count, MIN(created_at) as first_seen, MAX(created_at) as last_seen
+            FROM perception_events
+            WHERE app_id = ?
+            GROUP BY fingerprint
+            ORDER BY count DESC
+            LIMIT ?
+        `),
+        insertIssue: db.prepare(`
+            INSERT OR IGNORE INTO perception_issues
+                (id, app_id, fingerprint, first_seen, last_seen, count, status)
+            VALUES
+                (@id, @app_id, @fingerprint, @first_seen, @last_seen, @count, @status)
+        `),
+        getIssue: db.prepare(
+            'SELECT * FROM perception_issues WHERE app_id = ? AND fingerprint = ?'
+        ),
+        updateIssue: db.prepare(`
+            UPDATE perception_issues
+            SET last_seen = @last_seen, count = @count,
+                gitlab_issue_id = COALESCE(@gitlab_issue_id, gitlab_issue_id),
+                gitlab_issue_url = COALESCE(@gitlab_issue_url, gitlab_issue_url)
+            WHERE app_id = @app_id AND fingerprint = @fingerprint
+        `),
+        getOpenIssues: db.prepare(
+            "SELECT * FROM perception_issues WHERE app_id = ? AND status = 'open' ORDER BY count DESC"
         ),
     };
 
@@ -1481,6 +1570,75 @@ function initDb(dataDir) {
         ).all(app_id, cutoff, limit);
     }
 
+    // ------------------------------------------------- perception methods (#69)
+
+    function createPerceptionEvent({ app_id, type, message, stack, source, line, severity, url, fingerprint, context }) {
+        const id = genId('pe');
+        const now = new Date().toISOString();
+        perceptionStmts.insertEvent.run({
+            id, app_id, type, message: message || '',
+            stack: stack || null, source: source || null, line: line || null,
+            severity: severity || 'error', url: url || null,
+            fingerprint, context: JSON.stringify(context || {}), created_at: now,
+        });
+        return { id, created_at: now };
+    }
+
+    function createPerceptionEvents(events) {
+        const insertMany = db.transaction((evts) => {
+            const results = [];
+            for (const evt of evts) {
+                results.push(createPerceptionEvent(evt));
+            }
+            return results;
+        });
+        return insertMany(events);
+    }
+
+    function getPerceptionEvents({ app_id, cursor, limit = 100 }) {
+        const after = cursor || '1970-01-01T00:00:00.000Z';
+        return perceptionStmts.getEvents.all(app_id, after, Math.min(limit, 500));
+    }
+
+    function getPerceptionEventsByFingerprint({ app_id, fingerprint, limit = 20 }) {
+        return perceptionStmts.getEventsByFingerprint.all(app_id, fingerprint, limit);
+    }
+
+    function getPerceptionStats({ app_id, limit = 50 }) {
+        return perceptionStmts.countByFingerprint.all(app_id, limit);
+    }
+
+    function upsertPerceptionIssue({ app_id, fingerprint, count, first_seen, last_seen, gitlab_issue_id, gitlab_issue_url }) {
+        const existing = perceptionStmts.getIssue.get(app_id, fingerprint);
+        if (existing) {
+            perceptionStmts.updateIssue.run({
+                app_id, fingerprint,
+                last_seen: last_seen || new Date().toISOString(),
+                count: (existing.count || 0) + (count || 1),
+                gitlab_issue_id: gitlab_issue_id || null,
+                gitlab_issue_url: gitlab_issue_url || null,
+            });
+            return { ...existing, updated: true };
+        }
+        const id = genId('pi');
+        perceptionStmts.insertIssue.run({
+            id, app_id, fingerprint,
+            first_seen: first_seen || new Date().toISOString(),
+            last_seen: last_seen || new Date().toISOString(),
+            count: count || 1,
+            status: 'open',
+        });
+        return { id, created: true };
+    }
+
+    function getPerceptionIssue({ app_id, fingerprint }) {
+        return perceptionStmts.getIssue.get(app_id, fingerprint);
+    }
+
+    function getOpenPerceptionIssues({ app_id }) {
+        return perceptionStmts.getOpenIssues.all(app_id);
+    }
+
     return {
         db,
         genId,
@@ -1574,6 +1732,15 @@ function initDb(dataDir) {
         // User Settings
         getUserSettings,
         updateUserSettings,
+        // Perception (#69 Error Sentinel)
+        createPerceptionEvent,
+        createPerceptionEvents,
+        getPerceptionEvents,
+        getPerceptionEventsByFingerprint,
+        getPerceptionStats,
+        upsertPerceptionIssue,
+        getPerceptionIssue,
+        getOpenPerceptionIssues,
     };
 }
 
