@@ -379,20 +379,38 @@ Agent 可发送任意 CDP 命令：
 ### Phase 3：行动层（Agent 能「操作」浏览器）
 
 **开发任务：**
-- Content Script: ActionExecutor（DOM 操作、导航、截图）
-- Server: Action Queue + WebSocket 双向通道
+- Content Script: ActionExecutor（DOM 操作、导航、截图、表单填写）
+- Server: Action Queue + WebSocket 双向通道（实时指令下发 + 结果回传）
 - Agent 侧: 自主巡检脚本（核心流程自动化测试）
-- CDP 升级（可选）: `chrome.debugger` API 接入，扩展操作能力
-- **参考实现**：Claude Code /chrome 的 per-site permission + 操作能力；OpenClaw Browser Relay 的 CDP 通道
+- **参考实现**：Claude Code /chrome 的操作能力（click/type/navigate/screenshot）+ per-site permission 模型
 
 **文档交付：**
-- 开发者文档：Action API 规范 + CDP 命令白名单 + 巡检脚本编写指南
-- 用户文档：操作授权管理、风险分级说明、CDP 模式启用指南
+- 开发者文档：Action API 规范 + 巡检脚本编写指南
+- 用户文档：操作授权管理、风险分级说明
 
-**交付物：Agent 能自主打开页面、执行操作、验证结果 —— 自动化 E2E 测试**
+**交付物：Agent 能通过 Content Script 操作页面 —— 基础 E2E 巡检**
+**估时：L（3-4 session）**
+
+### Phase 4：CDP 通道（深度浏览器控制）
+
+**开发任务：**
+- Extension: 通过 `chrome.debugger` API attach 目标 tab，建立 CDP session
+- Background: CDP Relay —— Agent 命令 ↔ CDP 协议转换层
+- CDP 命令白名单过滤（安全）：
+  - 允许：`Page.navigate`, `Runtime.evaluate`, `DOM.querySelector`, `Network.enable`, `Performance.getMetrics`, `Page.captureScreenshot`
+  - 禁止：`Target.disposeBrowserContext`, `Browser.close`, `SystemInfo.*` 等危险操作
+- Server: CDP 通道端点（`WS /api/v2/agent-channel/cdp`）
+- Extension Settings: CDP 模式开关（默认关闭，启用时图标变橙色）
+- **参考实现**：OpenClaw Browser Relay 的三层架构（Extension → Gateway → Agent）+ loopback + token 认证
+
+**文档交付：**
+- 开发者文档：CDP 命令白名单清单 + CDP 通道 API + 本地 Gateway 部署指南
+- 用户文档：CDP 模式启用说明、安全须知、视觉提示含义
+
+**交付物：Agent 获得完整 DevTools 级能力 —— Performance Profile、Memory Snapshot、网络拦截、精确 DOM 操作**
 **估时：XL（5-6 session）**
 
-### Phase 4：闭环（Agent 从发现到修复全自动）
+### Phase 5：闭环（Agent 从发现到修复全自动）
 
 **开发任务：**
 - Agent 侧: Error → git blame → 生成修复 PR → 通知 reviewer
@@ -442,6 +460,12 @@ Agent 可发送任意 CDP 命令：
 1. Agent 每小时自主执行一轮核心功能巡检（登录 → 聊天 → 发消息 → 验证）
 2. 巡检失败自动创建 issue + 截图
 
-### Phase 4 验收
+### Phase 4 验收（CDP）
+1. Agent 通过 CDP 获取页面 Performance Metrics + Memory Snapshot
+2. CDP 命令白名单生效 —— 危险命令被拦截
+3. CDP 模式启用时插件图标变橙色，关闭后恢复
+4. Agent 通过 CDP 执行精确 DOM 操作（比 Content Script 更可靠）
+
+### Phase 5 验收
 1. 从错误发生到修复 PR 创建，全自动，0 人工干预
 2. 修复 PR 的 merge rate > 60%（说明 AI 修复质量可用）
