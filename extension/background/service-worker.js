@@ -12,6 +12,7 @@
 
 importScripts('../config.js');
 importScripts('./error-storage.js');
+importScripts('./perception-storage.js');
 
 // ------------------------------------------------------------------ config
 
@@ -388,6 +389,29 @@ async function handleExternalMessage(message, sender) {
             await chrome.storage.sync.set(updates);
             return { success: true };
         }
+        case 'GET_AGENT_PERCEPTION_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                agentPerceptionEnabled: false,
+                agentPerceptionDisabledSites: [],
+            });
+            return {
+                agentPerceptionEnabled: settings.agentPerceptionEnabled,
+                agentPerceptionDisabledSites: settings.agentPerceptionDisabledSites,
+            };
+        }
+        case 'SET_AGENT_PERCEPTION_SETTINGS': {
+            const updates = {};
+            if (typeof message.agentPerceptionEnabled === 'boolean') {
+                updates.agentPerceptionEnabled = message.agentPerceptionEnabled;
+            }
+            if (Array.isArray(message.agentPerceptionDisabledSites)) {
+                updates.agentPerceptionDisabledSites = message.agentPerceptionDisabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
         case 'PING':
             return { pong: true, version: chrome.runtime.getManifest().version };
         default:
@@ -495,6 +519,25 @@ async function handleMessage(message, sender) {
 
         case 'MARK_ERRORS_READ':
             await markErrorsRead(message.tabId || sender.tab?.id);
+            return { success: true };
+
+        // ── Agent perception (#66) ────────────────────────────────────
+        case 'perception:event':
+            await handlePerceptionEvent(message.payload, sender.tab?.id);
+            return { success: true };
+
+        case 'GET_PERCEPTION_EVENTS':
+            return getPerceptionEvents(message.tabId || sender.tab?.id);
+
+        case 'GET_ALL_PERCEPTION_EVENTS':
+            return getAllPerceptionEvents();
+
+        case 'CLEAR_PERCEPTION_EVENTS':
+            await clearPerceptionEvents(message.tabId || sender.tab?.id);
+            return { success: true };
+
+        case 'CLEAR_ALL_PERCEPTION_EVENTS':
+            await clearAllPerceptionEvents();
             return { success: true };
 
         // Screenshot + upload messages
