@@ -39,7 +39,9 @@
         "content/inject.js",
         "content/error-monitor.js",
         "content/network-monitor.js",
-        "content/console-proxy.js"
+        "content/console-proxy.js",
+        "content/privacy-filter.js",
+        "content/session-recorder.js"
       ],
       "css": [
         "content/inject.css",
