@@ -1,11 +1,11 @@
 /**
- * ClawMark — Error Storage Module (#43 sub-2, #55)
+ * ClawMark — Error Storage Module (#64 Error Sentinel)
  *
- * Handles service worker side of passive QA monitoring:
+ * Handles service worker side of error monitoring:
  *   - Receives error:captured messages from ErrorMonitor content script
  *   - Stores errors per-tab in chrome.storage.local (ring buffer, cap 100)
  *   - Manages badge count (red badge on extension icon)
- *   - Dedup by fingerprint within storage window
+ *   - Dedup by fingerprint (type+message+source+line) within storage window
  *   - Exposes getErrors / clearErrors for side panel consumption
  *
  * Storage key: `errors_<tabId>` → { errors: [...], count: N }
@@ -44,10 +44,10 @@ async function setTabErrors(tabId, data) {
 }
 
 /**
- * Generate fingerprint for dedup.
+ * Generate fingerprint for dedup — matches content script's hash logic.
  */
 function fingerprint(error) {
-    return `${error.type}:${(error.message || '').slice(0, 150)}`;
+    return `${error.type}:${(error.message || '').slice(0, 150)}:${error.source || ''}:${error.line || 0}`;
 }
 
 /**
@@ -81,6 +81,8 @@ async function handleCapturedError(payload, tabId) {
         type: payload.type,
         message: payload.message || '',
         stack: payload.stack || '',
+        source: payload.source || '',
+        line: payload.line || 0,
         url: payload.url || '',
         severity: payload.severity || 'error',
         timestamp: payload.timestamp || Date.now(),
