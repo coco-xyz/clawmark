@@ -343,32 +343,68 @@ Agent 可发送任意 CDP 命令：
 ## 实现分期
 
 ### Phase 1：感知层（Agent 能「看到」浏览器）
+
+**开发任务：**
 - Content Script: ErrorMonitor + NetworkMonitor + ConsoleProxy
 - Background: Agent Bridge（感知事件上报）
-- Server: `POST /api/v2/agent-channel/perception` + 存储
+- Server: `POST /api/v2/agent-channel/perception` + 存储 + `GET` 查询 API
+- Server: Agent 注册 + API Key 签发（`POST /api/v2/agent-channel/register`）
 - Agent 侧: 定时拉取感知数据 → 自动创建 issue
-- **交付物：Agent 能实时感知用户浏览器的 console/network 错误，自动建 issue**
-- **估时：L（3-4 session）**
+- Extension Settings: Agent 绑定 UI + per-agent per-site 权限设置
+- **参考实现**：Sentry SDK 错误采集模式 + OpenClaw Relay 的 tab 自动 attach
+
+**文档交付：**
+- 开发者文档：Agent Channel API Reference（认证、端点、数据结构、错误码）
+- 用户文档：如何绑定 Agent、权限管理、开关控制、FAQ
+
+**交付物：Agent 能实时感知用户浏览器的 console/network 错误，自动建 issue**
+**估时：L（3-4 session）**
 
 ### Phase 2：记忆层（Agent 能「回放」用户操作）
+
+**开发任务：**
 - Content Script: SessionRecorder（事件序列 + 智能快照）
-- Server: Session 存储 + 查询 API
+- Server: Session 存储 + 查询 API（`POST/GET /api/v2/agent-channel/sessions`）
 - Agent 侧: 结合 session 上下文分析 bug 根因
-- **交付物：Issue 自动附带用户操作回放，Agent 能理解 bug 的完整上下文**
-- **估时：XL（4-5 session）**
+- Side Panel: Session 回放查看器
+- **参考实现**：LogRocket session replay 数据模型
+
+**文档交付：**
+- 开发者文档：Session 数据格式规范 + 回放 API
+- 用户文档：Session 录制说明、隐私控制、数据保留策略
+
+**交付物：Issue 自动附带用户操作回放，Agent 能理解 bug 的完整上下文**
+**估时：XL（4-5 session）**
 
 ### Phase 3：行动层（Agent 能「操作」浏览器）
+
+**开发任务：**
 - Content Script: ActionExecutor（DOM 操作、导航、截图）
 - Server: Action Queue + WebSocket 双向通道
 - Agent 侧: 自主巡检脚本（核心流程自动化测试）
-- **交付物：Agent 能自主打开页面、执行操作、验证结果 —— 自动化 E2E 测试**
-- **估时：XL（5-6 session）**
+- CDP 升级（可选）: `chrome.debugger` API 接入，扩展操作能力
+- **参考实现**：Claude Code /chrome 的 per-site permission + 操作能力；OpenClaw Browser Relay 的 CDP 通道
+
+**文档交付：**
+- 开发者文档：Action API 规范 + CDP 命令白名单 + 巡检脚本编写指南
+- 用户文档：操作授权管理、风险分级说明、CDP 模式启用指南
+
+**交付物：Agent 能自主打开页面、执行操作、验证结果 —— 自动化 E2E 测试**
+**估时：XL（5-6 session）**
 
 ### Phase 4：闭环（Agent 从发现到修复全自动）
+
+**开发任务：**
 - Agent 侧: Error → git blame → 生成修复 PR → 通知 reviewer
 - Dashboard: 错误趋势 + Agent 行动历史 + 质量报告
-- **交付物：发现 bug → 修复 PR，全自动，人只需 review merge**
-- **估时：XL（5-6 session）**
+- Webhook: 实时推送 P1 错误到外部系统
+
+**文档交付：**
+- 开发者文档：Webhook 配置 + Dashboard API
+- 用户文档：自动修复工作流说明、审计日志查看
+
+**交付物：发现 bug → 修复 PR，全自动，人只需 review merge**
+**估时：XL（5-6 session）**
 
 ## 与现有系统的关系
 
