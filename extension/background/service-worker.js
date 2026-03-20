@@ -15,6 +15,9 @@ importScripts('./error-storage.js');
 importScripts('./perception-storage.js');
 importScripts('./session-storage.js');
 importScripts('./action-queue.js');
+importScripts('./cdp-session-manager.js');
+importScripts('./cdp-tab-targeter.js');
+importScripts('./cdp-event-forwarder.js');
 
 // ------------------------------------------------------------------ config
 
@@ -746,6 +749,54 @@ async function handleMessage(message, sender) {
             await chrome.storage.sync.set(updates);
             return { success: true };
         }
+
+        // ── CDP session management (#81) ────────────────────────────
+        case 'cdp:start': {
+            const target = await resolveTabTarget(message.target || { tabId: message.tabId || sender.tab?.id });
+            if (target.error) return { success: false, error: target.error };
+            return cdpStartSession(target.tabId, message.domains);
+        }
+
+        case 'cdp:stop': {
+            const tabId = message.tabId || sender.tab?.id;
+            return cdpStopSession(tabId);
+        }
+
+        case 'cdp:command': {
+            const tabId = message.tabId || sender.tab?.id;
+            try {
+                const result = await cdpSendCommand(tabId, message.method, message.params);
+                return { success: true, result };
+            } catch (err) {
+                return { success: false, error: err.message };
+            }
+        }
+
+        case 'cdp:status': {
+            const tabId = message.tabId || sender.tab?.id;
+            if (tabId) {
+                return { attached: cdpIsAttached(tabId) };
+            }
+            return { sessions: cdpGetSessions() };
+        }
+
+        case 'cdp:events': {
+            const tabId = message.tabId || sender.tab?.id;
+            return getCdpEvents(tabId, message.filter || {});
+        }
+
+        case 'cdp:clear-events': {
+            const tabId = message.tabId || sender.tab?.id;
+            if (tabId) {
+                clearCdpEvents(tabId);
+            } else {
+                clearAllCdpEvents();
+            }
+            return { success: true };
+        }
+
+        case 'cdp:list-tabs':
+            return listTargetableTabs();
 
         default:
             return { error: `Unknown message type: ${message.type}` };
