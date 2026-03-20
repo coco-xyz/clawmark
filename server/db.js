@@ -1614,7 +1614,7 @@ function initDb(dataDir) {
             perceptionStmts.updateIssue.run({
                 app_id, fingerprint,
                 last_seen: last_seen || new Date().toISOString(),
-                count: (existing.count || 0) + (count || 1),
+                count: (existing.count || 0) + (count ?? 1),
                 gitlab_issue_id: gitlab_issue_id || null,
                 gitlab_issue_url: gitlab_issue_url || null,
             });
@@ -1625,7 +1625,7 @@ function initDb(dataDir) {
             id, app_id, fingerprint,
             first_seen: first_seen || new Date().toISOString(),
             last_seen: last_seen || new Date().toISOString(),
-            count: count || 1,
+            count: count ?? 1,
             status: 'open',
         });
         return { id, created: true };
