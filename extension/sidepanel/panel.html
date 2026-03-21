@@ -542,6 +542,256 @@
             font-size: 32px;
             margin-bottom: 8px;
         }
+
+        /* ---- Replay View (#75 Phase 2) ---- */
+        .replay-view { display: none; }
+        .replay-view.active { display: block; }
+
+        .replay-back {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 0;
+            color: #5865f2;
+            cursor: pointer;
+            font-size: 12px;
+            border: none;
+            background: none;
+        }
+
+        .replay-header {
+            margin-bottom: 8px;
+        }
+
+        .replay-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .replay-url {
+            font-size: 12px;
+            color: #ddd;
+            font-weight: 500;
+        }
+
+        .replay-stats {
+            font-size: 11px;
+            color: #888;
+        }
+
+        .replay-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 0;
+        }
+
+        .replay-play-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #5865f2;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .replay-play-btn:hover { background: #4752c4; }
+
+        .replay-time {
+            font-size: 11px;
+            color: #888;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            min-width: 80px;
+        }
+
+        .replay-speed-btn {
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid #333;
+            color: #ccc;
+            font-size: 11px;
+            cursor: pointer;
+            margin-left: auto;
+        }
+
+        .replay-speed-btn:hover { border-color: #5865f2; }
+
+        .replay-timeline-track {
+            position: relative;
+            height: 32px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid #2a2a3e;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            overflow: hidden;
+        }
+
+        .replay-markers {
+            position: absolute;
+            inset: 0;
+        }
+
+        .replay-marker {
+            position: absolute;
+            top: 50%;
+            width: 4px;
+            height: 14px;
+            transform: translate(-50%, -50%);
+            border-radius: 2px;
+            opacity: 0.7;
+            cursor: pointer;
+            z-index: 1;
+        }
+
+        .replay-marker:hover { opacity: 1; transform: translate(-50%, -50%) scaleY(1.3); }
+
+        .replay-marker-click { background: #5865f2; }
+        .replay-marker-input { background: #22c55e; }
+        .replay-marker-scroll { background: rgba(255,255,255,0.15); height: 6px; }
+        .replay-marker-navigation { background: #eab308; }
+        .replay-marker-error { background: #ef4444 !important; height: 18px; opacity: 1; z-index: 2; }
+        .replay-marker-snapshot { background: #8b5cf6; height: 8px; }
+
+        .replay-playhead {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 2px;
+            background: #fff;
+            z-index: 3;
+            pointer-events: none;
+            transition: left 0.05s linear;
+        }
+
+        .replay-event-detail {
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+        }
+
+        .replay-detail-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+            font-size: 12px;
+            color: #ddd;
+        }
+
+        .replay-detail-time {
+            margin-left: auto;
+            font-size: 11px;
+            color: #888;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .replay-detail-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 16px;
+            cursor: pointer;
+            padding: 0 4px;
+        }
+
+        .replay-detail-close:hover { color: #fff; }
+
+        .replay-detail-body {
+            font-size: 11px;
+        }
+
+        .replay-detail-field {
+            display: flex;
+            gap: 6px;
+            padding: 2px 0;
+            color: #ccc;
+        }
+
+        .replay-detail-field label {
+            color: #888;
+            min-width: 60px;
+            flex-shrink: 0;
+        }
+
+        .replay-detail-field span {
+            word-break: break-all;
+        }
+
+        .replay-event-list {
+            max-height: calc(100vh - 340px);
+            overflow-y: auto;
+        }
+
+        .replay-event-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.1s;
+        }
+
+        .replay-event-row:hover { background: rgba(255,255,255,0.04); }
+
+        .replay-event-row.replay-event-active {
+            background: rgba(88, 101, 242, 0.12);
+            border-left: 2px solid #5865f2;
+        }
+
+        .replay-event-row.replay-event-error {
+            color: #f87171;
+        }
+
+        .replay-event-row.replay-event-error:hover {
+            background: rgba(239, 68, 68, 0.08);
+        }
+
+        .replay-event-time {
+            font-size: 10px;
+            color: #666;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            min-width: 36px;
+            flex-shrink: 0;
+        }
+
+        .replay-event-icon {
+            font-size: 12px;
+            flex-shrink: 0;
+            width: 16px;
+            text-align: center;
+        }
+
+        .replay-event-desc {
+            color: #ccc;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .replay-event-error .replay-event-desc { color: #f87171; }
+
+        .replay-loading, .replay-empty-events, .replay-error {
+            text-align: center;
+            padding: 24px 16px;
+            color: #666;
+            font-size: 12px;
+        }
+
+        .replay-error { color: #f87171; }
     </style>
 </head>
 <body>
@@ -585,6 +835,15 @@
         </div>
     </div>
 
+    <!-- Replay View (#75 Phase 2) -->
+    <div id="replay-view" class="replay-view">
+        <div class="content">
+            <button class="replay-back" id="replay-back">&#x2190; Back to sessions</button>
+            <div id="replay-container"></div>
+        </div>
+    </div>
+
+    <script src="replay-timeline.js"></script>
     <script src="panel.js"></script>
 </body>
 </html>

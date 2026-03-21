@@ -59,6 +59,9 @@ const replySubmit = document.getElementById('reply-submit');
 const refreshBtn = document.getElementById('refresh');
 const sessionsView = document.getElementById('sessions-view');
 const sessionsContainer = document.getElementById('sessions-container');
+const replayView = document.getElementById('replay-view');
+const replayContainer = document.getElementById('replay-container');
+const replayBack = document.getElementById('replay-back');
 
 // ------------------------------------------------------------------ init
 
@@ -277,13 +280,28 @@ function renderThread(item) {
 function showListView() {
     listView.style.display = 'block';
     sessionsView.style.display = 'none';
+    replayView.classList.remove('active');
     threadView.classList.remove('active');
+    if (typeof ReplayTimeline !== 'undefined') ReplayTimeline.unmount();
     currentItemId = null;
 }
 
 function showThreadView() {
     listView.style.display = 'none';
+    replayView.classList.remove('active');
     threadView.classList.add('active');
+}
+
+function showReplayView(tabId, sessionId) {
+    listView.style.display = 'none';
+    sessionsView.style.display = 'none';
+    threadView.classList.remove('active');
+    replayView.classList.add('active');
+
+    if (typeof ReplayTimeline !== 'undefined') {
+        ReplayTimeline.mount(replayContainer);
+        ReplayTimeline.loadSession(tabId, sessionId);
+    }
 }
 
 // ------------------------------------------------------------------ events
@@ -311,6 +329,13 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 threadBack.addEventListener('click', showListView);
+replayBack.addEventListener('click', () => {
+    if (typeof ReplayTimeline !== 'undefined') ReplayTimeline.unmount();
+    replayView.classList.remove('active');
+    // Restore sessions tab view by clicking the sessions tab
+    const sessionsTab = document.querySelector('.tab[data-filter="sessions"]');
+    if (sessionsTab) sessionsTab.click();
+});
 refreshBtn.addEventListener('click', () => {
     invalidateCache(`items:${currentUrl}`);
     if (currentItemId) loadThread(currentItemId);
@@ -643,6 +668,13 @@ function renderSessions() {
                 </div>
             </div>`;
     }).join('');
+
+    // Click session card → open replay timeline
+    sessionsContainer.querySelectorAll('.session-card').forEach(card => {
+        card.addEventListener('click', () => {
+            showReplayView(currentTabId, card.dataset.sessionId);
+        });
+    });
 }
 
 function formatDuration(ms) {
