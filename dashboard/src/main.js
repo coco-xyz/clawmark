@@ -19,6 +19,7 @@ import {
     previewIssues, batchFileIssues,
     getPassiveMonitorSettings, setPassiveMonitorSettings,
     getErrorTrends,
+    getAgentActions,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -105,7 +106,6 @@ function showApp(user) {
     loadAuthsList();
     loadRules();
     loadFileIssues();
-    loadMonitoring();
     loadAbout();
 
     // Handle old hash routes that were consolidated
@@ -142,6 +142,8 @@ function switchTab(tab) {
     const panel = document.getElementById(`tab-${tab}`);
     if (panel) panel.classList.add('active');
     location.hash = tab;
+    // Lazy-load monitoring tab on first activation (#87)
+    if (tab === 'monitoring') loadMonitoring();
 }
 
 navItems.forEach(item => {
@@ -1283,8 +1285,11 @@ async function loadMonitoring() {
 
     document.getElementById('err-range-select').addEventListener('change', () => fetchErrorTrends());
     document.getElementById('err-group-select').addEventListener('change', () => fetchErrorTrends());
+    document.getElementById('action-type-filter').addEventListener('change', () => fetchAgentActions());
+    document.getElementById('action-range-select').addEventListener('change', () => fetchAgentActions());
 
     fetchErrorTrends();
+    fetchAgentActions();
 }
 
 async function fetchErrorTrends() {
@@ -1466,6 +1471,82 @@ function renderSeverityBars(bySeverity) {
                     <div class="severity-bar-fill" style="width:${pct}%;background:${color}"></div>
                 </div>
                 <span class="severity-bar-count">${s.count}</span>
+            </div>`;
+    }).join('');
+}
+
+// ------------------------------------------------------------------ Agent Actions (#87 Phase 2)
+
+const ACTION_ICONS = {
+    perception_capture: '\ud83d\udc41\ufe0f',
+    issue_created: '\ud83d\udce2',
+    issue_updated: '\ud83d\udd04',
+    session_start: '\u25b6\ufe0f',
+    session_end: '\u23f9\ufe0f',
+};
+
+const ACTION_LABELS = {
+    perception_capture: 'Perception Capture',
+    issue_created: 'Issue Created',
+    issue_updated: 'Issue Updated',
+    session_start: 'Session Start',
+    session_end: 'Session End',
+};
+
+async function fetchAgentActions() {
+    const days = parseInt(document.getElementById('action-range-select').value, 10) || 30;
+    const action_type = document.getElementById('action-type-filter').value || '';
+
+    try {
+        const params = { days };
+        if (action_type) params.action_type = action_type;
+        const data = await getAgentActions(params);
+        // Hide summary when filtered (summary is unfiltered and would disagree with list)
+        renderActionSummary(action_type ? [] : (data.summary || []));
+        renderActionList(data.actions || []);
+    } catch {
+        document.getElementById('action-list').innerHTML =
+            '<div class="empty-state">Failed to load agent actions</div>';
+    }
+}
+
+function renderActionSummary(summary) {
+    const container = document.getElementById('action-summary');
+    if (!summary || summary.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = summary.map(s => {
+        const icon = ACTION_ICONS[s.action_type] || '\u2022';
+        const label = ACTION_LABELS[s.action_type] || s.action_type;
+        return `<span class="action-summary-badge">${icon} ${escHtml(label)}: <strong>${Number(s.count)}</strong></span>`;
+    }).join('');
+}
+
+function renderActionList(actions) {
+    const container = document.getElementById('action-list');
+    if (!actions || actions.length === 0) {
+        container.innerHTML = '<div class="empty-state">No agent actions recorded yet</div>';
+        return;
+    }
+
+    container.innerHTML = actions.map(a => {
+        const icon = ACTION_ICONS[a.action_type] || '\u2022';
+        const label = ACTION_LABELS[a.action_type] || a.action_type;
+        const time = a.created_at ? new Date(a.created_at).toLocaleString() : '';
+        const statusClass = a.status === 'success' ? 'action-status-ok' : 'action-status-fail';
+        return `
+            <div class="action-item">
+                <span class="action-icon">${icon}</span>
+                <div class="action-body">
+                    <div class="action-title">${escHtml(a.summary)}</div>
+                    <div class="action-meta">
+                        <span class="action-type-badge">${escHtml(label)}</span>
+                        ${a.agent_id ? `<span class="action-agent">Agent: ${escHtml(a.agent_id.slice(0, 12))}</span>` : ''}
+                        <span class="${statusClass}">${escHtml(a.status)}</span>
+                        <span class="action-time">${escHtml(time)}</span>
+                    </div>
+                </div>
             </div>`;
     }).join('');
 }
