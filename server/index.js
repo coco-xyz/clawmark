@@ -2641,6 +2641,155 @@ app.post('/api/v2/agent-channel/agents/:id/rotate-key', apiWriteLimiter, v2Auth,
     }
 });
 
+// ----------------------------------------------------------------- session storage (#73)
+
+const sessionLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    keyGenerator: (req) => req.v2Auth?.app_id || req.ip,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Session rate limit exceeded, try again later' },
+});
+
+// POST /api/v2/agent-channel/sessions — create or append to a session
+app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { session_id, tab_id, url, title, start_time, events, snapshots, metadata } = req.body;
+
+    // Validate events array
+    if (events && (!Array.isArray(events) || events.length > 1000)) {
+        return res.status(400).json({ error: 'events must be an array (max 1000)' });
+    }
+    if (snapshots && (!Array.isArray(snapshots) || snapshots.length > 100)) {
+        return res.status(400).json({ error: 'snapshots must be an array (max 100)' });
+    }
+
+    try {
+        // If session_id provided, append to existing session (chunked upload)
+        if (session_id) {
+            const existing = itemsDb.getSession(session_id);
+            if (!existing) return res.status(404).json({ error: 'Session not found' });
+            if (existing.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+            const result = itemsDb.appendSessionEvents(session_id, { events, snapshots });
+            return res.json(result);
+        }
+
+        // Create new session
+        const result = itemsDb.createSession({
+            app_id,
+            agent_id: req.v2Auth?.agent?.id || null,
+            tab_id,
+            url,
+            title,
+            start_time,
+            events,
+            snapshots,
+            metadata,
+        });
+        res.status(201).json(result);
+    } catch (err) {
+        if (err.message === 'SESSION_TOO_LARGE') {
+            return res.status(413).json({ error: 'Session exceeds maximum size (50MB)' });
+        }
+        console.error('[agent-channel] session POST error:', err.message);
+        res.status(500).json({ error: 'Failed to store session' });
+    }
+});
+
+// POST /api/v2/agent-channel/sessions/:id/finalize — mark session as completed
+app.post('/api/v2/agent-channel/sessions/:id/finalize', sessionLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const session = itemsDb.getSession(req.params.id);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+        if (session.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+        const result = itemsDb.finalizeSession(req.params.id);
+        res.json(result);
+    } catch (err) {
+        console.error('[agent-channel] session finalize error:', err.message);
+        res.status(500).json({ error: 'Failed to finalize session' });
+    }
+});
+
+// GET /api/v2/agent-channel/sessions — list sessions
+app.get('/api/v2/agent-channel/sessions', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { agent_id, site, after, limit } = req.query;
+
+    try {
+        const sessions = itemsDb.listSessions({
+            app_id,
+            agent_id: agent_id || null,
+            site: site || null,
+            after: after || null,
+            limit: parseInt(limit) || 50,
+        });
+        res.json({ sessions, count: sessions.length });
+    } catch (err) {
+        console.error('[agent-channel] session list error:', err.message);
+        res.status(500).json({ error: 'Failed to list sessions' });
+    }
+});
+
+// GET /api/v2/agent-channel/sessions/:id — get session detail with events
+app.get('/api/v2/agent-channel/sessions/:id', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const session = itemsDb.getSession(req.params.id);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+        if (session.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+        const { start_time, end_time, include_snapshots } = req.query;
+        const events = itemsDb.getSessionEvents(req.params.id, {
+            start_time: start_time || null,
+            end_time: end_time || null,
+        });
+
+        let snapshots = null;
+        if (include_snapshots === 'true' || include_snapshots === '1') {
+            snapshots = itemsDb.getSessionSnapshots(req.params.id);
+        }
+
+        res.json({ session, events, ...(snapshots !== null ? { snapshots } : {}) });
+    } catch (err) {
+        console.error('[agent-channel] session detail error:', err.message);
+        res.status(500).json({ error: 'Failed to get session' });
+    }
+});
+
+// GET /api/v2/agent-channel/sessions/:id/snapshots/:snapshotId — get full snapshot HTML
+app.get('/api/v2/agent-channel/sessions/:id/snapshots/:snapshotId', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const session = itemsDb.getSession(req.params.id);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+        if (session.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+        const snapshot = itemsDb.getSessionSnapshot(req.params.snapshotId);
+        if (!snapshot || snapshot.session_id !== req.params.id) {
+            return res.status(404).json({ error: 'Snapshot not found' });
+        }
+
+        res.json(snapshot);
+    } catch (err) {
+        console.error('[agent-channel] snapshot detail error:', err.message);
+        res.status(500).json({ error: 'Failed to get snapshot' });
+    }
+});
+
 // ----------------------------------------------------------------- health
 
 app.get('/health', (req, res) => {
@@ -2663,6 +2812,16 @@ app.listen(PORT, () => {
     console.log(`    adapters  : ${Object.keys(registry.getStatus()).length} channel(s)`);
     console.log(`    auth      : JWT + API key (invite codes deprecated)`);
     console.log(`    api v2    : /api/v2/*`);
+
+    // Session cleanup job: run daily, delete sessions older than 30 days (#73)
+    setInterval(() => {
+        try {
+            const result = itemsDb.cleanupOldSessions(30);
+            if (result.deleted > 0) console.log(`[session] Cleaned up ${result.deleted} expired session(s)`);
+        } catch (err) {
+            console.error('[session] Cleanup error:', err.message);
+        }
+    }, 24 * 60 * 60 * 1000); // every 24h
 
     // Start dispatch retry worker (every 30s, exponential backoff per entry)
     let retryBusy = false;

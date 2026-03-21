@@ -392,6 +392,58 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_pissues_fp ON perception_issues(app_id, fingerprint);
     `);
 
+    // ----------------------------------------- schema: sessions (#73 Session Storage)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            agent_id        TEXT,
+            tab_id          TEXT,
+            url             TEXT,
+            title           TEXT,
+            start_time      TEXT NOT NULL,
+            end_time        TEXT,
+            event_count     INTEGER NOT NULL DEFAULT 0,
+            snapshot_count  INTEGER NOT NULL DEFAULT 0,
+            total_size      INTEGER NOT NULL DEFAULT 0,
+            status          TEXT NOT NULL DEFAULT 'active',
+            metadata        TEXT DEFAULT '{}',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_app ON sessions(app_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(app_id, agent_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(app_id, start_time);
+        CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS session_events (
+            id              TEXT PRIMARY KEY,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            type            TEXT NOT NULL,
+            timestamp       TEXT NOT NULL,
+            data            TEXT NOT NULL DEFAULT '{}',
+            size            INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id);
+        CREATE INDEX IF NOT EXISTS idx_session_events_ts ON session_events(session_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_session_events_type ON session_events(session_id, type);
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS session_snapshots (
+            id              TEXT PRIMARY KEY,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            trigger         TEXT NOT NULL DEFAULT 'manual',
+            timestamp       TEXT NOT NULL,
+            html            TEXT NOT NULL,
+            size            INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_snapshots_session ON session_snapshots(session_id);
+        CREATE INDEX IF NOT EXISTS idx_session_snapshots_ts ON session_snapshots(session_id, timestamp);
+    `);
+
     // ------------------------------------------------- schema: agents table (#68)
     db.exec(`
         CREATE TABLE IF NOT EXISTS agents (
@@ -539,6 +591,79 @@ function initDb(dataDir) {
         getOpenIssues: db.prepare(
             "SELECT * FROM perception_issues WHERE app_id = ? AND status = 'open' ORDER BY count DESC"
         ),
+    };
+
+    // ------------------------------------------------- session statements (#73)
+    const sessionStmts = {
+        insertSession: db.prepare(`
+            INSERT INTO sessions
+                (id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                 event_count, snapshot_count, total_size, status, metadata, created_at, updated_at)
+            VALUES
+                (@id, @app_id, @agent_id, @tab_id, @url, @title, @start_time, @end_time,
+                 @event_count, @snapshot_count, @total_size, @status, @metadata, @created_at, @updated_at)
+        `),
+        getSession: db.prepare('SELECT * FROM sessions WHERE id = ?'),
+        listSessions: db.prepare(`
+            SELECT id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                   event_count, snapshot_count, total_size, status, created_at, updated_at
+            FROM sessions
+            WHERE app_id = ? AND start_time > ?
+            ORDER BY start_time DESC
+            LIMIT ?
+        `),
+        listSessionsByAgent: db.prepare(`
+            SELECT id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                   event_count, snapshot_count, total_size, status, created_at, updated_at
+            FROM sessions
+            WHERE app_id = ? AND agent_id = ? AND start_time > ?
+            ORDER BY start_time DESC
+            LIMIT ?
+        `),
+        listSessionsBySite: db.prepare(`
+            SELECT id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                   event_count, snapshot_count, total_size, status, created_at, updated_at
+            FROM sessions
+            WHERE app_id = ? AND url LIKE ? AND start_time > ?
+            ORDER BY start_time DESC
+            LIMIT ?
+        `),
+        updateSession: db.prepare(`
+            UPDATE sessions
+            SET end_time = @end_time, event_count = @event_count, snapshot_count = @snapshot_count,
+                total_size = @total_size, status = @status, updated_at = @updated_at
+            WHERE id = @id
+        `),
+        insertEvent: db.prepare(`
+            INSERT INTO session_events (id, session_id, type, timestamp, data, size)
+            VALUES (@id, @session_id, @type, @timestamp, @data, @size)
+        `),
+        getEvents: db.prepare(`
+            SELECT * FROM session_events
+            WHERE session_id = ?
+            ORDER BY timestamp ASC
+        `),
+        getEventsInRange: db.prepare(`
+            SELECT * FROM session_events
+            WHERE session_id = ? AND timestamp >= ? AND timestamp <= ?
+            ORDER BY timestamp ASC
+        `),
+        insertSnapshot: db.prepare(`
+            INSERT INTO session_snapshots (id, session_id, trigger, timestamp, html, size)
+            VALUES (@id, @session_id, @trigger, @timestamp, @html, @size)
+        `),
+        getSnapshots: db.prepare(`
+            SELECT id, session_id, trigger, timestamp, size FROM session_snapshots
+            WHERE session_id = ?
+            ORDER BY timestamp ASC
+        `),
+        getSnapshot: db.prepare('SELECT * FROM session_snapshots WHERE id = ?'),
+        deleteOldSessions: db.prepare(`
+            DELETE FROM sessions WHERE status = 'completed' AND updated_at < ?
+        `),
+        countByApp: db.prepare(`
+            SELECT COUNT(*) AS count FROM sessions WHERE app_id = ?
+        `),
     };
 
     // ------------------------------------------------- user_rules statements
@@ -1678,6 +1803,201 @@ function initDb(dataDir) {
         return perceptionStmts.getOpenIssues.all(app_id);
     }
 
+    // ------------------------------------------------- session methods (#73)
+
+    const MAX_SESSION_SIZE = 50 * 1024 * 1024; // 50MB
+
+    function createSession({ app_id, agent_id, tab_id, url, title, start_time, events, snapshots, metadata }) {
+        const now = new Date().toISOString();
+        const sessionId = genId('sess');
+
+        const eventsData = (events || []).slice(0, 1000);
+        const snapshotsData = (snapshots || []).slice(0, 100);
+
+        // Calculate total size
+        let totalSize = 0;
+        for (const e of eventsData) {
+            totalSize += JSON.stringify(e.data || {}).length;
+        }
+        for (const s of snapshotsData) {
+            totalSize += (s.html || '').length;
+        }
+
+        if (totalSize > MAX_SESSION_SIZE) {
+            throw new Error('SESSION_TOO_LARGE');
+        }
+
+        const insertAll = db.transaction(() => {
+            sessionStmts.insertSession.run({
+                id: sessionId,
+                app_id,
+                agent_id: agent_id || null,
+                tab_id: tab_id || null,
+                url: (url || '').slice(0, 2048) || null,
+                title: (title || '').slice(0, 512) || null,
+                start_time: start_time || now,
+                end_time: null,
+                event_count: eventsData.length,
+                snapshot_count: snapshotsData.length,
+                total_size: totalSize,
+                status: 'active',
+                metadata: JSON.stringify(metadata || {}),
+                created_at: now,
+                updated_at: now,
+            });
+
+            for (const evt of eventsData) {
+                const dataStr = JSON.stringify(evt.data || {});
+                sessionStmts.insertEvent.run({
+                    id: genId('sevt'),
+                    session_id: sessionId,
+                    type: evt.type || 'unknown',
+                    timestamp: evt.timestamp || now,
+                    data: dataStr,
+                    size: dataStr.length,
+                });
+            }
+
+            for (const snap of snapshotsData) {
+                const html = (snap.html || '').slice(0, 50000);
+                sessionStmts.insertSnapshot.run({
+                    id: genId('ssnap'),
+                    session_id: sessionId,
+                    trigger: snap.trigger || 'manual',
+                    timestamp: snap.timestamp || now,
+                    html,
+                    size: html.length,
+                });
+            }
+        });
+
+        insertAll();
+
+        return {
+            id: sessionId,
+            app_id,
+            event_count: eventsData.length,
+            snapshot_count: snapshotsData.length,
+            total_size: totalSize,
+            created_at: now,
+        };
+    }
+
+    function appendSessionEvents(sessionId, { events, snapshots }) {
+        const session = sessionStmts.getSession.get(sessionId);
+        if (!session) return null;
+
+        const now = new Date().toISOString();
+        const eventsData = (events || []).slice(0, 1000);
+        const snapshotsData = (snapshots || []).slice(0, 100);
+
+        let addedSize = 0;
+        for (const e of eventsData) addedSize += JSON.stringify(e.data || {}).length;
+        for (const s of snapshotsData) addedSize += (s.html || '').length;
+
+        if (session.total_size + addedSize > MAX_SESSION_SIZE) {
+            throw new Error('SESSION_TOO_LARGE');
+        }
+
+        const appendAll = db.transaction(() => {
+            for (const evt of eventsData) {
+                const dataStr = JSON.stringify(evt.data || {});
+                sessionStmts.insertEvent.run({
+                    id: genId('sevt'),
+                    session_id: sessionId,
+                    type: evt.type || 'unknown',
+                    timestamp: evt.timestamp || now,
+                    data: dataStr,
+                    size: dataStr.length,
+                });
+            }
+
+            for (const snap of snapshotsData) {
+                const html = (snap.html || '').slice(0, 50000);
+                sessionStmts.insertSnapshot.run({
+                    id: genId('ssnap'),
+                    session_id: sessionId,
+                    trigger: snap.trigger || 'manual',
+                    timestamp: snap.timestamp || now,
+                    html,
+                    size: html.length,
+                });
+            }
+
+            sessionStmts.updateSession.run({
+                id: sessionId,
+                end_time: session.end_time,
+                event_count: session.event_count + eventsData.length,
+                snapshot_count: session.snapshot_count + snapshotsData.length,
+                total_size: session.total_size + addedSize,
+                status: session.status,
+                updated_at: now,
+            });
+        });
+
+        appendAll();
+
+        return {
+            id: sessionId,
+            events_added: eventsData.length,
+            snapshots_added: snapshotsData.length,
+            total_size: session.total_size + addedSize,
+        };
+    }
+
+    function finalizeSession(sessionId) {
+        const session = sessionStmts.getSession.get(sessionId);
+        if (!session) return null;
+        const now = new Date().toISOString();
+        sessionStmts.updateSession.run({
+            id: sessionId,
+            end_time: now,
+            event_count: session.event_count,
+            snapshot_count: session.snapshot_count,
+            total_size: session.total_size,
+            status: 'completed',
+            updated_at: now,
+        });
+        return { id: sessionId, status: 'completed', end_time: now };
+    }
+
+    function listSessions({ app_id, agent_id, site, after, limit = 50 }) {
+        const cutoff = after || '1970-01-01T00:00:00.000Z';
+        const maxLimit = Math.min(limit, 200);
+        if (agent_id) {
+            return sessionStmts.listSessionsByAgent.all(app_id, agent_id, cutoff, maxLimit);
+        }
+        if (site) {
+            return sessionStmts.listSessionsBySite.all(app_id, `%${site}%`, cutoff, maxLimit);
+        }
+        return sessionStmts.listSessions.all(app_id, cutoff, maxLimit);
+    }
+
+    function getSession(sessionId) {
+        return sessionStmts.getSession.get(sessionId) || null;
+    }
+
+    function getSessionEvents(sessionId, { start_time, end_time } = {}) {
+        if (start_time && end_time) {
+            return sessionStmts.getEventsInRange.all(sessionId, start_time, end_time);
+        }
+        return sessionStmts.getEvents.all(sessionId);
+    }
+
+    function getSessionSnapshots(sessionId) {
+        return sessionStmts.getSnapshots.all(sessionId);
+    }
+
+    function getSessionSnapshot(snapshotId) {
+        return sessionStmts.getSnapshot.get(snapshotId) || null;
+    }
+
+    function cleanupOldSessions(retentionDays = 30) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const result = sessionStmts.deleteOldSessions.run(cutoff);
+        return { deleted: result.changes };
+    }
+
     // ------------------------------------------------- agent methods (#68)
 
     function registerAgent({ app_id, name, key_hash, key_prefix, callback_url, capabilities, created_by }) {
@@ -1847,6 +2167,16 @@ function initDb(dataDir) {
         upsertPerceptionIssue,
         getPerceptionIssue,
         getOpenPerceptionIssues,
+        // Sessions (#73)
+        createSession,
+        appendSessionEvents,
+        finalizeSession,
+        listSessions,
+        getSession,
+        getSessionEvents,
+        getSessionSnapshots,
+        getSessionSnapshot,
+        cleanupOldSessions,
     };
 }
 
