@@ -2833,7 +2833,7 @@ app.post('/api/v2/agent-channel/actions', sessionLimiter, v2AuthOrAgent, (req, r
     } catch (err) {
         if (err.message.startsWith('INVALID_ACTION_TYPE:')) {
             const type = err.message.split(':')[1];
-            return res.status(400).json({ error: `Invalid action_type: ${type}. Allowed: navigate, click, extract` });
+            return res.status(400).json({ error: `Invalid action_type: ${type}. Allowed: ${itemsDb.getValidActionTypes().join(', ')}` });
         }
         if (err.message === 'QUEUE_FULL') {
             return res.status(429).json({ error: 'Action queue full (max 100 pending per agent)' });

@@ -2383,6 +2383,7 @@ function initDb(dataDir) {
         // Actions (#78)
         createAction,
         getAction,
+        getValidActionTypes: () => [...VALID_ACTION_TYPES],
         listPendingActions,
         listAgentActions,
         updateActionStatus,
