@@ -331,7 +331,11 @@ async function sendWebhook(event, payload) {
         const authValidTargets = [];
         for (const t of filteredTargets) {
             if (t.matched_rule && t.matched_rule.auth_id) {
-                const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
+                let auth;
+                try { auth = itemsDb.getUserAuth(t.matched_rule.auth_id); } catch (err) {
+                    console.error(`[routing] DB error fetching auth ${t.matched_rule.auth_id}: ${err.message}`);
+                    continue;
+                }
                 if (auth) {
                     let creds;
                     try { creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials; } catch { creds = {}; }
@@ -343,6 +347,9 @@ async function sendWebhook(event, payload) {
             } else {
                 authValidTargets.push(t);
             }
+        }
+        if (filteredTargets.length > authValidTargets.length) {
+            console.warn(`[routing] ${filteredTargets.length - authValidTargets.length} of ${filteredTargets.length} targets dropped due to missing auth`);
         }
         filteredTargets = authValidTargets;
 
@@ -1454,16 +1461,26 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
     });
 
     // #264: Validate auth_id references — filter out targets whose auth credentials are missing
+    const totalBeforeFilter = targets.length;
     const validatedTargets = targets.filter(t => {
         if (t.matched_rule && t.matched_rule.auth_id) {
-            const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
-            if (!auth) {
-                console.warn(`[routing/resolve] Dropping target: auth ${t.matched_rule.auth_id} from rule ${t.matched_rule.id} not found`);
+            try {
+                const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
+                if (!auth) {
+                    console.warn(`[routing/resolve] Dropping target: auth ${t.matched_rule.auth_id} from rule ${t.matched_rule.id} not found`);
+                    return false;
+                }
+            } catch (err) {
+                console.error(`[routing/resolve] DB error checking auth ${t.matched_rule.auth_id}: ${err.message}`);
                 return false;
             }
         }
         return true;
     });
+    const droppedCount = totalBeforeFilter - validatedTargets.length;
+    if (droppedCount > 0) {
+        console.warn(`[routing/resolve] ${droppedCount} of ${totalBeforeFilter} targets dropped due to missing auth`);
+    }
 
     // Include recent targets for recommendation (#48)
     const appId = req.v2Auth?.app_id;
@@ -1473,7 +1490,10 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
             recentTargets = itemsDb.getRecentTargets(user, appId, 5)
                 .filter(r => {
                     // #264: Skip recent targets with missing auth
-                    if (r.auth_id && !itemsDb.getUserAuth(r.auth_id)) return false;
+                    if (r.auth_id) {
+                        try { if (!itemsDb.getUserAuth(r.auth_id)) return false; }
+                        catch { return false; }
+                    }
                     return true;
                 })
                 .map(r => {
