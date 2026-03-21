@@ -220,7 +220,13 @@
 
             <!-- Monitoring Tab (#87) -->
             <section class="tab-panel" id="tab-monitoring">
-                <h1>Monitoring</h1>
+                <div class="tab-header-row">
+                    <h1>Monitoring</h1>
+                    <div class="export-controls">
+                        <button class="btn btn-secondary btn-small" id="btn-export-csv">Export CSV</button>
+                        <button class="btn btn-secondary btn-small" id="btn-export-pdf">Export PDF</button>
+                    </div>
+                </div>
 
                 <!-- Error Summary Cards -->
                 <div class="stats-grid">
@@ -346,8 +352,8 @@
                         </div>
                         <div class="quality-card">
                             <div class="quality-value" id="q-autofix">&mdash;</div>
-                            <div class="quality-label">Auto-Fix Rate</div>
-                            <div class="quality-desc">Issues filed to tracker</div>
+                            <div class="quality-label">Issue Filing Rate</div>
+                            <div class="quality-desc">Issues filed to issue tracker</div>
                         </div>
                         <div class="quality-card">
                             <div class="quality-value" id="q-recurrence">&mdash;</div>
@@ -362,6 +368,7 @@
                     </div>
 
                     <!-- Trend Comparison -->
+                    <h4 class="quality-section-heading">Volume Trend</h4>
                     <div class="quality-comparison" id="quality-comparison"></div>
 
                     <!-- Detail Stats -->

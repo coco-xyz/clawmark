@@ -1289,6 +1289,8 @@ async function loadMonitoring() {
     document.getElementById('action-type-filter').addEventListener('change', () => fetchAgentActions());
     document.getElementById('action-range-select').addEventListener('change', () => fetchAgentActions());
     document.getElementById('quality-range-select').addEventListener('change', () => fetchQualityReport());
+    document.getElementById('btn-export-csv').addEventListener('click', exportMonitoringCSV);
+    document.getElementById('btn-export-pdf').addEventListener('click', exportMonitoringPDF);
 
     fetchErrorTrends();
     fetchAgentActions();
@@ -1299,15 +1301,18 @@ async function fetchErrorTrends() {
     const days = parseInt(document.getElementById('err-range-select').value, 10) || 7;
     const group_by = document.getElementById('err-group-select').value || 'severity';
 
+    document.getElementById('err-chart-container').innerHTML =
+        '<div class="empty-state"><span class="loading-spinner"></span>Loading error trends...</div>';
+
     try {
         const data = await getErrorTrends({ days, group_by });
         renderErrorSummary(data.summary);
         renderErrorChart(data.trends, data.summary, group_by);
         renderTopErrors(data.summary.topFingerprints || []);
         renderSeverityBars(data.summary.bySeverity || []);
-    } catch (err) {
+    } catch {
         document.getElementById('err-chart-container').innerHTML =
-            '<div class="empty-state">Failed to load error trends</div>';
+            '<div class="empty-state"><div class="empty-state-icon">&#x26a0;&#xfe0f;</div>Failed to load error trends</div>';
     }
 }
 
@@ -1500,16 +1505,18 @@ async function fetchAgentActions() {
     const days = parseInt(document.getElementById('action-range-select').value, 10) || 30;
     const action_type = document.getElementById('action-type-filter').value || '';
 
+    document.getElementById('action-list').innerHTML =
+        '<div class="empty-state"><span class="loading-spinner"></span>Loading actions...</div>';
+
     try {
         const params = { days };
         if (action_type) params.action_type = action_type;
         const data = await getAgentActions(params);
-        // Hide summary when filtered (summary is unfiltered and would disagree with list)
         renderActionSummary(action_type ? [] : (data.summary || []));
         renderActionList(data.actions || []);
     } catch {
         document.getElementById('action-list').innerHTML =
-            '<div class="empty-state">Failed to load agent actions</div>';
+            '<div class="empty-state"><div class="empty-state-icon">&#x26a0;&#xfe0f;</div>Failed to load agent actions</div>';
     }
 }
 
@@ -1637,6 +1644,121 @@ function renderQualityReport(report, days) {
                 <span class="detail-value">${Number(report.mttr.resolvedCount)}</span>
             </div>
         </div>`;
+}
+
+// ------------------------------------------------------------------ Export (#87 Phase 4)
+
+function exportMonitoringCSV() {
+    const rows = [['Section', 'Metric', 'Value']];
+
+    // Error summary from stat cards
+    rows.push(['Error Summary', 'Total Errors', document.getElementById('err-total').textContent]);
+    rows.push(['Error Summary', 'Last 24h', document.getElementById('err-last24h').textContent]);
+    rows.push(['Error Summary', 'Error Types', document.getElementById('err-types').textContent]);
+    rows.push(['Error Summary', 'Top Severity', document.getElementById('err-top-severity').textContent]);
+
+    // Top errors from table
+    const topRows = document.querySelectorAll('#err-top-tbody tr');
+    topRows.forEach(tr => {
+        const cells = tr.querySelectorAll('td');
+        if (cells.length >= 4) {
+            rows.push(['Top Errors', cells[0].textContent.trim(), `${cells[1].textContent} | ${cells[2].textContent} | count:${cells[3].textContent}`]);
+        }
+    });
+
+    // Quality metrics
+    rows.push(['Quality', 'MTTR', document.getElementById('q-mttr').textContent]);
+    rows.push(['Quality', 'Issue Filing Rate', document.getElementById('q-autofix').textContent]);
+    rows.push(['Quality', 'Recurrence Rate', document.getElementById('q-recurrence').textContent]);
+    rows.push(['Quality', 'Coverage', document.getElementById('q-coverage').textContent]);
+
+    // Build CSV with formula injection protection
+    const csvSafe = (s) => {
+        s = String(s).replace(/"/g, '""');
+        if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+        return `"${s}"`;
+    };
+    const csv = rows.map(r => r.map(csvSafe).join(',')).join('\n');
+    downloadFile('clawmark-monitoring-report.csv', csv, 'text/csv');
+}
+
+function exportMonitoringPDF() {
+    // Generate a printable HTML report and open in new window for print-to-PDF
+    const title = 'ClawMark Monitoring Report';
+    const date = new Date().toLocaleString();
+
+    const errTotal = document.getElementById('err-total').textContent;
+    const errLast24h = document.getElementById('err-last24h').textContent;
+    const errTypes = document.getElementById('err-types').textContent;
+    const topSev = document.getElementById('err-top-severity').textContent;
+
+    const mttr = document.getElementById('q-mttr').textContent;
+    const autofix = document.getElementById('q-autofix').textContent;
+    const recurrence = document.getElementById('q-recurrence').textContent;
+    const coverage = document.getElementById('q-coverage').textContent;
+
+    // Grab top errors table HTML
+    const topTable = document.getElementById('err-top-table');
+    const topTableHtml = topTable ? topTable.outerHTML : '';
+
+    // Grab quality details
+    const qualityDetails = document.getElementById('quality-details');
+    const qualityHtml = qualityDetails ? qualityDetails.innerHTML : '';
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>${escHtml(title)}</title>
+<style>
+body{font-family:-apple-system,sans-serif;padding:40px;color:#333;max-width:800px;margin:0 auto;}
+h1{font-size:24px;margin-bottom:4px;}
+.date{color:#666;font-size:13px;margin-bottom:24px;}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:16px 0;}
+.card{text-align:center;padding:16px;border:1px solid #ddd;border-radius:8px;}
+.card .val{font-size:28px;font-weight:700;color:#111;}
+.card .lbl{font-size:13px;color:#666;margin-top:4px;}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;}
+th,td{padding:8px 12px;border:1px solid #ddd;text-align:left;}
+th{background:#f5f5f5;font-weight:600;}
+h2{margin-top:32px;font-size:18px;}
+@media print{body{padding:20px;}}
+</style></head><body>
+<h1>${escHtml(title)}</h1>
+<div class="date">Generated: ${escHtml(date)}</div>
+<h2>Error Summary</h2>
+<div class="grid">
+<div class="card"><div class="val">${escHtml(errTotal)}</div><div class="lbl">Total Errors</div></div>
+<div class="card"><div class="val">${escHtml(errLast24h)}</div><div class="lbl">Last 24h</div></div>
+<div class="card"><div class="val">${escHtml(errTypes)}</div><div class="lbl">Error Types</div></div>
+<div class="card"><div class="val">${escHtml(topSev)}</div><div class="lbl">Top Severity</div></div>
+</div>
+<h2>Top Errors</h2>
+${topTableHtml}
+<h2>Quality Metrics</h2>
+<div class="grid">
+<div class="card"><div class="val">${escHtml(mttr)}</div><div class="lbl">MTTR</div></div>
+<div class="card"><div class="val">${escHtml(autofix)}</div><div class="lbl">Issue Filing Rate</div></div>
+<div class="card"><div class="val">${escHtml(recurrence)}</div><div class="lbl">Recurrence Rate</div></div>
+<div class="card"><div class="val">${escHtml(coverage)}</div><div class="lbl">Coverage</div></div>
+</div>
+<h2>Details</h2>
+${qualityHtml}
+<script>window.print();</script>
+</body></html>`;
+
+    // Open in null origin via Blob URL to prevent XSS from DOM-scraped content
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function downloadFile(filename, content, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 // ------------------------------------------------------------------ start
