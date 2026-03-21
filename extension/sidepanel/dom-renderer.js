@@ -20,6 +20,7 @@ const DomRenderer = (() => {
     let cursorEl = null;
     let clickRippleEl = null;
     let currentSnapshot = null;
+    let currentHighlightSelector = null;
     let mounted = false;
 
     // ── Public API ──────────────────────────────────────────────────────
@@ -153,8 +154,6 @@ const DomRenderer = (() => {
      * so highlighting is done by re-rendering srcdoc with a highlight
      * style injected for the target selector.
      */
-    let currentHighlightSelector = null;
-
     function highlightElement(selector) {
         if (!mounted || !iframe || !currentSnapshot) return;
         if (selector === currentHighlightSelector) return;
