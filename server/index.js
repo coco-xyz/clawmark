@@ -1843,6 +1843,21 @@ app.get('/api/v2/analytics/hot-topics', apiReadLimiter, v2Auth, (req, res) => {
     res.json(hotTopics);
 });
 
+// -- GET /api/v2/analytics/quality-report — quality metrics (#87)
+app.get('/api/v2/analytics/quality-report', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 30));
+
+    try {
+        const report = itemsDb.getQualityReport({ app_id, days });
+        res.json({ report, days });
+    } catch (err) {
+        console.error('[analytics] quality-report error:', err.message);
+        res.status(500).json({ error: 'Failed to compute quality report' });
+    }
+});
+
 // -- GET /api/v2/analytics/agent-actions — agent action history (#87)
 app.get('/api/v2/analytics/agent-actions', apiReadLimiter, v2Auth, (req, res) => {
     const app_id = req.v2Auth?.app_id;
@@ -2917,7 +2932,7 @@ app.listen(PORT, () => {
     console.log(`    auth      : JWT + API key (invite codes deprecated)`);
     console.log(`    api v2    : /api/v2/*`);
 
-    // Session cleanup job: run daily + on startup, delete completed (30d) + orphaned active (7d) (#73)
+    // Session + action cleanup job: run daily + on startup (#73, #87)
     const runSessionCleanup = () => {
         try {
             const result = itemsDb.cleanupOldSessions(30, 7);
@@ -2926,6 +2941,14 @@ app.listen(PORT, () => {
             }
         } catch (err) {
             console.error('[session] Cleanup error:', err.message);
+        }
+        try {
+            const result = itemsDb.cleanupOldActions(90);
+            if (result.deleted > 0) {
+                console.log(`[actions] Cleaned up ${result.deleted} old action(s) (>90d)`);
+            }
+        } catch (err) {
+            console.error('[actions] Cleanup error:', err.message);
         }
     };
     runSessionCleanup(); // run on startup

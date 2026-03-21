@@ -1904,6 +1904,12 @@ function initDb(dataDir) {
         return actionStmts.countByType.all(app_id, cutoff);
     }
 
+    function cleanupOldActions(retentionDays = 90) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const result = db.prepare('DELETE FROM agent_actions WHERE created_at < ?').run(cutoff);
+        return { deleted: result.changes };
+    }
+
     // ------------------------------------------------- error trends (#87 Dashboard)
 
     function getErrorTrends({ app_id, days = 7, group_by = 'severity' }) {
@@ -1972,6 +1978,99 @@ function initDb(dataDir) {
         const spikeRatio = priorAvg > 0 ? last24h / priorAvg : 0;
 
         return { total, bySeverity, byType, topFingerprints, last24h, priorAvgDaily: priorAvg, spikeRatio };
+    }
+
+    function getQualityReport({ app_id, days = 30 }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        const halfDays = Math.floor(days / 2);
+        const halfCutoff = new Date(Date.now() - halfDays * 86400000).toISOString();
+
+        // MTTR: avg time between first_seen and last_seen for resolved issues
+        const mttrResult = db.prepare(`
+            SELECT AVG(
+                (julianday(last_seen) - julianday(first_seen)) * 24
+            ) AS avg_hours, COUNT(*) AS resolved_count
+            FROM perception_issues
+            WHERE app_id = ? AND status != 'open' AND first_seen >= ?
+        `).get(app_id, cutoff);
+
+        // Auto-fix rate: issues with gitlab_issue_url / total issues
+        const issueStats = db.prepare(`
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN gitlab_issue_url IS NOT NULL THEN 1 ELSE 0 END) AS filed,
+                SUM(CASE WHEN status != 'open' THEN 1 ELSE 0 END) AS resolved
+            FROM perception_issues
+            WHERE app_id = ? AND first_seen >= ?
+        `).get(app_id, cutoff);
+
+        const autoFixRate = issueStats.total > 0
+            ? (issueStats.filed / issueStats.total) * 100
+            : 0;
+
+        // Error recurrence rate: fingerprints seen more than once / total fingerprints
+        const recurrenceResult = db.prepare(`
+            SELECT
+                COUNT(DISTINCT fingerprint) AS total_fps,
+                SUM(CASE WHEN cnt > 1 THEN 1 ELSE 0 END) AS recurring_fps
+            FROM (
+                SELECT fingerprint, COUNT(*) AS cnt
+                FROM perception_events
+                WHERE app_id = ? AND created_at >= ?
+                GROUP BY fingerprint
+            )
+        `).get(app_id, cutoff);
+
+        const recurrenceRate = recurrenceResult.total_fps > 0
+            ? (recurrenceResult.recurring_fps / recurrenceResult.total_fps) * 100
+            : 0;
+
+        // Coverage: distinct URLs monitored
+        const coverage = db.prepare(`
+            SELECT COUNT(DISTINCT url) AS sites
+            FROM perception_events
+            WHERE app_id = ? AND created_at >= ? AND url IS NOT NULL
+        `).get(app_id, cutoff);
+
+        // Comparison: same metrics for the prior half-period
+        const priorErrors = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ? AND created_at < ?'
+        ).get(app_id, cutoff, halfCutoff).count;
+
+        const currentErrors = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ?'
+        ).get(app_id, halfCutoff).count;
+
+        const priorIssues = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_issues WHERE app_id = ? AND first_seen >= ? AND first_seen < ?'
+        ).get(app_id, cutoff, halfCutoff).count;
+
+        const currentIssues = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_issues WHERE app_id = ? AND first_seen >= ?'
+        ).get(app_id, halfCutoff).count;
+
+        return {
+            mttr: {
+                avgHours: mttrResult.avg_hours || 0,
+                resolvedCount: mttrResult.resolved_count || 0,
+            },
+            autoFixRate: Math.round(autoFixRate * 10) / 10,
+            filedCount: issueStats.filed || 0,
+            resolvedCount: issueStats.resolved || 0,
+            totalIssues: issueStats.total || 0,
+            recurrenceRate: Math.round(recurrenceRate * 10) / 10,
+            recurringFingerprints: recurrenceResult.recurring_fps || 0,
+            totalFingerprints: recurrenceResult.total_fps || 0,
+            coverage: coverage.sites || 0,
+            comparison: {
+                priorErrors,
+                currentErrors,
+                priorIssues,
+                currentIssues,
+                errorTrend: priorErrors > 0 ? ((currentErrors - priorErrors) / priorErrors) * 100 : 0,
+                issueTrend: priorIssues > 0 ? ((currentIssues - priorIssues) / priorIssues) * 100 : 0,
+            },
+        };
     }
 
     // ------------------------------------------------- session methods (#73)
@@ -2382,9 +2481,11 @@ function initDb(dataDir) {
         getOpenPerceptionIssues,
         getErrorTrends,
         getErrorSummary,
+        getQualityReport,
         logAgentAction,
         getAgentActions,
         getAgentActionSummary,
+        cleanupOldActions,
         // Sessions (#73)
         createSession,
         appendSessionEvents,

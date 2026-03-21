@@ -309,6 +309,11 @@ export async function getAgentActions(params = {}) {
     return apiFetch('/api/v2/analytics/agent-actions' + (qs ? '?' + qs : ''));
 }
 
+export async function getQualityReport(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return apiFetch('/api/v2/analytics/quality-report' + (qs ? '?' + qs : ''));
+}
+
 // ---- Version check (GitHub API, no auth needed)
 
 // ---- Batch Issue Filing (#44)
