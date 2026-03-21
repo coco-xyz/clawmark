@@ -1843,6 +1843,23 @@ app.get('/api/v2/analytics/hot-topics', apiReadLimiter, v2Auth, (req, res) => {
     res.json(hotTopics);
 });
 
+// -- GET /api/v2/analytics/error-trends — perception error time series (#87)
+app.get('/api/v2/analytics/error-trends', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 7));
+    const group_by = ['severity', 'type', 'total'].includes(req.query.group_by) ? req.query.group_by : 'severity';
+
+    try {
+        const trends = itemsDb.getErrorTrends({ app_id, days, group_by });
+        const summary = itemsDb.getErrorSummary({ app_id, days });
+        res.json({ trends, summary, days, group_by });
+    } catch (err) {
+        console.error('[analytics] error-trends error:', err.message);
+        res.status(500).json({ error: 'Failed to query error trends' });
+    }
+});
+
 // -- GET /api/v2/analytics/clusters — AI-powered annotation clustering
 app.get('/api/v2/analytics/clusters', aiLimiter, v2Auth, async (req, res) => {
     const aiApiKey = process.env.GEMINI_API_KEY || config.ai?.apiKey;

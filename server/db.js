@@ -1806,6 +1806,80 @@ function initDb(dataDir) {
         return perceptionStmts.getOpenIssues.all(app_id);
     }
 
+    // ------------------------------------------------- error trends (#87 Dashboard)
+
+    function getErrorTrends({ app_id, days = 7, group_by = 'severity' }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        const dateFormat = "strftime('%Y-%m-%d', created_at)";
+
+        let groupCol = '';
+        let selectCol = '';
+        if (group_by === 'total') {
+            selectCol = ", 'total' AS group_value";
+        } else if (group_by === 'severity') {
+            groupCol = ', severity';
+            selectCol = ', severity AS group_value';
+        } else if (group_by === 'type') {
+            groupCol = ', type';
+            selectCol = ', type AS group_value';
+        } else if (group_by === 'url') {
+            // Group by hostname extracted from url
+            groupCol = ", CASE WHEN url IS NOT NULL THEN SUBSTR(url, INSTR(url, '://') + 3, CASE WHEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') > 0 THEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') - 1 ELSE LENGTH(url) END) ELSE 'unknown' END";
+            selectCol = ", CASE WHEN url IS NOT NULL THEN SUBSTR(url, INSTR(url, '://') + 3, CASE WHEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') > 0 THEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') - 1 ELSE LENGTH(url) END) ELSE 'unknown' END AS group_value";
+        }
+
+        const query = `
+            SELECT ${dateFormat} AS period, COUNT(*) AS count${selectCol}
+            FROM perception_events
+            WHERE app_id = ? AND created_at >= ?
+            GROUP BY ${dateFormat}${groupCol}
+            ORDER BY period ASC
+        `;
+        return db.prepare(query).all(app_id, cutoff);
+    }
+
+    function getErrorSummary({ app_id, days = 7 }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+        const total = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ?'
+        ).get(app_id, cutoff).count;
+
+        const bySeverity = db.prepare(
+            'SELECT severity, COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ? GROUP BY severity ORDER BY count DESC'
+        ).all(app_id, cutoff);
+
+        const byType = db.prepare(
+            'SELECT type, COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ? GROUP BY type ORDER BY count DESC'
+        ).all(app_id, cutoff);
+
+        const topFingerprints = db.prepare(`
+            SELECT fingerprint, message, severity, type, url, COUNT(*) AS count, MAX(created_at) AS last_seen
+            FROM perception_events
+            WHERE app_id = ? AND created_at >= ?
+            GROUP BY fingerprint
+            ORDER BY count DESC
+            LIMIT 10
+        `).all(app_id, cutoff);
+
+        // Spike detection: compare last 24h vs prior period average
+        const last24h = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ?'
+        ).get(app_id, new Date(Date.now() - 86400000).toISOString()).count;
+
+        const priorAvg = days > 1
+            ? db.prepare(`
+                SELECT CAST(COUNT(*) AS REAL) / ? AS avg_daily
+                FROM perception_events
+                WHERE app_id = ? AND created_at >= ? AND created_at < ?
+              `).get(days - 1, app_id, cutoff, new Date(Date.now() - 86400000).toISOString()).avg_daily
+            : last24h;
+
+        const spikeRatio = priorAvg > 0 ? last24h / priorAvg : 0;
+
+        return { total, bySeverity, byType, topFingerprints, last24h, priorAvgDaily: priorAvg, spikeRatio };
+    }
+
     // ------------------------------------------------- session methods (#73)
 
     const MAX_SESSION_SIZE = 50 * 1024 * 1024; // 50MB
@@ -2212,6 +2286,8 @@ function initDb(dataDir) {
         upsertPerceptionIssue,
         getPerceptionIssue,
         getOpenPerceptionIssues,
+        getErrorTrends,
+        getErrorSummary,
         // Sessions (#73)
         createSession,
         appendSessionEvents,
