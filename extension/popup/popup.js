@@ -34,6 +34,9 @@ let disabledSites = [];
 let isLoggedIn = false;
 let cachedRecentTargets = [];
 
+const connectionErrorEl = document.getElementById('connection-error');
+const connectionRetryEl = document.getElementById('connection-retry');
+
 // ------------------------------------------------------------------ master toggle
 
 async function loadMasterToggle() {
@@ -604,6 +607,31 @@ function showMessage(text, type) {
     setTimeout(() => { messageEl.textContent = ''; messageEl.className = 'message'; }, 3000);
 }
 
+// ------------------------------------------------------------------ server connectivity check
+
+async function checkServerConnection() {
+    try {
+        const result = await chrome.runtime.sendMessage({ type: 'CHECK_HEALTH' });
+        if (result.error) throw new Error(result.error);
+        connectionErrorEl.classList.remove('visible');
+        return true;
+    } catch {
+        connectionErrorEl.classList.add('visible');
+        return false;
+    }
+}
+
+connectionRetryEl.addEventListener('click', async () => {
+    connectionRetryEl.textContent = '...';
+    connectionRetryEl.disabled = true;
+    const ok = await checkServerConnection();
+    connectionRetryEl.textContent = 'Retry';
+    connectionRetryEl.disabled = false;
+    if (ok && isLoggedIn && masterToggle.checked) {
+        loadPageData();
+    }
+});
+
 // ------------------------------------------------------------------ page data loader
 
 async function loadPageData() {
@@ -647,9 +675,10 @@ async function init() {
 
     // Phase 2: start network calls after the popup has painted
     // Use setTimeout(0) to yield to the renderer first
-    setTimeout(() => {
+    setTimeout(async () => {
         if (isLoggedIn && masterToggle.checked) {
-            loadPageData();
+            const serverOk = await checkServerConnection();
+            if (serverOk) loadPageData();
         }
         checkVersion();
     }, 0);
