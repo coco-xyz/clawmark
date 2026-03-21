@@ -750,6 +750,55 @@ async function handleMessage(message, sender) {
             return { success: true };
         }
 
+        // ── CDP mode toggle (#84) ─────────────────────────────────
+        case 'GET_CDP_MODE': {
+            const { cdpModeEnabled = false } = await chrome.storage.sync.get({ cdpModeEnabled: false });
+            // Enrich sessions with tab titles
+            const rawSessions = cdpGetSessions();
+            const sessions = await Promise.all(rawSessions.map(async (s) => {
+                try {
+                    const tab = await chrome.tabs.get(s.tabId);
+                    return { ...s, title: tab.title || tab.url || `Tab ${s.tabId}` };
+                } catch {
+                    return { ...s, title: `Tab ${s.tabId}` };
+                }
+            }));
+            return { cdpModeEnabled, sessions };
+        }
+
+        case 'SET_CDP_MODE': {
+            const enabled = !!message.enabled;
+            await chrome.storage.sync.set({ cdpModeEnabled: enabled });
+            if (!enabled) {
+                // Capture affected tab IDs before detaching
+                const affectedTabs = cdpGetSessions().map(s => s.tabId);
+                await cdpDetachAll();
+                // Refresh badge on all previously-attached tabs
+                for (const tid of affectedTabs) {
+                    await updateCdpBadge(tid);
+                }
+            }
+            // Also update active tab badge
+            const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (activeTab) {
+                await updateCdpBadge(activeTab.id);
+            }
+            return { success: true };
+        }
+
+        case 'CDP_FORCE_DETACH': {
+            const tabId = message.tabId;
+            if (tabId) {
+                await cdpStopSession(tabId);
+                await updateCdpBadge(tabId);
+                // If no sessions remain, auto-disable CDP mode
+                if (cdpGetSessions().length === 0) {
+                    await chrome.storage.sync.set({ cdpModeEnabled: false });
+                }
+            }
+            return { success: true };
+        }
+
         // ── CDP session management (#81) ────────────────────────────
         case 'cdp:start': {
             const target = await resolveTabTarget(message.target || { tabId: message.tabId || sender.tab?.id });
@@ -943,9 +992,34 @@ function compareVersions(a, b) {
     return 0;
 }
 
+// ------------------------------------------------------------------ CDP badge (#84)
+
+async function updateCdpBadge(tabId) {
+    if (!tabId) return;
+    const attached = cdpIsAttached(tabId);
+    if (attached) {
+        await chrome.action.setBadgeText({ tabId, text: 'CDP' });
+        await chrome.action.setBadgeBackgroundColor({ tabId, color: '#f97316' }); // Orange
+    } else {
+        // Restore normal badge (annotation count)
+        try {
+            const tab = await chrome.tabs.get(tabId);
+            if (tab?.url) await updateBadgeForTab(tabId, tab.url);
+        } catch {
+            await chrome.action.setBadgeText({ tabId, text: '' });
+        }
+    }
+}
+
 // ------------------------------------------------------------------ Badge updater (Phase 2)
 
 async function updateBadgeForTab(tabId, url) {
+    // CDP badge takes priority
+    if (cdpIsAttached(tabId)) {
+        await chrome.action.setBadgeText({ tabId, text: 'CDP' });
+        await chrome.action.setBadgeBackgroundColor({ tabId, color: '#f97316' });
+        return;
+    }
     if (!url || url.startsWith('chrome') || url.startsWith('chrome-extension')) {
         await chrome.action.setBadgeText({ tabId, text: '' });
         return;
