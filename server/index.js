@@ -122,6 +122,7 @@ const { GitLabIssueAdapter } = require('./adapters/gitlab-issue');
 const { resolveTarget, resolveTargets } = require('./routing');
 const { autoSeverity } = require('./severity');
 const { hashKey, generateAgentKey, createAgentAuth } = require('./agent-auth');
+const { initActionWs } = require('./ws-actions');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
 
@@ -2808,6 +2809,97 @@ app.get('/api/v2/agent-channel/sessions/:id/snapshots/:snapshotId', apiReadLimit
     }
 });
 
+// ----------------------------------------------------------------- action queue REST (#78)
+
+// POST /api/v2/agent-channel/actions — submit action (REST alternative to WebSocket)
+app.post('/api/v2/agent-channel/actions', sessionLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id || !agent_id) return res.status(400).json({ error: 'Agent auth required' });
+
+    const { action_type, payload, session_id, timeout_ms } = req.body;
+    if (!action_type) return res.status(400).json({ error: 'action_type is required' });
+
+    try {
+        const action = itemsDb.createAction({
+            agent_id,
+            app_id,
+            session_id: session_id || null,
+            type: action_type,
+            payload: payload || {},
+            timeout_ms: timeout_ms || 30000,
+        });
+        res.status(201).json(action);
+    } catch (err) {
+        if (err.message.startsWith('INVALID_ACTION_TYPE:')) {
+            const type = err.message.split(':')[1];
+            return res.status(400).json({ error: `Invalid action_type: ${type}. Allowed: navigate, click, extract` });
+        }
+        if (err.message === 'QUEUE_FULL') {
+            return res.status(429).json({ error: 'Action queue full (max 100 pending per agent)' });
+        }
+        console.error('[agent-channel] action POST error:', err.message);
+        res.status(500).json({ error: 'Failed to queue action' });
+    }
+});
+
+// GET /api/v2/agent-channel/actions/:id — poll action status
+app.get('/api/v2/agent-channel/actions/:id', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const action = itemsDb.getAction(req.params.id);
+    if (!action) return res.status(404).json({ error: 'Action not found' });
+    if (action.app_id !== app_id) return res.status(404).json({ error: 'Action not found' });
+
+    // Parse stored JSON fields
+    const result = {
+        ...action,
+        payload: JSON.parse(action.payload || '{}'),
+        result: action.result ? JSON.parse(action.result) : null,
+    };
+    res.json(result);
+});
+
+// POST /api/v2/agent-channel/actions/:id/result — extension submits result (webhook fallback)
+app.post('/api/v2/agent-channel/actions/:id/result', sessionLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const action = itemsDb.getAction(req.params.id);
+    if (!action) return res.status(404).json({ error: 'Action not found' });
+    if (action.app_id !== app_id) return res.status(404).json({ error: 'Action not found' });
+    if (action.status === 'completed' || action.status === 'failed') {
+        return res.status(409).json({ error: 'Action already resolved' });
+    }
+
+    const { result, error } = req.body;
+    const status = error ? 'failed' : 'completed';
+    itemsDb.updateActionStatus(action.id, { status, result, error });
+    res.json({ action_id: action.id, status });
+});
+
+// GET /api/v2/agent-channel/actions — list agent's actions
+app.get('/api/v2/agent-channel/actions', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { status, limit } = req.query;
+    try {
+        let actions;
+        if (agent_id) {
+            actions = itemsDb.listAgentActions(agent_id, status || 'queued', parseInt(limit) || 50);
+        } else {
+            actions = itemsDb.listPendingActions(app_id, parseInt(limit) || 50);
+        }
+        res.json({ actions, count: actions.length });
+    } catch (err) {
+        console.error('[agent-channel] action list error:', err.message);
+        res.status(500).json({ error: 'Failed to list actions' });
+    }
+});
+
 // ----------------------------------------------------------------- health
 
 app.get('/health', (req, res) => {
@@ -2824,12 +2916,34 @@ app.get('/health', (req, res) => {
 
 // ----------------------------------------------------------------- listen
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`[+] ClawMark V2 server running on port ${PORT}`);
     console.log(`    data dir  : ${DATA_DIR}`);
     console.log(`    adapters  : ${Object.keys(registry.getStatus()).length} channel(s)`);
     console.log(`    auth      : JWT + API key (invite codes deprecated)`);
     console.log(`    api v2    : /api/v2/*`);
+    console.log(`    ws        : /ws/agent-channel/actions`);
+
+    // Action WebSocket (#78)
+    const actionWs = initActionWs(server, itemsDb);
+
+    // Action timeout checker: every 5s
+    setInterval(() => {
+        const n = actionWs.checkTimeouts();
+        if (n > 0) console.log(`[action] Timed out ${n} action(s)`);
+    }, 5000);
+
+    // Action cleanup: daily, delete completed/failed actions older than 7 days
+    const runActionCleanup = () => {
+        try {
+            const result = itemsDb.cleanupOldActions(7);
+            if (result.deleted > 0) console.log(`[action] Cleaned up ${result.deleted} old action(s)`);
+        } catch (err) {
+            console.error('[action] Cleanup error:', err.message);
+        }
+    };
+    runActionCleanup();
+    setInterval(runActionCleanup, 24 * 60 * 60 * 1000);
 
     // Session cleanup job: run daily + on startup, delete completed (30d) + orphaned active (7d) (#73)
     const runSessionCleanup = () => {

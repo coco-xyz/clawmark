@@ -444,6 +444,30 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_session_snapshots_ts ON session_snapshots(session_id, timestamp);
     `);
 
+    // ----------------------------------------- schema: action_queue (#78 Action Queue)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS action_queue (
+            id              TEXT PRIMARY KEY,
+            agent_id        TEXT NOT NULL,
+            app_id          TEXT NOT NULL,
+            session_id      TEXT,
+            type            TEXT NOT NULL,
+            payload         TEXT NOT NULL DEFAULT '{}',
+            status          TEXT NOT NULL DEFAULT 'queued',
+            result          TEXT,
+            error           TEXT,
+            timeout_ms      INTEGER NOT NULL DEFAULT 30000,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            dispatched_at   TEXT,
+            completed_at    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_action_queue_agent ON action_queue(agent_id, status);
+        CREATE INDEX IF NOT EXISTS idx_action_queue_app ON action_queue(app_id, status);
+        CREATE INDEX IF NOT EXISTS idx_action_queue_status ON action_queue(status);
+        CREATE INDEX IF NOT EXISTS idx_action_queue_created ON action_queue(created_at);
+    `);
+
     // ------------------------------------------------- schema: agents table (#68)
     db.exec(`
         CREATE TABLE IF NOT EXISTS agents (
@@ -666,6 +690,52 @@ function initDb(dataDir) {
         `),
         countByApp: db.prepare(`
             SELECT COUNT(*) AS count FROM sessions WHERE app_id = ?
+        `),
+    };
+
+    // ------------------------------------------------- action_queue statements (#78)
+    const actionStmts = {
+        insertAction: db.prepare(`
+            INSERT INTO action_queue
+                (id, agent_id, app_id, session_id, type, payload, status, timeout_ms, created_at, updated_at)
+            VALUES
+                (@id, @agent_id, @app_id, @session_id, @type, @payload, @status, @timeout_ms, @created_at, @updated_at)
+        `),
+        getAction: db.prepare('SELECT * FROM action_queue WHERE id = ?'),
+        listByAgent: db.prepare(`
+            SELECT * FROM action_queue
+            WHERE agent_id = ? AND status = ?
+            ORDER BY created_at ASC
+            LIMIT ?
+        `),
+        listByApp: db.prepare(`
+            SELECT * FROM action_queue
+            WHERE app_id = ? AND status IN ('queued', 'dispatched')
+            ORDER BY created_at ASC
+            LIMIT ?
+        `),
+        countPendingByAgent: db.prepare(`
+            SELECT COUNT(*) AS count FROM action_queue
+            WHERE agent_id = ? AND status IN ('queued', 'dispatched', 'executing')
+        `),
+        updateStatus: db.prepare(`
+            UPDATE action_queue
+            SET status = @status, updated_at = @updated_at,
+                dispatched_at = COALESCE(@dispatched_at, dispatched_at),
+                completed_at = COALESCE(@completed_at, completed_at),
+                result = COALESCE(@result, result),
+                error = COALESCE(@error, error)
+            WHERE id = @id
+        `),
+        getTimedOut: db.prepare(`
+            SELECT * FROM action_queue
+            WHERE status IN ('dispatched', 'executing')
+              AND dispatched_at IS NOT NULL
+              AND (julianday(@now) - julianday(dispatched_at)) * 86400000 > timeout_ms
+        `),
+        deleteOldActions: db.prepare(`
+            DELETE FROM action_queue
+            WHERE status IN ('completed', 'failed') AND updated_at < ?
         `),
     };
 
@@ -2043,6 +2113,80 @@ function initDb(dataDir) {
         return { deleted: completed.changes + orphaned.changes, completed: completed.changes, orphaned: orphaned.changes };
     }
 
+    // ------------------------------------------------- action queue methods (#78)
+
+    const VALID_ACTION_TYPES = new Set(['navigate', 'click', 'extract']);
+    const MAX_QUEUE_DEPTH = 100;
+
+    function createAction({ agent_id, app_id, session_id, type, payload, timeout_ms }) {
+        if (!VALID_ACTION_TYPES.has(type)) {
+            throw new Error(`INVALID_ACTION_TYPE:${type}`);
+        }
+
+        const pending = actionStmts.countPendingByAgent.get(agent_id);
+        if (pending.count >= MAX_QUEUE_DEPTH) {
+            throw new Error('QUEUE_FULL');
+        }
+
+        const now = new Date().toISOString();
+        const id = genId('act');
+        actionStmts.insertAction.run({
+            id,
+            agent_id,
+            app_id,
+            session_id: session_id || null,
+            type,
+            payload: JSON.stringify(payload || {}),
+            status: 'queued',
+            timeout_ms: timeout_ms || 30000,
+            created_at: now,
+            updated_at: now,
+        });
+
+        return { id, agent_id, app_id, type, status: 'queued', created_at: now };
+    }
+
+    function getAction(actionId) {
+        return actionStmts.getAction.get(actionId) || null;
+    }
+
+    function listPendingActions(app_id, limit = 50) {
+        return actionStmts.listByApp.all(app_id, Math.min(limit, 200));
+    }
+
+    function listAgentActions(agent_id, status = 'queued', limit = 50) {
+        return actionStmts.listByAgent.all(agent_id, status, Math.min(limit, 200));
+    }
+
+    function updateActionStatus(actionId, { status, result, error }) {
+        const now = new Date().toISOString();
+        const action = actionStmts.getAction.get(actionId);
+        if (!action) return null;
+
+        actionStmts.updateStatus.run({
+            id: actionId,
+            status,
+            updated_at: now,
+            dispatched_at: status === 'dispatched' ? now : null,
+            completed_at: (status === 'completed' || status === 'failed') ? now : null,
+            result: result ? JSON.stringify(result) : null,
+            error: error || null,
+        });
+
+        return { ...action, status, updated_at: now };
+    }
+
+    function getTimedOutActions() {
+        const now = new Date().toISOString();
+        return actionStmts.getTimedOut.all({ now });
+    }
+
+    function cleanupOldActions(retentionDays = 7) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const result = actionStmts.deleteOldActions.run(cutoff);
+        return { deleted: result.changes };
+    }
+
     // ------------------------------------------------- agent methods (#68)
 
     function registerAgent({ app_id, name, key_hash, key_prefix, callback_url, capabilities, created_by }) {
@@ -2222,6 +2366,14 @@ function initDb(dataDir) {
         getSessionSnapshots,
         getSessionSnapshot,
         cleanupOldSessions,
+        // Actions (#78)
+        createAction,
+        getAction,
+        listPendingActions,
+        listAgentActions,
+        updateActionStatus,
+        getTimedOutActions,
+        cleanupOldActions,
     };
 }
 
