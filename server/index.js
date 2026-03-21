@@ -263,7 +263,7 @@ const defaultGitHubTarget = config.distribution?.channels?.['github-clawmark']
         labels: config.distribution.channels['github-clawmark'].labels || ['clawmark'],
         assignees: config.distribution.channels['github-clawmark'].assignees || [],
     }
-    : { repo: 'coco-xyz/clawmark', labels: ['clawmark'], assignees: [] };
+    : null;
 
 /**
  * Dispatch event through the adapter registry (fire-and-forget).
