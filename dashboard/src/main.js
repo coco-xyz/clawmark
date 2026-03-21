@@ -18,6 +18,7 @@ import {
     syncLoginToExtension, syncLogoutToExtension, getAuthFromExtension,
     previewIssues, batchFileIssues,
     getPassiveMonitorSettings, setPassiveMonitorSettings,
+    getErrorTrends,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -104,6 +105,7 @@ function showApp(user) {
     loadAuthsList();
     loadRules();
     loadFileIssues();
+    loadMonitoring();
     loadAbout();
 
     // Handle old hash routes that were consolidated
@@ -1262,6 +1264,210 @@ async function loadAbout() {
     } else {
         latestEl.textContent = '\u2014';
     }
+}
+
+// ------------------------------------------------------------------ Monitoring (#87)
+
+const SEVERITY_COLORS = {
+    error: '#ef4444',
+    warning: '#f59e0b',
+    info: '#3b82f6',
+    critical: '#dc2626',
+};
+
+let monitoringLoaded = false;
+
+async function loadMonitoring() {
+    if (monitoringLoaded) return;
+    monitoringLoaded = true;
+
+    document.getElementById('err-range-select').addEventListener('change', () => fetchErrorTrends());
+    document.getElementById('err-group-select').addEventListener('change', () => fetchErrorTrends());
+
+    fetchErrorTrends();
+}
+
+async function fetchErrorTrends() {
+    const days = parseInt(document.getElementById('err-range-select').value, 10) || 7;
+    const group_by = document.getElementById('err-group-select').value || 'severity';
+
+    try {
+        const data = await getErrorTrends({ days, group_by });
+        renderErrorSummary(data.summary);
+        renderErrorChart(data.trends, data.summary, group_by);
+        renderTopErrors(data.summary.topFingerprints || []);
+        renderSeverityBars(data.summary.bySeverity || []);
+    } catch (err) {
+        document.getElementById('err-chart-container').innerHTML =
+            '<div class="empty-state">Failed to load error trends</div>';
+    }
+}
+
+function renderErrorSummary(summary) {
+    document.getElementById('err-total').textContent = summary.total || 0;
+    document.getElementById('err-last24h').textContent = summary.last24h || 0;
+    document.getElementById('err-types').textContent = (summary.byType || []).length;
+
+    const topSev = (summary.bySeverity || [])[0];
+    document.getElementById('err-top-severity').textContent = topSev ? topSev.severity : 'none';
+
+    // Spike detection
+    const isSpike = summary.spikeRatio > 2 && summary.last24h > 5;
+
+    const spikeAlert = document.getElementById('err-spike-alert');
+    if (isSpike) {
+        document.getElementById('err-spike-text').textContent =
+            `Error spike detected: ${summary.last24h} errors in last 24h (${summary.spikeRatio.toFixed(1)}x above average)`;
+        spikeAlert.style.display = 'flex';
+    } else {
+        spikeAlert.style.display = 'none';
+    }
+
+    document.getElementById('err-spike-card').style.borderColor = isSpike ? 'var(--danger)' : '';
+}
+
+function renderErrorChart(trends, summary, groupBy) {
+    const container = document.getElementById('err-chart-container');
+
+    if (!trends || trends.length === 0) {
+        container.innerHTML = '<div class="empty-state">No error data for this period</div>';
+        return;
+    }
+
+    // Collect unique periods and groups
+    const periods = [...new Set(trends.map(t => t.period))].sort();
+    const groups = groupBy === 'total'
+        ? ['total']
+        : [...new Set(trends.map(t => t.group_value || 'unknown'))];
+
+    // Build data matrix: groups x periods -> count
+    const matrix = {};
+    for (const g of groups) matrix[g] = {};
+    for (const t of trends) {
+        const g = groupBy === 'total' ? 'total' : (t.group_value || 'unknown');
+        matrix[g][t.period] = (matrix[g][t.period] || 0) + t.count;
+    }
+
+    // Find max value for scaling
+    let maxVal = 0;
+    for (const g of groups) {
+        for (const p of periods) {
+            maxVal = Math.max(maxVal, matrix[g][p] || 0);
+        }
+    }
+    if (maxVal === 0) maxVal = 1;
+
+    // SVG chart dimensions
+    const W = 720;
+    const H = 240;
+    const padL = 48;
+    const padR = 16;
+    const padT = 16;
+    const padB = 40;
+    const chartW = W - padL - padR;
+    const chartH = H - padT - padB;
+
+    const barGroupW = chartW / periods.length;
+    const barW = Math.max(4, Math.min(24, (barGroupW - 4) / groups.length));
+
+    // Y-axis ticks
+    const yTicks = 4;
+    const yStep = Math.ceil(maxVal / yTicks);
+
+    let svg = `<svg viewBox="0 0 ${W} ${H}" class="err-chart-svg">`;
+
+    // Grid lines + Y labels
+    for (let i = 0; i <= yTicks; i++) {
+        const val = i * yStep;
+        const y = padT + chartH - (val / (yStep * yTicks)) * chartH;
+        svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="var(--border)" stroke-dasharray="4,4"/>`;
+        svg += `<text x="${padL - 8}" y="${y + 4}" text-anchor="end" fill="var(--text-muted)" font-size="11">${val}</text>`;
+    }
+
+    // Bars
+    for (let pi = 0; pi < periods.length; pi++) {
+        const period = periods[pi];
+        const groupX = padL + pi * barGroupW + barGroupW / 2;
+
+        for (let gi = 0; gi < groups.length; gi++) {
+            const g = groups[gi];
+            const val = matrix[g][period] || 0;
+            const barH = (val / (yStep * yTicks)) * chartH;
+            const x = groupX - (groups.length * barW) / 2 + gi * barW;
+            const y = padT + chartH - barH;
+            const color = SEVERITY_COLORS[g] || getGroupColor(gi);
+
+            svg += `<rect x="${x}" y="${y}" width="${barW - 1}" height="${barH}" fill="${color}" rx="2">`;
+            svg += `<title>${escHtml(g)}: ${val} on ${escHtml(period)}</title>`;
+            svg += `</rect>`;
+        }
+
+        // X-axis label
+        const label = period.length > 5 ? period.slice(5) : period; // Show MM-DD
+        svg += `<text x="${groupX}" y="${H - 8}" text-anchor="middle" fill="var(--text-muted)" font-size="10">${escHtml(label)}</text>`;
+    }
+
+    svg += '</svg>';
+
+    // Legend
+    let legend = '<div class="chart-legend">';
+    for (let gi = 0; gi < groups.length; gi++) {
+        const g = groups[gi];
+        const color = SEVERITY_COLORS[g] || getGroupColor(gi);
+        legend += `<span class="legend-item"><span class="legend-dot" style="background:${color}"></span>${escHtml(g)}</span>`;
+    }
+    legend += '</div>';
+
+    container.innerHTML = svg + legend;
+}
+
+function getGroupColor(index) {
+    const palette = ['#5865f2', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+    return palette[index % palette.length];
+}
+
+function renderTopErrors(topFingerprints) {
+    const tbody = document.getElementById('err-top-tbody');
+    const empty = document.getElementById('err-top-empty');
+
+    if (!topFingerprints || topFingerprints.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+    }
+
+    empty.style.display = 'none';
+    tbody.innerHTML = topFingerprints.map(fp => `
+        <tr>
+            <td class="err-msg-cell" title="${escHtml(fp.fingerprint)}">${escHtml((fp.message || '').slice(0, 80))}</td>
+            <td>${escHtml(fp.type || 'unknown')}</td>
+            <td><span class="severity-badge severity-${escHtml(fp.severity)}">${escHtml(fp.severity)}</span></td>
+            <td>${Number(fp.count)}</td>
+            <td>${fp.last_seen ? new Date(fp.last_seen).toLocaleString() : '\u2014'}</td>
+        </tr>
+    `).join('');
+}
+
+function renderSeverityBars(bySeverity) {
+    const container = document.getElementById('err-severity-bars');
+    if (!bySeverity || bySeverity.length === 0) {
+        container.innerHTML = '<div class="empty-state">No data</div>';
+        return;
+    }
+
+    const maxCount = Math.max(...bySeverity.map(s => s.count));
+    container.innerHTML = bySeverity.map(s => {
+        const pct = maxCount > 0 ? (s.count / maxCount) * 100 : 0;
+        const color = SEVERITY_COLORS[s.severity] || '#888';
+        return `
+            <div class="severity-bar-row">
+                <span class="severity-bar-label">${escHtml(s.severity)}</span>
+                <div class="severity-bar-track">
+                    <div class="severity-bar-fill" style="width:${pct}%;background:${color}"></div>
+                </div>
+                <span class="severity-bar-count">${s.count}</span>
+            </div>`;
+    }).join('');
 }
 
 // ------------------------------------------------------------------ start

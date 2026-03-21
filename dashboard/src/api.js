@@ -297,6 +297,13 @@ export async function setPassiveMonitorSettings(settings) {
     }
 }
 
+// ---- Error Trends (#87)
+
+export async function getErrorTrends(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return apiFetch('/api/v2/analytics/error-trends' + (qs ? '?' + qs : ''));
+}
+
 // ---- Version check (GitHub API, no auth needed)
 
 // ---- Batch Issue Filing (#44)

@@ -834,3 +834,145 @@ label {
     height: 16px;
     cursor: pointer;
 }
+
+/* ---- Monitoring (#87) ---- */
+
+.monitoring-alert {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius);
+    color: #fca5a5;
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+
+.alert-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.chart-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.input-small {
+    padding: 4px 8px;
+    font-size: 12px;
+    min-width: auto;
+    width: auto;
+}
+
+.chart-container {
+    min-height: 200px;
+    padding: 12px 0;
+}
+
+.err-chart-svg {
+    width: 100%;
+    height: auto;
+    max-height: 280px;
+}
+
+.chart-legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 8px 0 0;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.err-msg-cell {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.severity-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.severity-error { background: rgba(239,68,68,0.15); color: #fca5a5; }
+.severity-warning { background: rgba(245,158,11,0.15); color: #fcd34d; }
+.severity-info { background: rgba(59,130,246,0.15); color: #93c5fd; }
+.severity-critical { background: rgba(220,38,38,0.15); color: #fca5a5; }
+
+.severity-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.severity-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.severity-bar-label {
+    width: 72px;
+    font-size: 13px;
+    color: var(--text-muted);
+    text-transform: capitalize;
+    flex-shrink: 0;
+}
+
+.severity-bar-track {
+    flex: 1;
+    height: 20px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.severity-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+}
+
+.severity-bar-count {
+    width: 48px;
+    text-align: right;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.card-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.card-header-row h3 {
+    margin: 0;
+}
