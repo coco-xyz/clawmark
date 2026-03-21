@@ -15,6 +15,7 @@ let currentItemId = null;
 let currentTabId = null;
 let capturedErrors = [];
 let dismissedErrorIds = new Set();
+let sessions = [];
 
 // ------------------------------------------------------------------ debounce + cache
 
@@ -56,6 +57,8 @@ const threadMessages = document.getElementById('thread-messages');
 const replyInput = document.getElementById('reply-input');
 const replySubmit = document.getElementById('reply-submit');
 const refreshBtn = document.getElementById('refresh');
+const sessionsView = document.getElementById('sessions-view');
+const sessionsContainer = document.getElementById('sessions-container');
 
 // ------------------------------------------------------------------ init
 
@@ -70,6 +73,7 @@ async function init() {
 
     loadItems();
     loadErrors();
+    loadSessions();
 
     // Listen for tab changes (debounced to avoid rapid-fire API calls)
     chrome.tabs.onActivated.addListener(async (info) => {
@@ -82,6 +86,7 @@ async function init() {
             debouncedLoadItems();
         }
         loadErrors();
+        loadSessions();
     });
 
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -92,7 +97,7 @@ async function init() {
             showListView();
             debouncedLoadItems();
         }
-        if (tab.active) loadErrors();
+        if (tab.active) { loadErrors(); loadSessions(); }
     });
 }
 
@@ -271,6 +276,7 @@ function renderThread(item) {
 
 function showListView() {
     listView.style.display = 'block';
+    sessionsView.style.display = 'none';
     threadView.classList.remove('active');
     currentItemId = null;
 }
@@ -288,10 +294,19 @@ document.querySelectorAll('.tab').forEach(tab => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         currentFilter = tab.dataset.filter;
-        if (currentFilter === 'errors' && currentTabId) {
-            chrome.runtime.sendMessage({ type: 'MARK_ERRORS_READ', tabId: currentTabId }).catch(() => {});
+        if (currentFilter === 'sessions') {
+            listView.querySelector('.content').style.display = 'none';
+            sessionsView.style.display = 'block';
+            threadView.classList.remove('active');
+            loadSessions();
+        } else {
+            sessionsView.style.display = 'none';
+            listView.querySelector('.content').style.display = 'block';
+            if (currentFilter === 'errors' && currentTabId) {
+                chrome.runtime.sendMessage({ type: 'MARK_ERRORS_READ', tabId: currentTabId }).catch(() => {});
+            }
+            renderItems();
         }
-        renderItems();
     });
 });
 
@@ -301,6 +316,7 @@ refreshBtn.addEventListener('click', () => {
     if (currentItemId) loadThread(currentItemId);
     else loadItems(true);
     loadErrors();
+    loadSessions();
 });
 replySubmit.addEventListener('click', sendReply);
 replyInput.addEventListener('keydown', (e) => {
@@ -561,7 +577,84 @@ chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'ERRORS_UPDATED') {
         loadErrors();
     }
+    if (message.type === 'SESSION_UPDATED') {
+        loadSessions();
+    }
 });
+
+// ------------------------------------------------------------------ sessions (#75)
+
+async function loadSessions() {
+    if (!currentTabId) {
+        sessions = [];
+        renderSessions();
+        return;
+    }
+
+    try {
+        const result = await chrome.runtime.sendMessage({
+            type: 'GET_TAB_SESSIONS',
+            tabId: currentTabId,
+        });
+        sessions = Array.isArray(result) ? result : [];
+        // Sort by most recent first
+        sessions.sort((a, b) => (b.lastUpdate || 0) - (a.lastUpdate || 0));
+    } catch {
+        sessions = [];
+    }
+
+    const countEl = document.getElementById('count-sessions');
+    if (countEl) countEl.textContent = sessions.length;
+    renderSessions();
+}
+
+function renderSessions() {
+    if (!sessionsContainer) return;
+
+    if (sessions.length === 0) {
+        sessionsContainer.innerHTML = `
+            <div class="sessions-empty">
+                <div class="sessions-empty-icon">\u{1F3AC}</div>
+                <p>No sessions recorded</p>
+                <p style="font-size:11px;margin-top:4px;">Session recording captures user interactions on this page.</p>
+            </div>`;
+        return;
+    }
+
+    sessionsContainer.innerHTML = sessions.map(s => {
+        const url = escapeHtml(s.url || 'Unknown');
+        const hostname = s.url ? (() => { try { return new URL(s.url).hostname; } catch { return s.url; } })() : 'Unknown';
+        const events = s.eventCount || 0;
+        const snapshots = s.snapshotCount || 0;
+        const startTime = s.startTime ? formatTime(new Date(s.startTime).toISOString()) : '';
+        const duration = (s.startTime && s.lastUpdate)
+            ? formatDuration(s.lastUpdate - s.startTime)
+            : '';
+
+        return `
+            <div class="session-card" data-session-id="${escapeHtml(s.sessionId)}">
+                <div class="session-url" title="${url}">${escapeHtml(hostname)}</div>
+                <div class="session-meta">
+                    <span class="session-events">\u25CF ${events} events</span>
+                    <span class="session-snapshots">\u25A0 ${snapshots} snapshots</span>
+                </div>
+                <div class="session-time">
+                    ${startTime}${duration ? ` \u00B7 ${duration}` : ''}
+                </div>
+            </div>`;
+    }).join('');
+}
+
+function formatDuration(ms) {
+    if (!ms || ms < 0) return '';
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (minutes < 60) return `${minutes}m ${secs}s`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ${minutes % 60}m`;
+}
 
 // ------------------------------------------------------------------ start
 

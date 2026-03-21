@@ -482,6 +482,66 @@
         }
 
         .errors-toolbar button:hover { color: #ccc; border-color: #666; }
+
+        /* ---- Session Cards (#75) ---- */
+        .session-card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+
+        .session-card:hover { border-color: #5865f2; }
+
+        .session-card .session-url {
+            font-size: 12px;
+            color: #ddd;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 4px;
+        }
+
+        .session-card .session-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            color: #666;
+        }
+
+        .session-card .session-meta .session-events {
+            color: #5865f2;
+        }
+
+        .session-card .session-meta .session-errors {
+            color: #ef4444;
+        }
+
+        .session-card .session-meta .session-snapshots {
+            color: #22c55e;
+        }
+
+        .session-card .session-time {
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }
+
+        .sessions-empty {
+            text-align: center;
+            padding: 40px 16px;
+            color: #666;
+        }
+
+        .sessions-empty .sessions-empty-icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
     </style>
 </head>
 <body>
@@ -498,9 +558,17 @@
             <div class="tab" data-filter="comment">Comments <span class="count" id="count-comment">0</span></div>
             <div class="tab" data-filter="issue">Issues <span class="count" id="count-issue">0</span></div>
             <div class="tab" data-filter="errors">Errors <span class="count" id="count-errors">0</span></div>
+            <div class="tab" data-filter="sessions">Sessions <span class="count" id="count-sessions">0</span></div>
         </div>
         <div class="content" id="items-container">
             <div class="loading">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Sessions View -->
+    <div id="sessions-view" style="display:none;">
+        <div class="content" id="sessions-container">
+            <div class="loading">Loading sessions...</div>
         </div>
     </div>
 
