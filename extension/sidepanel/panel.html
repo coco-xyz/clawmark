@@ -792,6 +792,73 @@
         }
 
         .replay-error { color: #f87171; }
+
+        /* ---- DOM Renderer (#75 Phase 3) ---- */
+        .dom-renderer-wrapper {
+            margin-bottom: 8px;
+        }
+
+        .dom-renderer-frame-container {
+            position: relative;
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #fff;
+        }
+
+        .dom-renderer-iframe {
+            width: 100%;
+            height: 200px;
+            border: none;
+            display: block;
+        }
+
+        .dom-renderer-cursor {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: rgba(88, 101, 242, 0.8);
+            border: 2px solid #fff;
+            box-shadow: 0 0 4px rgba(0,0,0,0.3);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 10;
+            display: none;
+            transition: left 0.15s ease, top 0.15s ease;
+        }
+
+        .dom-renderer-click-ripple {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2px solid #5865f2;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 9;
+            opacity: 0;
+        }
+
+        .dom-renderer-click-ripple.active {
+            animation: click-ripple 0.6s ease-out forwards;
+        }
+
+        @keyframes click-ripple {
+            0% { opacity: 1; transform: translate(-50%, -50%) scale(0.5); }
+            100% { opacity: 0; transform: translate(-50%, -50%) scale(2); }
+        }
+
+        .dom-renderer-snapshot-info {
+            font-size: 10px;
+            color: #666;
+            padding: 4px 8px;
+            text-align: right;
+        }
+
+        .replay-dom-container {
+            margin: 8px 0;
+        }
     </style>
 </head>
 <body>
@@ -843,6 +910,7 @@
         </div>
     </div>
 
+    <script src="dom-renderer.js"></script>
     <script src="replay-timeline.js"></script>
     <script src="panel.js"></script>
 </body>
