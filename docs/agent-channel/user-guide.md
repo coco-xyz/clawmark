@@ -108,15 +108,17 @@ curl -H "X-Agent-Key: cmak_xxx" \
 
 ## 第四步：配置 Agent 消费者（可选）
 
-如果希望 Agent 自动消费事件并创建 GitLab Issue：
+ClawMark 提供两种方式消费感知事件：
 
-### 4.1 代码集成
+### 方式 A：内置消费者（进程内，推荐）
+
+PerceptionConsumer 作为 ClawMark Server 的进程内模块运行，**直接读取 SQLite 数据库**，不经过 HTTP API。适合在 ClawMark Server 进程中集成。
 
 ```javascript
 const PerceptionConsumer = require('./server/agent/perception-consumer');
 
 const consumer = new PerceptionConsumer({
-  db: clawmarkDb,         // ClawMark 数据库实例
+  db: clawmarkDb,         // ClawMark 数据库实例（直接访问）
   app_id: 'your-app-id',  // 你的 App ID
   pollInterval: 30000,     // 轮询间隔（ms），默认 30s
   minSeverity: 'error',   // 最低处理级别：critical/error/warning/info
@@ -137,9 +139,21 @@ consumer.start();
 // consumer.stop();  // 停止轮询
 ```
 
-### 4.2 消费者工作流程
+### 方式 B：外部 Agent（HTTP 轮询）
 
-1. 每 30 秒从 `GET /perception` 增量拉取新事件
+如果你的 Agent 运行在 ClawMark Server 外部，使用 HTTP API 拉取事件：
+
+```bash
+# 增量拉取（使用游标）
+curl -H "X-Agent-Key: cmak_xxx" \
+  "http://localhost:3458/api/v2/agent-channel/perception?cursor=2026-03-22T12:00:00.000Z&limit=100"
+```
+
+外部 Agent 需自行实现去重和 Issue 创建逻辑，参考 `ErrorDeduplicator` 的算法。
+
+### 消费者工作流程
+
+1. 每 30 秒增量拉取新事件（内置：`db.getPerceptionEvents()`；外部：`GET /perception`）
 2. 按严重级别过滤（默认只处理 error 及以上）
 3. 按 fingerprint 去重分组
 4. 对每个新唯一错误：
