@@ -8,7 +8,9 @@
  * 4. Session detail with range query
  * 5. Session finalization
  * 6. Size limit enforcement (50MB)
- * 7. Cleanup of expired sessions
+ * 7. Cleanup of expired + orphaned sessions
+ * 8. Validation: event type whitelist, start_time format, agent ownership, finalized append
+ * 9. LIKE wildcard escaping
  */
 
 'use strict';
@@ -116,6 +118,35 @@ describe('Session Storage — createSession', () => {
         assert.equal(snapshots.length, 1);
         assert.ok(snapshots[0].size <= 50000);
     });
+
+    it('should reject invalid event type', () => {
+        assert.throws(() => {
+            db.createSession({
+                app_id: 'app-1',
+                start_time: '2026-03-21T10:00:00.000Z',
+                events: [makeEvent({ type: 'xss-injection' })],
+            });
+        }, /INVALID_EVENT_TYPE/);
+    });
+
+    it('should reject invalid start_time format', () => {
+        assert.throws(() => {
+            db.createSession({
+                app_id: 'app-1',
+                start_time: 'not-a-date',
+            });
+        }, /INVALID_START_TIME/);
+    });
+
+    it('should accept all 6 valid event types', () => {
+        const validTypes = ['dom-mutation', 'console-log', 'console-error', 'network-error', 'click', 'scroll'];
+        const result = db.createSession({
+            app_id: 'app-1',
+            start_time: '2026-03-21T10:00:00.000Z',
+            events: validTypes.map(type => makeEvent({ type })),
+        });
+        assert.equal(result.event_count, 6);
+    });
 });
 
 // ================================================================= chunked upload
@@ -160,6 +191,64 @@ describe('Session Storage — appendSessionEvents', () => {
         const result = db.appendSessionEvents('sess-nonexistent', { events: [makeEvent()] });
         assert.equal(result, null);
     });
+
+    it('should return null when agent_id does not match (P2-2)', () => {
+        const session = db.createSession({
+            app_id: 'app-1',
+            agent_id: 'agent-A',
+            start_time: '2026-03-21T10:00:00.000Z',
+        });
+
+        const result = db.appendSessionEvents(session.id, {
+            events: [makeEvent()],
+            agent_id: 'agent-B',
+        });
+        assert.equal(result, null);
+
+        // Original session unchanged
+        const check = db.getSession(session.id);
+        assert.equal(check.event_count, 0);
+    });
+
+    it('should allow append when agent_id matches', () => {
+        const session = db.createSession({
+            app_id: 'app-1',
+            agent_id: 'agent-A',
+            start_time: '2026-03-21T10:00:00.000Z',
+        });
+
+        const result = db.appendSessionEvents(session.id, {
+            events: [makeEvent()],
+            agent_id: 'agent-A',
+        });
+        assert.ok(result);
+        assert.equal(result.events_added, 1);
+    });
+
+    it('should throw SESSION_FINALIZED when appending to completed session (P2-6)', () => {
+        const session = db.createSession({
+            app_id: 'app-1',
+            start_time: '2026-03-21T10:00:00.000Z',
+        });
+        db.finalizeSession(session.id);
+
+        assert.throws(() => {
+            db.appendSessionEvents(session.id, { events: [makeEvent()] });
+        }, /SESSION_FINALIZED/);
+    });
+
+    it('should reject invalid event type in append', () => {
+        const session = db.createSession({
+            app_id: 'app-1',
+            start_time: '2026-03-21T10:00:00.000Z',
+        });
+
+        assert.throws(() => {
+            db.appendSessionEvents(session.id, {
+                events: [makeEvent({ type: 'bad-type' })],
+            });
+        }, /INVALID_EVENT_TYPE/);
+    });
 });
 
 // ================================================================= listing
@@ -193,6 +282,15 @@ describe('Session Storage — listSessions', () => {
         const sessions = db.listSessions({ app_id: 'app-1', site: 'example.com' });
         assert.equal(sessions.length, 1);
         assert.ok(sessions[0].url.includes('example.com'));
+    });
+
+    it('should escape LIKE wildcards in site filter (P2-3)', () => {
+        db.createSession({ app_id: 'app-1', url: 'https://example.com/foo', start_time: '2026-03-21T10:00:00.000Z' });
+        db.createSession({ app_id: 'app-1', url: 'https://other.com/bar', start_time: '2026-03-21T11:00:00.000Z' });
+
+        // '%' as site should not match everything
+        const sessions = db.listSessions({ app_id: 'app-1', site: '%' });
+        assert.equal(sessions.length, 0);
     });
 
     it('should filter by time (after)', () => {
@@ -297,7 +395,6 @@ describe('Session Storage — cleanupOldSessions', () => {
     afterEach(teardown);
 
     it('should delete completed sessions older than retention period', () => {
-        // Create and finalize a session with old date
         const session = db.createSession({
             app_id: 'app-1',
             start_time: '2026-01-01T10:00:00.000Z',
@@ -310,25 +407,39 @@ describe('Session Storage — cleanupOldSessions', () => {
 
         const result = db.cleanupOldSessions(30);
         assert.ok(result.deleted >= 1);
+        assert.ok(result.completed >= 1);
 
         const check = db.getSession(session.id);
         assert.equal(check, null);
     });
 
-    it('should not delete active sessions', () => {
+    it('should not delete recent active sessions', () => {
+        const session = db.createSession({
+            app_id: 'app-1',
+            start_time: '2026-03-21T10:00:00.000Z',
+        });
+
+        const result = db.cleanupOldSessions(30, 7);
+        assert.equal(result.deleted, 0);
+
+        const check = db.getSession(session.id);
+        assert.ok(check);
+    });
+
+    it('should clean up orphaned active sessions older than orphanDays (P2-7)', () => {
         const session = db.createSession({
             app_id: 'app-1',
             start_time: '2026-01-01T10:00:00.000Z',
         });
 
-        // Backdate but keep active
+        // Backdate updated_at to simulate orphan (never finalized, very old)
         db.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?')
             .run('2026-01-01T10:00:00.000Z', session.id);
 
-        const result = db.cleanupOldSessions(30);
-        assert.equal(result.deleted, 0);
+        const result = db.cleanupOldSessions(30, 7);
+        assert.ok(result.orphaned >= 1);
 
         const check = db.getSession(session.id);
-        assert.ok(check);
+        assert.equal(check, null);
     });
 });

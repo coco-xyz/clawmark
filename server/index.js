@@ -2658,6 +2658,7 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
     if (!app_id) return res.status(400).json({ error: 'No app context' });
 
     const { session_id, tab_id, url, title, start_time, events, snapshots, metadata } = req.body;
+    const agent_id = req.v2Auth?.agent?.id || null;
 
     // Validate events array
     if (events && (!Array.isArray(events) || events.length > 1000)) {
@@ -2674,14 +2675,15 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
             if (!existing) return res.status(404).json({ error: 'Session not found' });
             if (existing.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
 
-            const result = itemsDb.appendSessionEvents(session_id, { events, snapshots });
+            const result = itemsDb.appendSessionEvents(session_id, { events, snapshots, agent_id });
+            if (!result) return res.status(403).json({ error: 'Agent ownership mismatch' });
             return res.json(result);
         }
 
         // Create new session
         const result = itemsDb.createSession({
             app_id,
-            agent_id: req.v2Auth?.agent?.id || null,
+            agent_id,
             tab_id,
             url,
             title,
@@ -2694,6 +2696,16 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
     } catch (err) {
         if (err.message === 'SESSION_TOO_LARGE') {
             return res.status(413).json({ error: 'Session exceeds maximum size (50MB)' });
+        }
+        if (err.message === 'SESSION_FINALIZED') {
+            return res.status(409).json({ error: 'Cannot append to a finalized session' });
+        }
+        if (err.message === 'INVALID_START_TIME') {
+            return res.status(400).json({ error: 'start_time must be ISO 8601 format (e.g. 2026-03-21T10:00:00.000Z)' });
+        }
+        if (err.message.startsWith('INVALID_EVENT_TYPE:')) {
+            const type = err.message.split(':')[1];
+            return res.status(400).json({ error: `Invalid event type: ${type}. Allowed: dom-mutation, console-log, console-error, network-error, click, scroll` });
         }
         console.error('[agent-channel] session POST error:', err.message);
         res.status(500).json({ error: 'Failed to store session' });
@@ -2724,6 +2736,12 @@ app.get('/api/v2/agent-channel/sessions', apiReadLimiter, v2AuthOrAgent, (req, r
     if (!app_id) return res.status(400).json({ error: 'No app context' });
 
     const { agent_id, site, after, limit } = req.query;
+
+    // P2-5: Validate after param format
+    const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+    if (after && !ISO_DATE_RE.test(after)) {
+        return res.status(400).json({ error: 'after must be ISO 8601 format (e.g. 2026-03-21T00:00:00.000Z)' });
+    }
 
     try {
         const sessions = itemsDb.listSessions({
@@ -2813,15 +2831,19 @@ app.listen(PORT, () => {
     console.log(`    auth      : JWT + API key (invite codes deprecated)`);
     console.log(`    api v2    : /api/v2/*`);
 
-    // Session cleanup job: run daily, delete sessions older than 30 days (#73)
-    setInterval(() => {
+    // Session cleanup job: run daily + on startup, delete completed (30d) + orphaned active (7d) (#73)
+    const runSessionCleanup = () => {
         try {
-            const result = itemsDb.cleanupOldSessions(30);
-            if (result.deleted > 0) console.log(`[session] Cleaned up ${result.deleted} expired session(s)`);
+            const result = itemsDb.cleanupOldSessions(30, 7);
+            if (result.deleted > 0) {
+                console.log(`[session] Cleaned up ${result.completed} expired + ${result.orphaned} orphaned session(s)`);
+            }
         } catch (err) {
             console.error('[session] Cleanup error:', err.message);
         }
-    }, 24 * 60 * 60 * 1000); // every 24h
+    };
+    runSessionCleanup(); // run on startup
+    setInterval(runSessionCleanup, 24 * 60 * 60 * 1000); // every 24h
 
     // Start dispatch retry worker (every 30s, exponential backoff per entry)
     let retryBusy = false;

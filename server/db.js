@@ -624,7 +624,7 @@ function initDb(dataDir) {
             SELECT id, app_id, agent_id, tab_id, url, title, start_time, end_time,
                    event_count, snapshot_count, total_size, status, created_at, updated_at
             FROM sessions
-            WHERE app_id = ? AND url LIKE ? AND start_time > ?
+            WHERE app_id = ? AND url LIKE ? ESCAPE '\\' AND start_time > ?
             ORDER BY start_time DESC
             LIMIT ?
         `),
@@ -660,6 +660,9 @@ function initDb(dataDir) {
         getSnapshot: db.prepare('SELECT * FROM session_snapshots WHERE id = ?'),
         deleteOldSessions: db.prepare(`
             DELETE FROM sessions WHERE status = 'completed' AND updated_at < ?
+        `),
+        deleteOrphanSessions: db.prepare(`
+            DELETE FROM sessions WHERE status = 'active' AND updated_at < ?
         `),
         countByApp: db.prepare(`
             SELECT COUNT(*) AS count FROM sessions WHERE app_id = ?
@@ -1807,12 +1810,32 @@ function initDb(dataDir) {
 
     const MAX_SESSION_SIZE = 50 * 1024 * 1024; // 50MB
 
+    // P2-4: Allowed event types per contract
+    const VALID_EVENT_TYPES = new Set([
+        'dom-mutation', 'console-log', 'console-error', 'network-error', 'click', 'scroll',
+    ]);
+
+    // P2-5: ISO 8601 date format validation
+    const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+
     function createSession({ app_id, agent_id, tab_id, url, title, start_time, events, snapshots, metadata }) {
+        // P2-5: Validate start_time format
+        if (start_time && !ISO_DATE_RE.test(start_time)) {
+            throw new Error('INVALID_START_TIME');
+        }
+
         const now = new Date().toISOString();
         const sessionId = genId('sess');
 
         const eventsData = (events || []).slice(0, 1000);
         const snapshotsData = (snapshots || []).slice(0, 100);
+
+        // P2-4: Validate event types
+        for (const e of eventsData) {
+            if (e.type && !VALID_EVENT_TYPES.has(e.type)) {
+                throw new Error(`INVALID_EVENT_TYPE:${e.type}`);
+            }
+        }
 
         // Calculate total size
         let totalSize = 0;
@@ -1883,13 +1906,30 @@ function initDb(dataDir) {
         };
     }
 
-    function appendSessionEvents(sessionId, { events, snapshots }) {
+    function appendSessionEvents(sessionId, { events, snapshots, agent_id }) {
         const session = sessionStmts.getSession.get(sessionId);
         if (!session) return null;
+
+        // P2-2: Verify agent ownership — prevent cross-agent injection
+        if (agent_id && session.agent_id && session.agent_id !== agent_id) {
+            return null;
+        }
+
+        // P2-6: Reject append to finalized sessions
+        if (session.status === 'completed') {
+            throw new Error('SESSION_FINALIZED');
+        }
 
         const now = new Date().toISOString();
         const eventsData = (events || []).slice(0, 1000);
         const snapshotsData = (snapshots || []).slice(0, 100);
+
+        // P2-4: Validate event types
+        for (const e of eventsData) {
+            if (e.type && !VALID_EVENT_TYPES.has(e.type)) {
+                throw new Error(`INVALID_EVENT_TYPE:${e.type}`);
+            }
+        }
 
         let addedSize = 0;
         for (const e of eventsData) addedSize += JSON.stringify(e.data || {}).length;
@@ -1968,7 +2008,9 @@ function initDb(dataDir) {
             return sessionStmts.listSessionsByAgent.all(app_id, agent_id, cutoff, maxLimit);
         }
         if (site) {
-            return sessionStmts.listSessionsBySite.all(app_id, `%${site}%`, cutoff, maxLimit);
+            // P2-3: Escape LIKE wildcards to prevent logic bypass
+            const escapedSite = site.replace(/[%_]/g, '\\$&');
+            return sessionStmts.listSessionsBySite.all(app_id, `%${escapedSite}%`, cutoff, maxLimit);
         }
         return sessionStmts.listSessions.all(app_id, cutoff, maxLimit);
     }
@@ -1992,10 +2034,13 @@ function initDb(dataDir) {
         return sessionStmts.getSnapshot.get(snapshotId) || null;
     }
 
-    function cleanupOldSessions(retentionDays = 30) {
+    function cleanupOldSessions(retentionDays = 30, orphanDays = 7) {
         const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
-        const result = sessionStmts.deleteOldSessions.run(cutoff);
-        return { deleted: result.changes };
+        const orphanCutoff = new Date(Date.now() - orphanDays * 86400000).toISOString();
+        const completed = sessionStmts.deleteOldSessions.run(cutoff);
+        // P2-7: Clean up orphaned active sessions (e.g. extension crash)
+        const orphaned = sessionStmts.deleteOrphanSessions.run(orphanCutoff);
+        return { deleted: completed.changes + orphaned.changes, completed: completed.changes, orphaned: orphaned.changes };
     }
 
     // ------------------------------------------------- agent methods (#68)
