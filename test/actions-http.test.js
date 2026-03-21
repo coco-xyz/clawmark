@@ -83,8 +83,16 @@ function createTestApp(db) {
         }
         const { result, error } = req.body;
         const status = error ? 'failed' : 'completed';
-        db.updateActionStatus(action.id, { status, result, error });
-        res.json({ action_id: action.id, status });
+        try {
+            const updated = db.updateActionStatus(action.id, { status, result, error });
+            if (!updated) return res.status(409).json({ error: 'Status race condition' });
+            res.json({ action_id: action.id, status });
+        } catch (err) {
+            if (err.message.startsWith('INVALID_TRANSITION')) {
+                return res.status(409).json({ error: 'Invalid state transition' });
+            }
+            res.status(500).json({ error: 'Failed' });
+        }
     });
 
     // GET /api/v2/agent-channel/actions
@@ -187,7 +195,9 @@ describe('Action HTTP — poll and result', () => {
     });
 
     it('should submit result via REST', async () => {
-        const create = await req('POST', BASE, { headers: AUTH, body: { action_type: 'extract' } });
+        const create = await req('POST', BASE, { headers: AUTH, body: { action_type: 'screenshot' } });
+        // Must dispatch before completing (valid transition: queued→dispatched→completed)
+        dbApi.updateActionStatus(create.body.id, { status: 'dispatched' });
         const res = await req('POST', `${BASE}/${create.body.id}/result`, { headers: AUTH_EXT, body: { result: { text: 'hello' } } });
         assert.equal(res.status, 200);
         assert.equal(res.body.status, 'completed');
@@ -200,6 +210,7 @@ describe('Action HTTP — poll and result', () => {
 
     it('should return 409 for already-resolved action', async () => {
         const create = await req('POST', BASE, { headers: AUTH, body: { action_type: 'click' } });
+        dbApi.updateActionStatus(create.body.id, { status: 'dispatched' });
         await req('POST', `${BASE}/${create.body.id}/result`, { headers: AUTH_EXT, body: { result: {} } });
         const res = await req('POST', `${BASE}/${create.body.id}/result`, { headers: AUTH_EXT, body: { result: {} } });
         assert.equal(res.status, 409);
@@ -207,6 +218,7 @@ describe('Action HTTP — poll and result', () => {
 
     it('should submit error result', async () => {
         const create = await req('POST', BASE, { headers: AUTH, body: { action_type: 'click' } });
+        dbApi.updateActionStatus(create.body.id, { status: 'dispatched' });
         const res = await req('POST', `${BASE}/${create.body.id}/result`, { headers: AUTH_EXT, body: { error: 'Element not found' } });
         assert.equal(res.status, 200);
         assert.equal(res.body.status, 'failed');

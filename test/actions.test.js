@@ -63,9 +63,9 @@ describe('Action Queue — createAction', () => {
         assert.equal(action.type, 'click');
     });
 
-    it('should create an extract action', () => {
-        const action = db.createAction(makeAction({ type: 'extract', payload: { selector: '.content' } }));
-        assert.equal(action.type, 'extract');
+    it('should create a screenshot action', () => {
+        const action = db.createAction(makeAction({ type: 'screenshot', payload: { selector: '.content' } }));
+        assert.equal(action.type, 'screenshot');
     });
 
     it('should reject invalid action type', () => {
@@ -115,7 +115,8 @@ describe('Action Queue — queue depth limit', () => {
             actions.push(db.createAction(makeAction()));
         }
 
-        // Complete one
+        // Complete one (must go through dispatched first)
+        db.updateActionStatus(actions[0].id, { status: 'dispatched' });
         db.updateActionStatus(actions[0].id, { status: 'completed', result: { ok: true } });
 
         // Should now allow one more
@@ -174,6 +175,25 @@ describe('Action Queue — updateActionStatus', () => {
         const result = db.updateActionStatus('act-nonexistent', { status: 'completed' });
         assert.equal(result, null);
     });
+
+    it('should reject invalid state transitions', () => {
+        const action = db.createAction(makeAction());
+        db.updateActionStatus(action.id, { status: 'dispatched' });
+        db.updateActionStatus(action.id, { status: 'completed', result: {} });
+
+        // completed → queued is invalid
+        assert.throws(() => {
+            db.updateActionStatus(action.id, { status: 'queued' });
+        }, /INVALID_TRANSITION/);
+    });
+
+    it('should return fresh DB data after update', () => {
+        const action = db.createAction(makeAction());
+        const updated = db.updateActionStatus(action.id, { status: 'dispatched' });
+        assert.equal(updated.status, 'dispatched');
+        assert.ok(updated.dispatched_at);
+        assert.equal(updated.id, action.id);
+    });
 });
 
 // ================================================================= listing
@@ -194,6 +214,7 @@ describe('Action Queue — listing', () => {
     it('should list actions by agent and status', () => {
         const a1 = db.createAction(makeAction());
         db.createAction(makeAction());
+        db.updateActionStatus(a1.id, { status: 'dispatched' });
         db.updateActionStatus(a1.id, { status: 'completed', result: {} });
 
         const queued = db.listAgentActions('agent-1', 'queued');
@@ -248,6 +269,7 @@ describe('Action Queue — cleanup', () => {
 
     it('should delete old completed actions', () => {
         const action = db.createAction(makeAction());
+        db.updateActionStatus(action.id, { status: 'dispatched' });
         db.updateActionStatus(action.id, { status: 'completed', result: {} });
 
         // Backdate

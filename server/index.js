@@ -2875,8 +2875,16 @@ app.post('/api/v2/agent-channel/actions/:id/result', sessionLimiter, v2AuthOrAge
 
     const { result, error } = req.body;
     const status = error ? 'failed' : 'completed';
-    itemsDb.updateActionStatus(action.id, { status, result, error });
-    res.json({ action_id: action.id, status });
+    try {
+        const updated = itemsDb.updateActionStatus(action.id, { status, result, error });
+        if (!updated) return res.status(409).json({ error: 'Status race condition' });
+        res.json({ action_id: action.id, status });
+    } catch (err) {
+        if (err.message?.startsWith('INVALID_TRANSITION')) {
+            return res.status(409).json({ error: 'Invalid state transition' });
+        }
+        throw err;
+    }
 });
 
 // GET /api/v2/agent-channel/actions — list agent's actions

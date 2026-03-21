@@ -18,7 +18,7 @@ const { hashKey } = require('./agent-auth');
  */
 
 const HEARTBEAT_INTERVAL = 30000;
-const VALID_ACTION_TYPES = new Set(['navigate', 'click', 'extract']);
+const VALID_ACTION_TYPES = new Set(['navigate', 'click', 'screenshot']);
 
 function initActionWs(server, db) {
     const wss = new WebSocketServer({ noServer: true });
@@ -164,20 +164,26 @@ function initActionWs(server, db) {
         if (action.status === 'completed' || action.status === 'failed') return;
 
         const status = error ? 'failed' : 'completed';
-        db.updateActionStatus(action_id, { status, result, error });
+        let updated;
+        try {
+            updated = db.updateActionStatus(action_id, { status, result, error });
+        } catch { return; } // Invalid transition
+        if (!updated) return;
 
-        // Push result to agent
+        // Push result only to the agent that created this action
         const agentSockets = agentConnections.get(ctx.app_id);
         if (agentSockets) {
             for (const agentWs of agentSockets) {
-                wsSend(agentWs, {
-                    type: 'result',
-                    action_id,
-                    action_type: action.type,
-                    status,
-                    result: result || null,
-                    error: error || null,
-                });
+                if (agentWs.authContext.agent_id === action.agent_id) {
+                    wsSend(agentWs, {
+                        type: 'result',
+                        action_id,
+                        action_type: action.type,
+                        status,
+                        result: result || null,
+                        error: error || null,
+                    });
+                }
             }
         }
     }
@@ -219,19 +225,25 @@ function initActionWs(server, db) {
     function checkTimeouts() {
         const timedOut = db.getTimedOutActions();
         for (const action of timedOut) {
-            db.updateActionStatus(action.id, { status: 'failed', error: 'Action timed out' });
+            let updated;
+            try {
+                updated = db.updateActionStatus(action.id, { status: 'failed', error: 'Action timed out' });
+            } catch { continue; } // Race: status already changed
+            if (!updated) continue;
 
-            // Notify agent
+            // Notify only the agent that created this action
             const agentSockets = agentConnections.get(action.app_id);
             if (agentSockets) {
                 for (const agentWs of agentSockets) {
-                    wsSend(agentWs, {
-                        type: 'result',
-                        action_id: action.id,
-                        action_type: action.type,
-                        status: 'failed',
-                        error: 'Action timed out',
-                    });
+                    if (agentWs.authContext.agent_id === action.agent_id) {
+                        wsSend(agentWs, {
+                            type: 'result',
+                            action_id: action.id,
+                            action_type: action.type,
+                            status: 'failed',
+                            error: 'Action timed out',
+                        });
+                    }
                 }
             }
         }

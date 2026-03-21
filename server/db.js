@@ -716,7 +716,7 @@ function initDb(dataDir) {
         `),
         countPendingByAgent: db.prepare(`
             SELECT COUNT(*) AS count FROM action_queue
-            WHERE agent_id = ? AND status IN ('queued', 'dispatched', 'executing')
+            WHERE agent_id = ? AND status IN ('queued', 'dispatched')
         `),
         updateStatus: db.prepare(`
             UPDATE action_queue
@@ -725,11 +725,11 @@ function initDb(dataDir) {
                 completed_at = COALESCE(@completed_at, completed_at),
                 result = COALESCE(@result, result),
                 error = COALESCE(@error, error)
-            WHERE id = @id
+            WHERE id = @id AND status = @expected_status
         `),
         getTimedOut: db.prepare(`
             SELECT * FROM action_queue
-            WHERE status IN ('dispatched', 'executing')
+            WHERE status = 'dispatched'
               AND dispatched_at IS NOT NULL
               AND (julianday(@now) - julianday(dispatched_at)) * 86400000 > timeout_ms
         `),
@@ -2115,8 +2115,14 @@ function initDb(dataDir) {
 
     // ------------------------------------------------- action queue methods (#78)
 
-    const VALID_ACTION_TYPES = new Set(['navigate', 'click', 'extract']);
+    const VALID_ACTION_TYPES = new Set(['navigate', 'click', 'screenshot']);
     const MAX_QUEUE_DEPTH = 100;
+
+    // Valid state transitions for action queue
+    const VALID_TRANSITIONS = {
+        queued:     new Set(['dispatched', 'failed']),
+        dispatched: new Set(['completed', 'failed']),
+    };
 
     function createAction({ agent_id, app_id, session_id, type, payload, timeout_ms }) {
         if (!VALID_ACTION_TYPES.has(type)) {
@@ -2163,9 +2169,15 @@ function initDb(dataDir) {
         const action = actionStmts.getAction.get(actionId);
         if (!action) return null;
 
-        actionStmts.updateStatus.run({
+        const allowed = VALID_TRANSITIONS[action.status];
+        if (!allowed || !allowed.has(status)) {
+            throw new Error(`INVALID_TRANSITION:${action.status}→${status}`);
+        }
+
+        const res = actionStmts.updateStatus.run({
             id: actionId,
             status,
+            expected_status: action.status,
             updated_at: now,
             dispatched_at: status === 'dispatched' ? now : null,
             completed_at: (status === 'completed' || status === 'failed') ? now : null,
@@ -2173,7 +2185,9 @@ function initDb(dataDir) {
             error: error || null,
         });
 
-        return { ...action, status, updated_at: now };
+        if (res.changes === 0) return null; // Race: status changed between read and write
+
+        return actionStmts.getAction.get(actionId);
     }
 
     function getTimedOutActions() {
