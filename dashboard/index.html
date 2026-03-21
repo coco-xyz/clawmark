@@ -324,6 +324,49 @@
                         <div class="empty-state">Loading...</div>
                     </div>
                 </div>
+
+                <!-- Quality Report -->
+                <div class="card">
+                    <div class="card-header-row">
+                        <h3>Quality Report</h3>
+                        <div class="chart-controls">
+                            <select class="input input-small" id="quality-range-select">
+                                <option value="7">7d</option>
+                                <option value="30" selected>30d</option>
+                                <option value="90">90d</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="quality-grid" id="quality-grid">
+                        <div class="quality-card">
+                            <div class="quality-value" id="q-mttr">&mdash;</div>
+                            <div class="quality-label">MTTR</div>
+                            <div class="quality-desc">Mean Time to Resolution</div>
+                        </div>
+                        <div class="quality-card">
+                            <div class="quality-value" id="q-autofix">&mdash;</div>
+                            <div class="quality-label">Auto-Fix Rate</div>
+                            <div class="quality-desc">Issues filed to tracker</div>
+                        </div>
+                        <div class="quality-card">
+                            <div class="quality-value" id="q-recurrence">&mdash;</div>
+                            <div class="quality-label">Recurrence Rate</div>
+                            <div class="quality-desc">Errors seen more than once</div>
+                        </div>
+                        <div class="quality-card">
+                            <div class="quality-value" id="q-coverage">&mdash;</div>
+                            <div class="quality-label">Coverage</div>
+                            <div class="quality-desc">Sites monitored</div>
+                        </div>
+                    </div>
+
+                    <!-- Trend Comparison -->
+                    <div class="quality-comparison" id="quality-comparison"></div>
+
+                    <!-- Detail Stats -->
+                    <div class="quality-details" id="quality-details"></div>
+                </div>
             </section>
 
             <!-- Settings Tab (Auth + Delivery Rules) -->

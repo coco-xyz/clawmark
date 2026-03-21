@@ -20,6 +20,7 @@ import {
     getPassiveMonitorSettings, setPassiveMonitorSettings,
     getErrorTrends,
     getAgentActions,
+    getQualityReport,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -1287,9 +1288,11 @@ async function loadMonitoring() {
     document.getElementById('err-group-select').addEventListener('change', () => fetchErrorTrends());
     document.getElementById('action-type-filter').addEventListener('change', () => fetchAgentActions());
     document.getElementById('action-range-select').addEventListener('change', () => fetchAgentActions());
+    document.getElementById('quality-range-select').addEventListener('change', () => fetchQualityReport());
 
     fetchErrorTrends();
     fetchAgentActions();
+    fetchQualityReport();
 }
 
 async function fetchErrorTrends() {
@@ -1549,6 +1552,91 @@ function renderActionList(actions) {
                 </div>
             </div>`;
     }).join('');
+}
+
+// ------------------------------------------------------------------ Quality Report (#87 Phase 3)
+
+async function fetchQualityReport() {
+    const days = parseInt(document.getElementById('quality-range-select').value, 10) || 30;
+
+    try {
+        const data = await getQualityReport({ days });
+        renderQualityReport(data.report, days);
+    } catch {
+        document.getElementById('quality-details').innerHTML =
+            '<div class="empty-state">Failed to load quality report</div>';
+    }
+}
+
+function formatHours(hours) {
+    if (!hours || hours === 0) return '\u2014';
+    if (hours < 1) return `${Math.round(hours * 60)}m`;
+    if (hours < 24) return `${hours.toFixed(1)}h`;
+    return `${(hours / 24).toFixed(1)}d`;
+}
+
+function renderTrendArrow(pct) {
+    if (!pct || Math.abs(pct) < 1) return '<span class="trend-neutral">\u2014</span>';
+    const arrow = pct > 0 ? '\u2191' : '\u2193';
+    // For errors, down is good; for coverage, up is good
+    const cls = pct > 0 ? 'trend-up' : 'trend-down';
+    return `<span class="${cls}">${arrow} ${Math.abs(Math.round(pct))}%</span>`;
+}
+
+function renderQualityReport(report, days) {
+    // MTTR
+    const mttrEl = document.getElementById('q-mttr');
+    mttrEl.textContent = formatHours(report.mttr.avgHours);
+
+    // Auto-fix rate
+    const autofixEl = document.getElementById('q-autofix');
+    autofixEl.textContent = report.autoFixRate + '%';
+
+    // Recurrence rate
+    const recurrenceEl = document.getElementById('q-recurrence');
+    recurrenceEl.textContent = report.recurrenceRate + '%';
+
+    // Coverage
+    const coverageEl = document.getElementById('q-coverage');
+    coverageEl.textContent = report.coverage + ' sites';
+
+    // Comparison
+    const compEl = document.getElementById('quality-comparison');
+    const c = report.comparison;
+    const halfLabel = days <= 7 ? 'vs prior half' : `vs prior ${Math.floor(days / 2)}d`;
+    compEl.innerHTML = `
+        <div class="comparison-row">
+            <span class="comparison-label">Errors ${halfLabel}</span>
+            <span class="comparison-values">${Number(c.currentErrors)} current / ${Number(c.priorErrors)} prior</span>
+            ${renderTrendArrow(c.errorTrend)}
+        </div>
+        <div class="comparison-row">
+            <span class="comparison-label">Issues ${halfLabel}</span>
+            <span class="comparison-values">${Number(c.currentIssues)} current / ${Number(c.priorIssues)} prior</span>
+            ${renderTrendArrow(c.issueTrend)}
+        </div>`;
+
+    // Details
+    const detailsEl = document.getElementById('quality-details');
+    detailsEl.innerHTML = `
+        <div class="quality-detail-grid">
+            <div class="quality-detail">
+                <span class="detail-label">Resolved issues</span>
+                <span class="detail-value">${Number(report.resolvedCount)} / ${Number(report.totalIssues)}</span>
+            </div>
+            <div class="quality-detail">
+                <span class="detail-label">Issues filed to tracker</span>
+                <span class="detail-value">${Number(report.filedCount)} / ${Number(report.totalIssues)}</span>
+            </div>
+            <div class="quality-detail">
+                <span class="detail-label">Recurring fingerprints</span>
+                <span class="detail-value">${Number(report.recurringFingerprints)} / ${Number(report.totalFingerprints)}</span>
+            </div>
+            <div class="quality-detail">
+                <span class="detail-label">MTTR resolved count</span>
+                <span class="detail-value">${Number(report.mttr.resolvedCount)}</span>
+            </div>
+        </div>`;
 }
 
 // ------------------------------------------------------------------ start
