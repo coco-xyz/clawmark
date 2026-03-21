@@ -399,6 +399,10 @@ const ReplayTimeline = (() => {
             DomRenderer.showCursor(latestClick.data.x, latestClick.data.y);
             if (latestClick.data.selector) {
                 DomRenderer.highlightElement(latestClick.data.selector);
+            } else {
+                // Click without selector — clear stale highlight
+                DomRenderer.clearOverlays();
+                DomRenderer.showCursor(latestClick.data.x, latestClick.data.y);
             }
         } else {
             DomRenderer.hideCursor();
@@ -561,7 +565,7 @@ const ReplayTimeline = (() => {
     function showLoading() {
         if (!container) return;
         const list = container.querySelector('.replay-event-list');
-        if (list) list.innerHTML = '<div class="replay-loading">Loading session...</div>';
+        if (list) list.innerHTML = '<div class="replay-loading-spinner">Loading session...</div>';
     }
 
     function showEmpty(msg) {
