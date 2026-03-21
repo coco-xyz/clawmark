@@ -327,18 +327,31 @@ async function sendWebhook(event, payload) {
         // Inject auth credentials from user_auths into targets that reference an auth_id.
         // Use spread to create a new object — the original target_config must stay clean
         // because dispatchToTargets serializes it into dispatch_log.
+        // #264: Skip targets whose auth_id is missing instead of dispatching with incomplete config.
+        const authValidTargets = [];
         for (const t of filteredTargets) {
             if (t.matched_rule && t.matched_rule.auth_id) {
-                const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
+                let auth;
+                try { auth = itemsDb.getUserAuth(t.matched_rule.auth_id); } catch (err) {
+                    console.error(`[routing] DB error fetching auth ${t.matched_rule.auth_id}: ${err.message}`);
+                    continue;
+                }
                 if (auth) {
                     let creds;
                     try { creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials; } catch { creds = {}; }
                     t.target_config = { ...t.target_config, ...creds };
+                    authValidTargets.push(t);
                 } else {
-                    console.warn(`[routing] Auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
+                    console.warn(`[routing] Skipping target: auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
                 }
+            } else {
+                authValidTargets.push(t);
             }
         }
+        if (filteredTargets.length > authValidTargets.length) {
+            console.warn(`[routing] ${filteredTargets.length - authValidTargets.length} of ${filteredTargets.length} targets dropped due to missing auth`);
+        }
+        filteredTargets = authValidTargets;
 
         // Inject ClawMark server URL for adapters that need to resolve relative image paths (#45)
         if (PUBLIC_URL) {
@@ -1447,27 +1460,58 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
         declaration,
     });
 
+    // #264: Validate auth_id references — filter out targets whose auth credentials are missing
+    const totalBeforeFilter = targets.length;
+    const validatedTargets = targets.filter(t => {
+        if (t.matched_rule && t.matched_rule.auth_id) {
+            try {
+                const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
+                if (!auth) {
+                    console.warn(`[routing/resolve] Dropping target: auth ${t.matched_rule.auth_id} from rule ${t.matched_rule.id} not found`);
+                    return false;
+                }
+            } catch (err) {
+                console.error(`[routing/resolve] DB error checking auth ${t.matched_rule.auth_id}: ${err.message}`);
+                return false;
+            }
+        }
+        return true;
+    });
+    const droppedCount = totalBeforeFilter - validatedTargets.length;
+    if (droppedCount > 0) {
+        console.warn(`[routing/resolve] ${droppedCount} of ${totalBeforeFilter} targets dropped due to missing auth`);
+    }
+
     // Include recent targets for recommendation (#48)
     const appId = req.v2Auth?.app_id;
     let recentTargets = [];
     if (user && appId) {
         try {
-            recentTargets = itemsDb.getRecentTargets(user, appId, 5).map(r => {
-                let config;
-                try { config = JSON.parse(r.target_config); } catch { config = {}; }
-                return {
-                    target_type: r.target_type,
-                    target_config: redactConfig(config),
-                    auth_id: r.auth_id,
-                    last_used: r.last_used,
-                    use_count: r.use_count,
-                };
-            });
+            recentTargets = itemsDb.getRecentTargets(user, appId, 5)
+                .filter(r => {
+                    // #264: Skip recent targets with missing auth
+                    if (r.auth_id) {
+                        try { if (!itemsDb.getUserAuth(r.auth_id)) return false; }
+                        catch { return false; }
+                    }
+                    return true;
+                })
+                .map(r => {
+                    let config;
+                    try { config = JSON.parse(r.target_config); } catch { config = {}; }
+                    return {
+                        target_type: r.target_type,
+                        target_config: redactConfig(config),
+                        auth_id: r.auth_id,
+                        last_used: r.last_used,
+                        use_count: r.use_count,
+                    };
+                });
         } catch { /* non-critical */ }
     }
 
     res.json({
-        targets: targets.map(t => ({
+        targets: validatedTargets.map(t => ({
             target_type: t.target_type,
             target_config: redactConfig(
                 typeof t.target_config === 'string' ? JSON.parse(t.target_config) : t.target_config
