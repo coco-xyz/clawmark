@@ -37,6 +37,7 @@ const ReplayTimeline = (() => {
     let timeDisplay = null;
     let eventDetail = null;
     let eventList = null;
+    let cachedRows = [];   // Cached event row elements (avoid DOM query per tick)
 
     // ── Public API ──────────────────────────────────────────────────────
 
@@ -46,11 +47,29 @@ const ReplayTimeline = (() => {
         container.innerHTML = buildHTML();
         bindElements();
         bindEvents();
+
+        // Mount DOM renderer if available
+        if (typeof DomRenderer !== 'undefined') {
+            const domContainer = container.querySelector('.replay-dom-container');
+            if (domContainer) DomRenderer.mount(domContainer);
+        }
+    }
+
+    function resetState() {
+        stop();
+        session = null;
+        allEvents = [];
+        cachedRows = [];
+        duration = 0;
+        sessionStart = 0;
+        currentTime = 0;
+        playbackSpeed = 1;
     }
 
     async function loadSession(tabId, sessionId) {
         if (!container) return;
 
+        resetState();
         showLoading();
 
         try {
@@ -74,9 +93,8 @@ const ReplayTimeline = (() => {
     }
 
     function unmount() {
-        stop();
-        session = null;
-        allEvents = [];
+        resetState();
+        if (typeof DomRenderer !== 'undefined') DomRenderer.unmount();
         if (container) container.innerHTML = '';
     }
 
@@ -116,6 +134,7 @@ const ReplayTimeline = (() => {
                 <div class="replay-markers"></div>
                 <div class="replay-playhead"></div>
             </div>
+            <div class="replay-dom-container"></div>
             <div class="replay-event-detail" style="display:none;"></div>
             <div class="replay-event-list"></div>
         `;
@@ -179,18 +198,22 @@ const ReplayTimeline = (() => {
     }
 
     function renderEventList() {
-        // Show filterable event list below timeline
+        // Build index map for O(1) lookup instead of O(n) indexOf
+        const indexMap = new Map();
+        allEvents.forEach((ev, i) => indexMap.set(ev, i));
+
         const significantEvents = allEvents.filter(e =>
             e.type === 'click' || e.type === 'input' || e.type === 'error' || e.type === 'navigation'
         );
 
         if (significantEvents.length === 0) {
             eventList.innerHTML = '<div class="replay-empty-events">No significant events.</div>';
+            cachedRows = [];
             return;
         }
 
         eventList.innerHTML = significantEvents.map((ev) => {
-            const realIdx = allEvents.indexOf(ev);
+            const realIdx = indexMap.get(ev);
             const relTime = ev.timestamp - sessionStart;
             const isError = ev.type === 'error';
             return `
@@ -202,7 +225,10 @@ const ReplayTimeline = (() => {
             `;
         }).join('');
 
-        eventList.querySelectorAll('.replay-event-row').forEach(row => {
+        // Cache row NodeList for highlightCurrentEvent (avoid repeated DOM queries)
+        cachedRows = Array.from(eventList.querySelectorAll('.replay-event-row'));
+
+        cachedRows.forEach(row => {
             row.addEventListener('click', () => {
                 seekToEvent(parseInt(row.dataset.index, 10));
             });
@@ -324,6 +350,60 @@ const ReplayTimeline = (() => {
         updatePlayhead();
         updateTimeDisplay();
         highlightCurrentEvent();
+        syncDomRenderer();
+    }
+
+    /**
+     * Sync DOM renderer with current playback position:
+     * - Show the most recent snapshot at or before currentTime
+     * - Show cursor at the most recent click position
+     * - Highlight click targets
+     */
+    function syncDomRenderer() {
+        if (typeof DomRenderer === 'undefined') return;
+
+        const targetTime = sessionStart + currentTime;
+
+        // Find most recent snapshot at or before current time.
+        // Scans backwards (allEvents sorted ascending by timestamp).
+        // No time-window limit — snapshots can be sparse, so we use whichever is nearest.
+        let latestSnapshot = null;
+        for (let i = allEvents.length - 1; i >= 0; i--) {
+            const ev = allEvents[i];
+            if (ev.timestamp > targetTime) continue;
+            if (ev._isSnapshot || ev.type === 'snapshot') {
+                latestSnapshot = ev;
+                break;
+            }
+        }
+
+        if (latestSnapshot) {
+            DomRenderer.renderSnapshot(latestSnapshot);
+        }
+
+        // Find most recent click within 2s window before current time.
+        // The 2s window keeps cursor/highlight relevant — older clicks are stale.
+        // allEvents is sorted ascending, so reverse scan hits newest first.
+        let latestClick = null;
+        for (let i = allEvents.length - 1; i >= 0; i--) {
+            const ev = allEvents[i];
+            if (ev.timestamp > targetTime) continue;
+            if (targetTime - ev.timestamp > 2000) break;
+            if (ev.type === 'click') {
+                latestClick = ev;
+                break;
+            }
+        }
+
+        if (latestClick && latestClick.data) {
+            DomRenderer.showCursor(latestClick.data.x, latestClick.data.y);
+            if (latestClick.data.selector) {
+                DomRenderer.highlightElement(latestClick.data.selector);
+            }
+        } else {
+            DomRenderer.hideCursor();
+            DomRenderer.clearOverlays();
+        }
     }
 
     function cycleSpeed() {
@@ -337,13 +417,21 @@ const ReplayTimeline = (() => {
         updatePlayhead();
         updateTimeDisplay();
         highlightCurrentEvent();
+        syncDomRenderer();
     }
 
     function seekToEvent(index) {
         if (index < 0 || index >= allEvents.length) return;
         const ev = allEvents[index];
+        // seekTo() calls syncDomRenderer() synchronously, which sets cursor/highlight.
+        // showClick() fires after, adding a ripple animation on top of the cursor state.
+        // This ordering is intentional: cursor appears first, then the ripple animates.
         seekTo(ev.timestamp - sessionStart);
         showEventDetail(ev);
+
+        if (ev.type === 'click' && ev.data && typeof DomRenderer !== 'undefined') {
+            DomRenderer.showClick(ev.data.x, ev.data.y);
+        }
     }
 
     function onTimelineClick(e) {
@@ -378,13 +466,12 @@ const ReplayTimeline = (() => {
     }
 
     function highlightCurrentEvent() {
-        // Highlight the event row closest to current time
+        // Highlight the event row closest to current time (uses cached NodeList)
         const targetTime = sessionStart + currentTime;
-        const rows = eventList.querySelectorAll('.replay-event-row');
         let nearestRow = null;
         let minDist = Infinity;
 
-        rows.forEach(row => {
+        cachedRows.forEach(row => {
             row.classList.remove('replay-event-active');
             const idx = parseInt(row.dataset.index, 10);
             if (idx >= 0 && idx < allEvents.length) {
