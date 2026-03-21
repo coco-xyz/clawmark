@@ -392,6 +392,28 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_pissues_fp ON perception_issues(app_id, fingerprint);
     `);
 
+    // ------------------------------------------------- schema: agents table (#68)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS agents (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            name            TEXT NOT NULL,
+            key_hash        TEXT NOT NULL UNIQUE,
+            key_prefix      TEXT NOT NULL,
+            callback_url    TEXT,
+            capabilities    TEXT DEFAULT '[]',
+            status          TEXT NOT NULL DEFAULT 'active',
+            created_by      TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            last_seen       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_agents_app ON agents(app_id);
+        CREATE INDEX IF NOT EXISTS idx_agents_key_hash ON agents(key_hash);
+        CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+        CREATE INDEX IF NOT EXISTS idx_agents_key_prefix ON agents(key_prefix);
+    `);
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -538,6 +560,23 @@ function initDb(dataDir) {
         `),
         deleteRule: db.prepare('DELETE FROM user_rules WHERE id = ?'),
         getAllRules: db.prepare('SELECT * FROM user_rules ORDER BY user_name, priority DESC'),
+    };
+
+    // ------------------------------------------------- agent statements (#68)
+    const agentStmts = {
+        insertAgent: db.prepare(`
+            INSERT INTO agents (id, app_id, name, key_hash, key_prefix, callback_url, capabilities, status, created_by, created_at, updated_at)
+            VALUES (@id, @app_id, @name, @key_hash, @key_prefix, @callback_url, @capabilities, @status, @created_by, @created_at, @updated_at)
+        `),
+        getAgentById: db.prepare('SELECT * FROM agents WHERE id = ?'),
+        getAgentByKeyHash: db.prepare("SELECT * FROM agents WHERE key_hash = ? AND status = 'active'"),
+        getAgentsByApp: db.prepare('SELECT id, app_id, name, key_prefix, callback_url, capabilities, status, created_by, created_at, updated_at, last_seen FROM agents WHERE app_id = ? ORDER BY created_at DESC'),
+        updateAgent: db.prepare(`
+            UPDATE agents SET name = @name, callback_url = @callback_url, capabilities = @capabilities, updated_at = @updated_at WHERE id = @id
+        `),
+        deactivateAgent: db.prepare("UPDATE agents SET status = 'inactive', updated_at = ? WHERE id = ?"),
+        updateAgentLastSeen: db.prepare('UPDATE agents SET last_seen = ? WHERE id = ?'),
+        updateAgentKey: db.prepare('UPDATE agents SET key_hash = @key_hash, key_prefix = @key_prefix, updated_at = @updated_at WHERE id = @id'),
     };
 
     // ------------------------------------------------- user_auths statements
@@ -1639,6 +1678,64 @@ function initDb(dataDir) {
         return perceptionStmts.getOpenIssues.all(app_id);
     }
 
+    // ------------------------------------------------- agent methods (#68)
+
+    function registerAgent({ app_id, name, key_hash, key_prefix, callback_url, capabilities, created_by }) {
+        const id = genId('agent');
+        const now = new Date().toISOString();
+        agentStmts.insertAgent.run({
+            id, app_id, name, key_hash, key_prefix,
+            callback_url: callback_url || null,
+            capabilities: JSON.stringify(capabilities || []),
+            status: 'active',
+            created_by,
+            created_at: now,
+            updated_at: now,
+        });
+        return { id, app_id, name, key_prefix, callback_url: callback_url || null, capabilities: capabilities || [], status: 'active', created_by, created_at: now, updated_at: now };
+    }
+
+    function getAgentById(id) {
+        const row = agentStmts.getAgentById.get(id);
+        if (!row) return null;
+        // Exclude key_hash from returned object
+        const { key_hash, ...agent } = row;
+        return agent;
+    }
+
+    function getAgentByKeyHash(keyHash) {
+        return agentStmts.getAgentByKeyHash.get(keyHash) || null;
+    }
+
+    function getAgentsByApp(app_id) {
+        return agentStmts.getAgentsByApp.all(app_id);
+    }
+
+    function updateAgent(id, { name, callback_url, capabilities }) {
+        const now = new Date().toISOString();
+        agentStmts.updateAgent.run({
+            id, name, callback_url: callback_url || null,
+            capabilities: JSON.stringify(capabilities || []),
+            updated_at: now,
+        });
+        return getAgentById(id);
+    }
+
+    function deactivateAgent(id) {
+        const now = new Date().toISOString();
+        agentStmts.deactivateAgent.run(now, id);
+    }
+
+    function updateAgentLastSeen(id) {
+        const now = new Date().toISOString();
+        agentStmts.updateAgentLastSeen.run(now, id);
+    }
+
+    function rotateAgentKey(id, { key_hash, key_prefix }) {
+        const now = new Date().toISOString();
+        agentStmts.updateAgentKey.run({ id, key_hash, key_prefix, updated_at: now });
+    }
+
     return {
         db,
         genId,
@@ -1732,6 +1829,15 @@ function initDb(dataDir) {
         // User Settings
         getUserSettings,
         updateUserSettings,
+        // Agents (#68)
+        registerAgent,
+        getAgentById,
+        getAgentByKeyHash,
+        getAgentsByApp,
+        updateAgent,
+        deactivateAgent,
+        updateAgentLastSeen,
+        rotateAgentKey,
         // Perception (#69 Error Sentinel)
         createPerceptionEvent,
         createPerceptionEvents,

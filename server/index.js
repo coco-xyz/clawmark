@@ -121,6 +121,7 @@ const { HxaConnectAdapter } = require('./adapters/hxa-connect');
 const { GitLabIssueAdapter } = require('./adapters/gitlab-issue');
 const { resolveTarget, resolveTargets } = require('./routing');
 const { autoSeverity } = require('./severity');
+const { hashKey, generateAgentKey, createAgentAuth } = require('./agent-auth');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
 
@@ -178,7 +179,7 @@ if (ALLOWED_ORIGINS.length) {
         if (origin && ALLOWED_ORIGINS.includes(origin)) {
             res.setHeader('Access-Control-Allow-Origin', origin);
             res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Agent-Key');
             res.setHeader('Access-Control-Allow-Credentials', 'true');
             if (req.method === 'OPTIONS') return res.sendStatus(204);
         }
@@ -223,6 +224,14 @@ const uploadLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Upload rate limit exceeded' },
+});
+
+const agentRegisterLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Agent registration rate limit exceeded' },
 });
 
 // ---------------------------------------------------------------------- multer
@@ -835,6 +844,21 @@ function v2Auth(req, res, next) {
         return res.status(401).json({ error: 'Invalid token' });
     }
     return res.status(401).json({ error: 'Authentication required (JWT or API key)' });
+}
+
+// -- Agent key auth middleware (#68)
+const agentAuth = createAgentAuth(itemsDb);
+
+// Combined middleware: accept either v2Auth (JWT/API key) or agent key
+function v2AuthOrAgent(req, res, next) {
+    if (req.headers['x-agent-key']) {
+        return agentAuth(req, res, () => {
+            // Map agent to v2Auth-compatible shape so perception handlers work
+            req.v2Auth = { app_id: req.agent.app_id, user_name: `agent:${req.agent.id}`, agent: req.agent };
+            next();
+        });
+    }
+    v2Auth(req, res, next);
 }
 
 // -- GET /api/v2/user/settings — get current user's settings
@@ -2391,7 +2415,7 @@ app.get('/stats', v2Auth, (req, res) => {
 // ----------------------------------------------------------------- agent channel (#69 Error Sentinel)
 
 // POST /api/v2/agent-channel/perception — upload perception events from extension
-app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2Auth, (req, res) => {
+app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
     const app_id = req.v2Auth?.app_id;
     if (!app_id) return res.status(400).json({ error: 'No app context' });
 
@@ -2432,7 +2456,7 @@ app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2Auth, (req, res)
 });
 
 // GET /api/v2/agent-channel/perception — query perception events (agent consumer)
-app.get('/api/v2/agent-channel/perception', apiReadLimiter, v2Auth, (req, res) => {
+app.get('/api/v2/agent-channel/perception', apiReadLimiter, v2AuthOrAgent, (req, res) => {
     const app_id = req.v2Auth?.app_id;
     if (!app_id) return res.status(400).json({ error: 'No app context' });
 
@@ -2450,7 +2474,7 @@ app.get('/api/v2/agent-channel/perception', apiReadLimiter, v2Auth, (req, res) =
 });
 
 // GET /api/v2/agent-channel/perception/stats — aggregated error stats by fingerprint
-app.get('/api/v2/agent-channel/perception/stats', apiReadLimiter, v2Auth, (req, res) => {
+app.get('/api/v2/agent-channel/perception/stats', apiReadLimiter, v2AuthOrAgent, (req, res) => {
     const app_id = req.v2Auth?.app_id;
     if (!app_id) return res.status(400).json({ error: 'No app context' });
 
@@ -2465,7 +2489,7 @@ app.get('/api/v2/agent-channel/perception/stats', apiReadLimiter, v2Auth, (req, 
 });
 
 // GET /api/v2/agent-channel/perception/issues — tracked perception issues
-app.get('/api/v2/agent-channel/perception/issues', apiReadLimiter, v2Auth, (req, res) => {
+app.get('/api/v2/agent-channel/perception/issues', apiReadLimiter, v2AuthOrAgent, (req, res) => {
     const app_id = req.v2Auth?.app_id;
     if (!app_id) return res.status(400).json({ error: 'No app context' });
 
@@ -2479,7 +2503,7 @@ app.get('/api/v2/agent-channel/perception/issues', apiReadLimiter, v2Auth, (req,
 });
 
 // POST /api/v2/agent-channel/perception/issues — upsert a tracked issue (agent creates after dedup)
-app.post('/api/v2/agent-channel/perception/issues', apiWriteLimiter, v2Auth, (req, res) => {
+app.post('/api/v2/agent-channel/perception/issues', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
     const app_id = req.v2Auth?.app_id;
     if (!app_id) return res.status(400).json({ error: 'No app context' });
 
@@ -2495,6 +2519,125 @@ app.post('/api/v2/agent-channel/perception/issues', apiWriteLimiter, v2Auth, (re
     } catch (err) {
         console.error('[agent-channel] perception issue upsert error:', err.message);
         res.status(500).json({ error: 'Failed to upsert issue' });
+    }
+});
+
+// ----------------------------------------------------------------- agent registration (#68)
+
+// POST /api/v2/agent-channel/register — register a new agent
+app.post('/api/v2/agent-channel/register', agentRegisterLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { name, callback_url, capabilities } = req.body;
+    if (!name || typeof name !== 'string' || name.length < 1 || name.length > 100) {
+        return res.status(400).json({ error: 'name required (1-100 chars)' });
+    }
+    if (callback_url && typeof callback_url !== 'string') {
+        return res.status(400).json({ error: 'callback_url must be a string' });
+    }
+    if (capabilities && !Array.isArray(capabilities)) {
+        return res.status(400).json({ error: 'capabilities must be an array' });
+    }
+
+    try {
+        const { raw, hash, prefix } = generateAgentKey();
+        const agent = itemsDb.registerAgent({
+            app_id,
+            name: name.trim(),
+            key_hash: hash,
+            key_prefix: prefix,
+            callback_url: callback_url || null,
+            capabilities: capabilities || [],
+            created_by: req.v2Auth.user_name || req.v2Auth.user || 'api',
+        });
+        // Return the raw key ONLY on creation (never shown again)
+        res.status(201).json({ ...agent, api_key: raw });
+    } catch (err) {
+        console.error('[agent-channel] register error:', err.message);
+        res.status(500).json({ error: 'Failed to register agent' });
+    }
+});
+
+// GET /api/v2/agent-channel/agents — list agents for current app
+app.get('/api/v2/agent-channel/agents', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    try {
+        const agents = itemsDb.getAgentsByApp(app_id);
+        res.json({ agents });
+    } catch (err) {
+        console.error('[agent-channel] list agents error:', err.message);
+        res.status(500).json({ error: 'Failed to list agents' });
+    }
+});
+
+// GET /api/v2/agent-channel/agents/:id — get agent by ID
+app.get('/api/v2/agent-channel/agents/:id', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    try {
+        const agent = itemsDb.getAgentById(req.params.id);
+        if (!agent) return res.status(404).json({ error: 'Agent not found' });
+        if (agent.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
+        res.json(agent);
+    } catch (err) {
+        console.error('[agent-channel] get agent error:', err.message);
+        res.status(500).json({ error: 'Failed to get agent' });
+    }
+});
+
+// PUT /api/v2/agent-channel/agents/:id — update agent metadata
+app.put('/api/v2/agent-channel/agents/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    const { name, callback_url, capabilities } = req.body;
+    try {
+        const existing = itemsDb.getAgentById(req.params.id);
+        if (!existing) return res.status(404).json({ error: 'Agent not found' });
+        if (existing.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
+        const updated = itemsDb.updateAgent(req.params.id, {
+            name: name !== undefined ? String(name).trim() : existing.name,
+            callback_url: callback_url !== undefined ? callback_url : existing.callback_url,
+            capabilities: capabilities !== undefined ? capabilities : JSON.parse(existing.capabilities || '[]'),
+        });
+        res.json(updated);
+    } catch (err) {
+        console.error('[agent-channel] update agent error:', err.message);
+        res.status(500).json({ error: 'Failed to update agent' });
+    }
+});
+
+// DELETE /api/v2/agent-channel/agents/:id — deactivate agent (soft delete)
+app.delete('/api/v2/agent-channel/agents/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    try {
+        const existing = itemsDb.getAgentById(req.params.id);
+        if (!existing) return res.status(404).json({ error: 'Agent not found' });
+        if (existing.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
+        itemsDb.deactivateAgent(req.params.id);
+        res.json({ id: req.params.id, status: 'inactive' });
+    } catch (err) {
+        console.error('[agent-channel] deactivate agent error:', err.message);
+        res.status(500).json({ error: 'Failed to deactivate agent' });
+    }
+});
+
+// POST /api/v2/agent-channel/agents/:id/rotate-key — rotate agent API key
+app.post('/api/v2/agent-channel/agents/:id/rotate-key', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    try {
+        const existing = itemsDb.getAgentById(req.params.id);
+        if (!existing) return res.status(404).json({ error: 'Agent not found' });
+        if (existing.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
+        const { raw, hash, prefix } = generateAgentKey();
+        itemsDb.rotateAgentKey(req.params.id, { key_hash: hash, key_prefix: prefix });
+        res.json({ id: req.params.id, api_key: raw, key_prefix: prefix });
+    } catch (err) {
+        console.error('[agent-channel] rotate key error:', err.message);
+        res.status(500).json({ error: 'Failed to rotate key' });
     }
 });
 
