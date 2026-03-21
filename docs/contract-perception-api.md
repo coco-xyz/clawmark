@@ -40,7 +40,7 @@ Perception API 支持两种认证方式，由 `v2AuthOrAgent` 中间件处理：
 
 ```jsonc
 {
-  "id": "perception_xxxxxx",       // 服务端生成，UUID
+  "id": "pe-xxxxxx",               // 服务端生成（genId('pe')）
   "app_id": "app_xxxxxx",         // 所属应用
   "type": "error",                // 事件类型（见上表）
   "message": "Cannot read ...",   // 错误消息（最长 4096 字符）
@@ -121,15 +121,14 @@ Perception API 支持两种认证方式，由 `v2AuthOrAgent` 中间件处理：
   "created": 1,
   "events": [
     {
-      "id": "perception_xxxxxx",
-      "app_id": "app_xxxxxx",
-      "type": "error",
-      "message": "Cannot read properties of null",
-      // ... 完整事件对象
+      "id": "pe-xxxxxx",           // 服务端生成的 ID
+      "created_at": "2026-03-21T12:00:00.000Z"
     }
   ]
 }
 ```
+
+> **注意：** 返回值仅包含 `id` 和 `created_at`，不返回完整事件对象。需要完整数据请通过 GET 端点查询。
 
 **错误响应：**
 
@@ -204,7 +203,7 @@ Perception API 支持两种认证方式，由 `v2AuthOrAgent` 中间件处理：
 {
   "issues": [
     {
-      "id": "pissue_xxxxxx",
+      "id": "pi-xxxxxx",
       "app_id": "app_xxxxxx",
       "fingerprint": "sha256:abc123",
       "gitlab_issue_id": "123",
@@ -237,7 +236,28 @@ Perception API 支持两种认证方式，由 `v2AuthOrAgent` 中间件处理：
 }
 ```
 
-**响应（200）：** 返回 upsert 后的 issue 对象。
+**响应（200）：**
+
+新建时：
+```jsonc
+{ "id": "pi-xxxxxx", "created": true }
+```
+
+更新时（返回更新前的 issue 快照 + 标记）：
+```jsonc
+{
+  "id": "pi-xxxxxx",
+  "app_id": "app_xxxxxx",
+  "fingerprint": "sha256:abc123",
+  "first_seen": "2026-03-20T...",
+  "last_seen": "2026-03-21T...",
+  "count": 37,
+  "status": "open",
+  "updated": true
+}
+```
+
+> **注意：** 更新时返回的是更新前的 issue 数据（`...existing`），`count` 字段在数据库中已累加但响应中是旧值。
 
 ## 数据库表结构
 
