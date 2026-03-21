@@ -183,8 +183,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 // ── Clean detach on tab close ───────────────────────────────────────
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+    const hadSession = cdpSessions.has(tabId);
     cdpSessions.delete(tabId);
     _pendingReattach.delete(tabId);
+    // Auto-disable CDP mode flag when no sessions remain (#84 follow-up)
+    if (hadSession && cdpSessions.size === 0) {
+        chrome.storage.sync.set({ cdpModeEnabled: false });
+    }
 });
 
 // ── Debugger detach event ───────────────────────────────────────────
@@ -193,6 +198,10 @@ chrome.debugger.onDetach.addListener((source, reason) => {
     const tabId = source.tabId;
     if (tabId) {
         cdpSessions.delete(tabId);
+        // Auto-disable CDP mode flag when no sessions remain (#84 follow-up)
+        if (cdpSessions.size === 0) {
+            chrome.storage.sync.set({ cdpModeEnabled: false });
+        }
     }
 });
 
