@@ -2574,9 +2574,12 @@ app.get('/api/v2/agent-channel/agents', apiReadLimiter, v2Auth, (req, res) => {
 
 // GET /api/v2/agent-channel/agents/:id — get agent by ID
 app.get('/api/v2/agent-channel/agents/:id', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
     try {
         const agent = itemsDb.getAgentById(req.params.id);
         if (!agent) return res.status(404).json({ error: 'Agent not found' });
+        if (agent.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
         res.json(agent);
     } catch (err) {
         console.error('[agent-channel] get agent error:', err.message);
@@ -2586,10 +2589,13 @@ app.get('/api/v2/agent-channel/agents/:id', apiReadLimiter, v2Auth, (req, res) =
 
 // PUT /api/v2/agent-channel/agents/:id — update agent metadata
 app.put('/api/v2/agent-channel/agents/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
     const { name, callback_url, capabilities } = req.body;
     try {
         const existing = itemsDb.getAgentById(req.params.id);
         if (!existing) return res.status(404).json({ error: 'Agent not found' });
+        if (existing.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
         const updated = itemsDb.updateAgent(req.params.id, {
             name: name !== undefined ? String(name).trim() : existing.name,
             callback_url: callback_url !== undefined ? callback_url : existing.callback_url,
@@ -2604,9 +2610,12 @@ app.put('/api/v2/agent-channel/agents/:id', apiWriteLimiter, v2Auth, (req, res) 
 
 // DELETE /api/v2/agent-channel/agents/:id — deactivate agent (soft delete)
 app.delete('/api/v2/agent-channel/agents/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
     try {
         const existing = itemsDb.getAgentById(req.params.id);
         if (!existing) return res.status(404).json({ error: 'Agent not found' });
+        if (existing.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
         itemsDb.deactivateAgent(req.params.id);
         res.json({ id: req.params.id, status: 'inactive' });
     } catch (err) {
@@ -2617,9 +2626,12 @@ app.delete('/api/v2/agent-channel/agents/:id', apiWriteLimiter, v2Auth, (req, re
 
 // POST /api/v2/agent-channel/agents/:id/rotate-key — rotate agent API key
 app.post('/api/v2/agent-channel/agents/:id/rotate-key', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
     try {
         const existing = itemsDb.getAgentById(req.params.id);
         if (!existing) return res.status(404).json({ error: 'Agent not found' });
+        if (existing.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
         const { raw, hash, prefix } = generateAgentKey();
         itemsDb.rotateAgentKey(req.params.id, { key_hash: hash, key_prefix: prefix });
         res.json({ id: req.params.id, api_key: raw, key_prefix: prefix });
