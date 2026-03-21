@@ -295,6 +295,35 @@
                     <h3>Severity Breakdown</h3>
                     <div id="err-severity-bars" class="severity-bars"></div>
                 </div>
+
+                <!-- Agent Action History -->
+                <div class="card">
+                    <div class="card-header-row">
+                        <h3>Agent Action History</h3>
+                        <div class="chart-controls">
+                            <select class="input input-small" id="action-type-filter">
+                                <option value="">All Types</option>
+                                <option value="perception_capture">Perception Capture</option>
+                                <option value="issue_created">Issue Created</option>
+                                <option value="issue_updated">Issue Updated</option>
+                                <option value="session_start">Session Start</option>
+                                <option value="session_end">Session End</option>
+                            </select>
+                            <select class="input input-small" id="action-range-select">
+                                <option value="7">7d</option>
+                                <option value="30" selected>30d</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Action Summary -->
+                    <div class="action-summary" id="action-summary"></div>
+
+                    <!-- Action List -->
+                    <div class="action-list" id="action-list">
+                        <div class="empty-state">Loading...</div>
+                    </div>
+                </div>
             </section>
 
             <!-- Settings Tab (Auth + Delivery Rules) -->

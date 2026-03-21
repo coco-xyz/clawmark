@@ -1843,6 +1843,26 @@ app.get('/api/v2/analytics/hot-topics', apiReadLimiter, v2Auth, (req, res) => {
     res.json(hotTopics);
 });
 
+// -- GET /api/v2/analytics/agent-actions — agent action history (#87)
+app.get('/api/v2/analytics/agent-actions', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 30));
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 100));
+    const agent_id = req.query.agent_id || null;
+    const action_type = req.query.action_type || null;
+
+    try {
+        const actions = itemsDb.getAgentActions({ app_id, agent_id, action_type, days, limit });
+        const summary = itemsDb.getAgentActionSummary({ app_id, days });
+        res.json({ actions, summary, days });
+    } catch (err) {
+        console.error('[analytics] agent-actions error:', err.message);
+        res.status(500).json({ error: 'Failed to query agent actions' });
+    }
+});
+
 // -- GET /api/v2/analytics/error-trends — perception error time series (#87)
 app.get('/api/v2/analytics/error-trends', apiReadLimiter, v2Auth, (req, res) => {
     const app_id = req.v2Auth?.app_id;
@@ -2465,6 +2485,16 @@ app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (re
 
     try {
         const results = itemsDb.createPerceptionEvents(valid);
+        // Log action (#87)
+        try {
+            itemsDb.logAgentAction({
+                app_id,
+                agent_id: req.v2Auth?.agent_id || null,
+                action_type: 'perception_capture',
+                summary: `Captured ${results.length} error event(s)`,
+                metadata: { count: results.length },
+            });
+        } catch { /* non-critical */ }
         res.json({ created: results.length, events: results });
     } catch (err) {
         console.error('[agent-channel] perception POST error:', err.message);
@@ -2532,6 +2562,21 @@ app.post('/api/v2/agent-channel/perception/issues', apiWriteLimiter, v2AuthOrAge
             app_id, fingerprint, count, first_seen, last_seen,
             gitlab_issue_id, gitlab_issue_url,
         });
+        // Log action (#87)
+        try {
+            const actionType = result.updated ? 'issue_updated' : 'issue_created';
+            itemsDb.logAgentAction({
+                app_id,
+                agent_id: req.v2Auth?.agent_id || null,
+                action_type: actionType,
+                target_type: 'perception_issue',
+                target_id: fingerprint,
+                summary: result.updated
+                    ? `Updated issue for ${fingerprint.slice(0, 20)}`
+                    : `Created issue for ${fingerprint.slice(0, 20)}`,
+                metadata: { gitlab_issue_url: gitlab_issue_url || null },
+            });
+        } catch { /* non-critical */ }
         res.json(result);
     } catch (err) {
         console.error('[agent-channel] perception issue upsert error:', err.message);
@@ -2709,6 +2754,18 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
             snapshots,
             metadata,
         });
+        // Log action (#87)
+        try {
+            itemsDb.logAgentAction({
+                app_id,
+                agent_id: agent_id || null,
+                action_type: 'session_start',
+                target_type: 'session',
+                target_id: result.id,
+                summary: `Started session on ${(url || '').slice(0, 80)}`,
+                metadata: { url, title },
+            });
+        } catch { /* non-critical */ }
         res.status(201).json(result);
     } catch (err) {
         if (err.message === 'SESSION_TOO_LARGE') {
@@ -2740,6 +2797,18 @@ app.post('/api/v2/agent-channel/sessions/:id/finalize', sessionLimiter, v2AuthOr
         if (session.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
 
         const result = itemsDb.finalizeSession(req.params.id);
+        // Log action (#87)
+        try {
+            itemsDb.logAgentAction({
+                app_id,
+                agent_id: session.agent_id || null,
+                action_type: 'session_end',
+                target_type: 'session',
+                target_id: req.params.id,
+                summary: `Finalized session (${result.event_count || 0} events)`,
+                metadata: { event_count: result.event_count, snapshot_count: result.snapshot_count },
+            });
+        } catch { /* non-critical */ }
         res.json(result);
     } catch (err) {
         console.error('[agent-channel] session finalize error:', err.message);

@@ -466,6 +466,26 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_agents_key_prefix ON agents(key_prefix);
     `);
 
+    // ----------------------------------------- schema: agent_actions (#87 Dashboard)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_actions (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            agent_id        TEXT,
+            action_type     TEXT NOT NULL,
+            target_type     TEXT,
+            target_id       TEXT,
+            summary         TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'success',
+            metadata        TEXT DEFAULT '{}',
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_actions_app ON agent_actions(app_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_actions_agent ON agent_actions(app_id, agent_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_actions_type ON agent_actions(app_id, action_type);
+        CREATE INDEX IF NOT EXISTS idx_agent_actions_created ON agent_actions(app_id, created_at);
+    `);
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -1806,6 +1826,84 @@ function initDb(dataDir) {
         return perceptionStmts.getOpenIssues.all(app_id);
     }
 
+    // ------------------------------------------------- agent actions (#87 Dashboard)
+
+    const actionStmts = {
+        insert: db.prepare(`
+            INSERT INTO agent_actions (id, app_id, agent_id, action_type, target_type, target_id, summary, status, metadata, created_at)
+            VALUES (@id, @app_id, @agent_id, @action_type, @target_type, @target_id, @summary, @status, @metadata, @created_at)
+        `),
+        query: db.prepare(`
+            SELECT * FROM agent_actions
+            WHERE app_id = ? AND created_at >= ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        queryByAgent: db.prepare(`
+            SELECT * FROM agent_actions
+            WHERE app_id = ? AND agent_id = ? AND created_at >= ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        queryByType: db.prepare(`
+            SELECT * FROM agent_actions
+            WHERE app_id = ? AND action_type = ? AND created_at >= ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        queryByAgentAndType: db.prepare(`
+            SELECT * FROM agent_actions
+            WHERE app_id = ? AND agent_id = ? AND action_type = ? AND created_at >= ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        countByType: db.prepare(`
+            SELECT action_type, COUNT(*) AS count
+            FROM agent_actions
+            WHERE app_id = ? AND created_at >= ?
+            GROUP BY action_type
+            ORDER BY count DESC
+        `),
+    };
+
+    function logAgentAction({ app_id, agent_id, action_type, target_type, target_id, summary, status, metadata }) {
+        const id = genId('act');
+        actionStmts.insert.run({
+            id,
+            app_id,
+            agent_id: agent_id || null,
+            action_type,
+            target_type: target_type || null,
+            target_id: target_id || null,
+            summary: (summary || '').slice(0, 500),
+            status: status || 'success',
+            metadata: typeof metadata === 'object' ? JSON.stringify(metadata) : (metadata || '{}'),
+            created_at: new Date().toISOString(),
+        });
+        return id;
+    }
+
+    function getAgentActions({ app_id, agent_id, action_type, days = 30, limit = 100 }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        const safeLimit = Math.min(limit, 500);
+
+        if (agent_id && action_type) {
+            return actionStmts.queryByAgentAndType.all(app_id, agent_id, action_type, cutoff, safeLimit);
+        }
+        if (agent_id) {
+            return actionStmts.queryByAgent.all(app_id, agent_id, cutoff, safeLimit);
+        }
+        if (action_type) {
+            return actionStmts.queryByType.all(app_id, action_type, cutoff, safeLimit);
+        }
+        return actionStmts.query.all(app_id, cutoff, safeLimit);
+    }
+
+    function getAgentActionSummary({ app_id, days = 30 }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        return actionStmts.countByType.all(app_id, cutoff);
+    }
+
     // ------------------------------------------------- error trends (#87 Dashboard)
 
     function getErrorTrends({ app_id, days = 7, group_by = 'severity' }) {
@@ -1822,10 +1920,6 @@ function initDb(dataDir) {
         } else if (group_by === 'type') {
             groupCol = ', type';
             selectCol = ', type AS group_value';
-        } else if (group_by === 'url') {
-            // Group by hostname extracted from url
-            groupCol = ", CASE WHEN url IS NOT NULL THEN SUBSTR(url, INSTR(url, '://') + 3, CASE WHEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') > 0 THEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') - 1 ELSE LENGTH(url) END) ELSE 'unknown' END";
-            selectCol = ", CASE WHEN url IS NOT NULL THEN SUBSTR(url, INSTR(url, '://') + 3, CASE WHEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') > 0 THEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') - 1 ELSE LENGTH(url) END) ELSE 'unknown' END AS group_value";
         }
 
         const query = `
@@ -2288,6 +2382,9 @@ function initDb(dataDir) {
         getOpenPerceptionIssues,
         getErrorTrends,
         getErrorSummary,
+        logAgentAction,
+        getAgentActions,
+        getAgentActionSummary,
         // Sessions (#73)
         createSession,
         appendSessionEvents,

@@ -304,6 +304,11 @@ export async function getErrorTrends(params = {}) {
     return apiFetch('/api/v2/analytics/error-trends' + (qs ? '?' + qs : ''));
 }
 
+export async function getAgentActions(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return apiFetch('/api/v2/analytics/agent-actions' + (qs ? '?' + qs : ''));
+}
+
 // ---- Version check (GitHub API, no auth needed)
 
 // ---- Batch Issue Filing (#44)
