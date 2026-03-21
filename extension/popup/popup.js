@@ -638,12 +638,100 @@ async function checkVersion() {
     }
 }
 
+// ------------------------------------------------------------------ CDP mode (#84)
+
+const cdpToggle = document.getElementById('cdp-toggle');
+const cdpIndicator = document.getElementById('cdp-indicator');
+const cdpSessionsEl = document.getElementById('cdp-sessions');
+const cdpEmptyEl = document.getElementById('cdp-empty');
+const cdpConfirmOverlay = document.getElementById('cdp-confirm-overlay');
+const cdpConfirmCancel = document.getElementById('cdp-confirm-cancel');
+const cdpConfirmEnable = document.getElementById('cdp-confirm-enable');
+
+async function loadCdpMode() {
+    try {
+        const result = await chrome.runtime.sendMessage({ type: 'GET_CDP_MODE' });
+        cdpToggle.checked = result.cdpModeEnabled;
+        updateCdpIndicator(result.cdpModeEnabled);
+        renderCdpSessions(result.sessions || []);
+    } catch {
+        cdpToggle.checked = false;
+        updateCdpIndicator(false);
+    }
+}
+
+function updateCdpIndicator(enabled) {
+    cdpIndicator.classList.toggle('active', enabled);
+}
+
+function renderCdpSessions(sessions) {
+    if (!sessions || sessions.length === 0) {
+        cdpEmptyEl.style.display = 'block';
+        // Remove old session items
+        cdpSessionsEl.querySelectorAll('.cdp-session-item').forEach(el => el.remove());
+        return;
+    }
+
+    cdpEmptyEl.style.display = 'none';
+    // Remove old session items
+    cdpSessionsEl.querySelectorAll('.cdp-session-item').forEach(el => el.remove());
+
+    for (const s of sessions) {
+        const tabId = parseInt(s.tabId, 10);
+        if (!isFinite(tabId)) continue;
+        const item = document.createElement('div');
+        item.className = 'cdp-session-item';
+        const tabLabel = s.title || `Tab ${tabId}`;
+        item.innerHTML = `
+            <span class="cdp-session-tab" title="${escHtml(tabLabel)}">${escHtml(tabLabel)}</span>
+            <button class="cdp-session-detach" data-tab-id="${tabId}">Detach</button>
+        `;
+        item.querySelector('.cdp-session-detach').addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const tabId = parseInt(e.target.dataset.tabId, 10);
+            await chrome.runtime.sendMessage({ type: 'CDP_FORCE_DETACH', tabId });
+            loadCdpMode(); // Refresh
+        });
+        cdpSessionsEl.appendChild(item);
+    }
+}
+
+cdpToggle.addEventListener('change', async () => {
+    if (cdpToggle.checked) {
+        // Show confirmation dialog
+        cdpToggle.checked = false; // Revert until confirmed
+        cdpConfirmOverlay.classList.add('visible');
+    } else {
+        await chrome.runtime.sendMessage({ type: 'SET_CDP_MODE', enabled: false });
+        updateCdpIndicator(false);
+        showMessage('CDP mode disabled', 'success');
+        loadCdpMode();
+    }
+});
+
+cdpConfirmCancel.addEventListener('click', () => {
+    cdpConfirmOverlay.classList.remove('visible');
+    cdpToggle.checked = false;
+});
+
+cdpConfirmEnable.addEventListener('click', async () => {
+    cdpConfirmOverlay.classList.remove('visible');
+    cdpToggle.checked = true;
+    await chrome.runtime.sendMessage({ type: 'SET_CDP_MODE', enabled: true });
+    updateCdpIndicator(true);
+    showMessage('CDP mode enabled', 'success');
+    loadCdpMode();
+});
+
 // ------------------------------------------------------------------ init
 
 async function init() {
     // Phase 1: render UI immediately from local storage (no network)
     await loadAuth();
     await loadMasterToggle();
+    if (isLoggedIn && masterToggle.checked) {
+        await loadCdpMode();
+    }
 
     // Phase 2: start network calls after the popup has painted
     // Use setTimeout(0) to yield to the renderer first
