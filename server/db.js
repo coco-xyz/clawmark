@@ -531,6 +531,45 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_cdp_audit_session ON cdp_audit_log(session_key);
     `);
 
+    // ----------------------------------------- schema: agent_webhooks (#88 Webhook P1 Errors)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_webhooks (
+            id                      TEXT PRIMARY KEY,
+            app_id                  TEXT NOT NULL,
+            agent_id                TEXT NOT NULL,
+            url                     TEXT NOT NULL,
+            secret                  TEXT NOT NULL,
+            event_filters           TEXT NOT NULL DEFAULT '{}',
+            template                TEXT NOT NULL DEFAULT 'generic',
+            active                  INTEGER NOT NULL DEFAULT 1,
+            allow_http              INTEGER NOT NULL DEFAULT 0,
+            consecutive_failures    INTEGER NOT NULL DEFAULT 0,
+            created_at              TEXT NOT NULL,
+            updated_at              TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_webhooks_app ON agent_webhooks(app_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_webhooks_agent ON agent_webhooks(agent_id);
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS webhook_deliveries (
+            id              TEXT PRIMARY KEY,
+            webhook_id      TEXT NOT NULL,
+            event_type      TEXT NOT NULL,
+            payload         TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            status_code     INTEGER,
+            error           TEXT,
+            attempt         INTEGER NOT NULL DEFAULT 1,
+            next_retry_at   TEXT,
+            created_at      TEXT NOT NULL,
+            delivered_at    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id);
+        CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status ON webhook_deliveries(status);
+        CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_retry ON webhook_deliveries(status, next_retry_at);
+    `);
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -831,6 +870,38 @@ function initDb(dataDir) {
         getByAgent: db.prepare('SELECT * FROM cdp_audit_log WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?'),
         getByApp: db.prepare('SELECT * FROM cdp_audit_log WHERE app_id = ? ORDER BY created_at DESC LIMIT ?'),
         deleteOld: db.prepare('DELETE FROM cdp_audit_log WHERE created_at < ?'),
+    };
+
+    // ------------------------------------------------- webhook statements (#88)
+    const webhookStmts = {
+        insert: db.prepare(`
+            INSERT INTO agent_webhooks (id, app_id, agent_id, url, secret, event_filters, template, active, allow_http, consecutive_failures, created_at, updated_at)
+            VALUES (@id, @app_id, @agent_id, @url, @secret, @event_filters, @template, @active, @allow_http, 0, @created_at, @updated_at)
+        `),
+        getById: db.prepare('SELECT * FROM agent_webhooks WHERE id = ?'),
+        getByAgent: db.prepare('SELECT * FROM agent_webhooks WHERE agent_id = ? ORDER BY created_at DESC'),
+        getByApp: db.prepare('SELECT * FROM agent_webhooks WHERE app_id = ? ORDER BY created_at DESC'),
+        getActiveByApp: db.prepare("SELECT * FROM agent_webhooks WHERE app_id = ? AND active = 1"),
+        countByAgent: db.prepare('SELECT COUNT(*) AS count FROM agent_webhooks WHERE agent_id = ?'),
+        update: db.prepare(`
+            UPDATE agent_webhooks SET url = @url, event_filters = @event_filters, template = @template,
+            active = @active, allow_http = @allow_http, updated_at = @updated_at WHERE id = @id
+        `),
+        delete: db.prepare('DELETE FROM agent_webhooks WHERE id = ?'),
+        incrementFailures: db.prepare('UPDATE agent_webhooks SET consecutive_failures = consecutive_failures + 1, updated_at = ? WHERE id = ?'),
+        resetFailures: db.prepare('UPDATE agent_webhooks SET consecutive_failures = 0, updated_at = ? WHERE id = ?'),
+        disable: db.prepare("UPDATE agent_webhooks SET active = 0, updated_at = ? WHERE id = ?"),
+        // Delivery statements
+        insertDelivery: db.prepare(`
+            INSERT INTO webhook_deliveries (id, webhook_id, event_type, payload, status, attempt, next_retry_at, created_at)
+            VALUES (@id, @webhook_id, @event_type, @payload, @status, @attempt, @next_retry_at, @created_at)
+        `),
+        updateDelivery: db.prepare(`
+            UPDATE webhook_deliveries SET status = @status, status_code = @status_code, error = @error, delivered_at = @delivered_at WHERE id = @id
+        `),
+        getDeliveriesByWebhook: db.prepare('SELECT * FROM webhook_deliveries WHERE webhook_id = ? ORDER BY created_at DESC LIMIT ?'),
+        getPendingRetries: db.prepare("SELECT * FROM webhook_deliveries WHERE status = 'pending' AND next_retry_at <= ? AND attempt <= 3"),
+        deleteOldDeliveries: db.prepare("DELETE FROM webhook_deliveries WHERE created_at < ?"),
     };
 
     // ------------------------------------------------- user_auths statements
@@ -2593,6 +2664,115 @@ function initDb(dataDir) {
         return { deleted: result.changes };
     }
 
+
+    // ------------------------------------------------- webhook methods (#88)
+
+    function createWebhook({ app_id, agent_id, url, secret, event_filters, template, allow_http }) {
+        const id = genId('wh');
+        const now = new Date().toISOString();
+        webhookStmts.insert.run({
+            id, app_id, agent_id, url, secret,
+            event_filters: JSON.stringify(event_filters || {}),
+            template: template || 'generic',
+            active: 1,
+            allow_http: allow_http ? 1 : 0,
+            created_at: now, updated_at: now,
+        });
+        return { id, app_id, agent_id, url, template: template || 'generic', active: true, allow_http: !!allow_http, created_at: now };
+    }
+
+    function getWebhook(id) {
+        return webhookStmts.getById.get(id) || null;
+    }
+
+    function listWebhooksByAgent(agent_id) {
+        return webhookStmts.getByAgent.all(agent_id);
+    }
+
+    function listWebhooksByApp(app_id) {
+        return webhookStmts.getByApp.all(app_id);
+    }
+
+    function getActiveWebhooksByApp(app_id) {
+        return webhookStmts.getActiveByApp.all(app_id);
+    }
+
+    function countWebhooksByAgent(agent_id) {
+        return webhookStmts.countByAgent.get(agent_id).count;
+    }
+
+    function updateWebhook(id, { url, event_filters, template, active, allow_http }) {
+        const now = new Date().toISOString();
+        webhookStmts.update.run({
+            id, url,
+            event_filters: JSON.stringify(event_filters || {}),
+            template: template || 'generic',
+            active: active ? 1 : 0,
+            allow_http: allow_http ? 1 : 0,
+            updated_at: now,
+        });
+        return getWebhook(id);
+    }
+
+    function deleteWebhook(id) {
+        webhookStmts.delete.run(id);
+    }
+
+    function incrementWebhookFailures(id) {
+        const now = new Date().toISOString();
+        webhookStmts.incrementFailures.run(now, id);
+        const wh = getWebhook(id);
+        if (wh && wh.consecutive_failures >= 10) {
+            webhookStmts.disable.run(now, id);
+            return { disabled: true, failures: wh.consecutive_failures };
+        }
+        return { disabled: false, failures: wh ? wh.consecutive_failures : 0 };
+    }
+
+    function resetWebhookFailures(id) {
+        const now = new Date().toISOString();
+        webhookStmts.resetFailures.run(now, id);
+    }
+
+    function createWebhookDelivery({ webhook_id, event_type, payload, next_retry_at }) {
+        const id = genId('whd');
+        const now = new Date().toISOString();
+        webhookStmts.insertDelivery.run({
+            id, webhook_id, event_type,
+            payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
+            status: 'pending',
+            attempt: 1,
+            next_retry_at: next_retry_at || now,
+            created_at: now,
+        });
+        return { id, created_at: now };
+    }
+
+    function updateWebhookDelivery(id, { status, status_code, error }) {
+        const now = new Date().toISOString();
+        webhookStmts.updateDelivery.run({
+            id, status,
+            status_code: status_code || null,
+            error: error || null,
+            delivered_at: status === 'delivered' ? now : null,
+        });
+    }
+
+    function getWebhookDeliveries(webhook_id, limit = 50) {
+        return webhookStmts.getDeliveriesByWebhook.all(webhook_id, Math.min(limit, 200));
+    }
+
+    function getPendingWebhookRetries() {
+        const now = new Date().toISOString();
+        return webhookStmts.getPendingRetries.all(now);
+    }
+
+    function cleanupOldWebhookDeliveries(retentionDays = 30) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const result = webhookStmts.deleteOldDeliveries.run(cutoff);
+        return { deleted: result.changes };
+    }
+
     return {
         db,
         genId,
@@ -2737,6 +2917,22 @@ function initDb(dataDir) {
         getCdpAuditByAgent,
         getCdpAuditByApp,
         cleanupOldCdpAuditLogs,
+        // Webhooks (#88)
+        createWebhook,
+        getWebhook,
+        listWebhooksByAgent,
+        listWebhooksByApp,
+        getActiveWebhooksByApp,
+        countWebhooksByAgent,
+        updateWebhook,
+        deleteWebhook,
+        incrementWebhookFailures,
+        resetWebhookFailures,
+        createWebhookDelivery,
+        updateWebhookDelivery,
+        getWebhookDeliveries,
+        getPendingWebhookRetries,
+        cleanupOldWebhookDeliveries,
     };
 }
 

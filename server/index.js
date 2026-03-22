@@ -124,6 +124,7 @@ const { autoSeverity } = require('./severity');
 const { hashKey, generateAgentKey, createAgentAuth } = require('./agent-auth');
 const { initActionWs } = require('./ws-actions');
 const { initCdpWs } = require('./ws-cdp');
+const { dispatchPerceptionWebhooks, retryFailedDeliveries } = require('./webhook-dispatcher');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
 
@@ -2512,6 +2513,21 @@ app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (re
                 metadata: { count: results.length },
             });
         } catch { /* non-critical */ }
+
+        // Trigger webhooks for P0/P1 events (#88)
+        const highSeverity = valid.filter(e => e.severity === 'P0' || e.severity === 'P1');
+        if (highSeverity.length > 0) {
+            // Non-blocking: dispatch in background
+            setImmediate(() => {
+                for (const event of highSeverity) {
+                    const issue = itemsDb.getPerceptionIssue({ app_id, fingerprint: event.fingerprint });
+                    dispatchPerceptionWebhooks(itemsDb, event, issue, app_id).catch(err => {
+                        console.error('[webhook] Dispatch error:', err.message);
+                    });
+                }
+            });
+        }
+
         res.json({ created: results.length, events: results });
     } catch (err) {
         console.error('[agent-channel] perception POST error:', err.message);
@@ -2598,6 +2614,177 @@ app.post('/api/v2/agent-channel/perception/issues', apiWriteLimiter, v2AuthOrAge
     } catch (err) {
         console.error('[agent-channel] perception issue upsert error:', err.message);
         res.status(500).json({ error: 'Failed to upsert issue' });
+    }
+});
+
+// ----------------------------------------------------------------- agent webhooks (#88)
+
+// POST /api/v2/agent-channel/webhooks — register a webhook
+app.post('/api/v2/agent-channel/webhooks', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id || !agent_id) return res.status(400).json({ error: 'Agent authentication required' });
+
+    const { url, secret, event_filters, template, allow_http } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
+
+    // Validate URL protocol
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'https:' && !(allow_http && parsed.protocol === 'http:')) {
+            return res.status(400).json({ error: 'HTTPS required (set allow_http: true for HTTP)' });
+        }
+    } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+
+    // Max 10 webhooks per agent
+    const count = itemsDb.countWebhooksByAgent(agent_id);
+    if (count >= 10) return res.status(400).json({ error: 'Max 10 webhooks per agent' });
+
+    // Generate secret if not provided
+    const webhookSecret = secret || require('crypto').randomBytes(32).toString('hex');
+
+    try {
+        const wh = itemsDb.createWebhook({ app_id, agent_id, url, secret: webhookSecret, event_filters, template, allow_http });
+        res.status(201).json({ ...wh, secret: webhookSecret });
+    } catch (err) {
+        console.error('[webhook] Create error:', err.message);
+        res.status(500).json({ error: 'Failed to create webhook' });
+    }
+});
+
+// GET /api/v2/agent-channel/webhooks — list webhooks
+app.get('/api/v2/agent-channel/webhooks', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const webhooks = agent_id
+            ? itemsDb.listWebhooksByAgent(agent_id)
+            : itemsDb.listWebhooksByApp(app_id);
+        // Strip secrets from list response
+        const safe = webhooks.map(({ secret, ...rest }) => rest);
+        res.json({ webhooks: safe, count: safe.length });
+    } catch (err) {
+        console.error('[webhook] List error:', err.message);
+        res.status(500).json({ error: 'Failed to list webhooks' });
+    }
+});
+
+// GET /api/v2/agent-channel/webhooks/:id — get webhook details + recent deliveries
+app.get('/api/v2/agent-channel/webhooks/:id', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const wh = itemsDb.getWebhook(req.params.id);
+        if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+        const { secret, ...safe } = wh;
+        const deliveries = itemsDb.getWebhookDeliveries(wh.id, 20);
+        res.json({ webhook: safe, deliveries });
+    } catch (err) {
+        console.error('[webhook] Get error:', err.message);
+        res.status(500).json({ error: 'Failed to get webhook' });
+    }
+});
+
+// PUT /api/v2/agent-channel/webhooks/:id — update webhook
+app.put('/api/v2/agent-channel/webhooks/:id', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const wh = itemsDb.getWebhook(req.params.id);
+    if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+
+    const { url, event_filters, template, active, allow_http } = req.body;
+
+    // Validate URL if changed
+    const newUrl = url || wh.url;
+    try {
+        const parsed = new URL(newUrl);
+        const httpAllowed = allow_http !== undefined ? allow_http : wh.allow_http;
+        if (parsed.protocol !== 'https:' && !(httpAllowed && parsed.protocol === 'http:')) {
+            return res.status(400).json({ error: 'HTTPS required (set allow_http: true for HTTP)' });
+        }
+    } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+
+    try {
+        const updated = itemsDb.updateWebhook(req.params.id, {
+            url: newUrl,
+            event_filters: event_filters || JSON.parse(wh.event_filters || '{}'),
+            template: template || wh.template,
+            active: active !== undefined ? active : wh.active,
+            allow_http: allow_http !== undefined ? allow_http : wh.allow_http,
+        });
+        const { secret, ...safe } = updated;
+        res.json(safe);
+    } catch (err) {
+        console.error('[webhook] Update error:', err.message);
+        res.status(500).json({ error: 'Failed to update webhook' });
+    }
+});
+
+// DELETE /api/v2/agent-channel/webhooks/:id — delete webhook
+app.delete('/api/v2/agent-channel/webhooks/:id', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const wh = itemsDb.getWebhook(req.params.id);
+    if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+
+    try {
+        itemsDb.deleteWebhook(req.params.id);
+        res.json({ deleted: true });
+    } catch (err) {
+        console.error('[webhook] Delete error:', err.message);
+        res.status(500).json({ error: 'Failed to delete webhook' });
+    }
+});
+
+// POST /api/v2/agent-channel/webhooks/:id/test — send sample payload
+app.post('/api/v2/agent-channel/webhooks/:id/test', apiWriteLimiter, v2AuthOrAgent, async (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const wh = itemsDb.getWebhook(req.params.id);
+    if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+
+    const { formatPayload, deliverWebhook } = require('./webhook-dispatcher');
+    const sampleEvent = {
+        type: 'js-error',
+        message: 'Test error: this is a sample P1 webhook payload',
+        severity: 'P1',
+        url: 'https://example.com/test',
+        fingerprint: 'test-fingerprint-sample',
+        stack: 'Error: Test error\n    at test.js:1:1',
+    };
+    const sampleIssue = { id: 'pi-test', count: 42, first_seen: new Date().toISOString(), last_seen: new Date().toISOString() };
+
+    const payload = formatPayload(wh.template, sampleEvent, sampleIssue, { app_id });
+
+    try {
+        const result = await deliverWebhook(wh.url, payload, wh.secret, wh.allow_http === 1);
+        res.json({ test: true, ...result, payload });
+    } catch (err) {
+        res.status(500).json({ test: true, ok: false, error: err.message });
+    }
+});
+
+// GET /api/v2/agent-channel/webhooks/:id/deliveries — list delivery history
+app.get('/api/v2/agent-channel/webhooks/:id/deliveries', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const wh = itemsDb.getWebhook(req.params.id);
+    if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    try {
+        const deliveries = itemsDb.getWebhookDeliveries(wh.id, limit);
+        res.json({ deliveries, count: deliveries.length });
+    } catch (err) {
+        console.error('[webhook] Deliveries query error:', err.message);
+        res.status(500).json({ error: 'Failed to query deliveries' });
     }
 });
 
@@ -3115,6 +3302,14 @@ const server = app.listen(PORT, () => {
         } catch (err) {
             console.error('[cdp] Cleanup error:', err.message);
         }
+        try {
+            const result = itemsDb.cleanupOldWebhookDeliveries(30);
+            if (result.deleted > 0) {
+                console.log(`[webhook] Cleaned up ${result.deleted} old delivery(ies) (>30d)`);
+            }
+        } catch (err) {
+            console.error('[webhook] Cleanup error:', err.message);
+        }
     };
     runSessionCleanup(); // run on startup
     setInterval(runSessionCleanup, 24 * 60 * 60 * 1000); // every 24h
@@ -3129,5 +3324,17 @@ const server = app.listen(PORT, () => {
         }).catch(err => {
             console.error('[dispatch] Retry worker error:', err.message);
         }).finally(() => { retryBusy = false; });
+    }, 30000);
+
+    // Webhook retry worker (#88): every 30s, retry failed webhook deliveries
+    let webhookRetryBusy = false;
+    setInterval(() => {
+        if (webhookRetryBusy) return;
+        webhookRetryBusy = true;
+        retryFailedDeliveries(itemsDb).then(n => {
+            if (n > 0) console.log(`[webhook] Retried ${n} failed delivery(ies)`);
+        }).catch(err => {
+            console.error('[webhook] Retry worker error:', err.message);
+        }).finally(() => { webhookRetryBusy = false; });
     }, 30000);
 });
