@@ -490,6 +490,23 @@ describe('resolveTargets — multi-target', () => {
         assert.equal(targets[0].method, 'system_default');
     });
 
+    it('no_target result does not crash dedup (null target_config)', () => {
+        const mockDb = { getUserRules: () => [] };
+
+        // Should not throw — dedup must handle null target_config
+        const targets = resolveTargets({
+            source_url: 'https://random-site.com/page',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: null,
+        });
+
+        assert.equal(targets.length, 1);
+        assert.equal(targets[0].method, 'no_target');
+        assert.equal(targets[0].target_type, null);
+        assert.equal(targets[0].target_config, null);
+    });
+
     it('matches tag rules alongside url rules', () => {
         const mockDb = {
             getUserRules: () => [

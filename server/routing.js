@@ -196,6 +196,7 @@ function resolveTargets(params) {
     const seen = new Set();
 
     function dedup(target) {
+        if (!target.target_type || !target.target_config) return true; // no_target — skip dedup
         const key = `${target.target_type}:${target.target_config.repo || target.target_config.webhook_url || target.target_config.chat_id || JSON.stringify(target.target_config)}`;
         if (seen.has(key)) return false;
         seen.add(key);
