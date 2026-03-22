@@ -352,6 +352,250 @@ function initDb(dataDir) {
         console.log('[db] migrated: added column items.analyzed_at');
     }
 
+    // ----------------------------------------- schema: perception_events (#69 Error Sentinel)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS perception_events (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            type            TEXT NOT NULL,
+            message         TEXT NOT NULL,
+            stack           TEXT,
+            source          TEXT,
+            line            INTEGER,
+            severity        TEXT NOT NULL DEFAULT 'error',
+            url             TEXT,
+            fingerprint     TEXT NOT NULL,
+            context         TEXT DEFAULT '{}',
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_perception_app ON perception_events(app_id);
+        CREATE INDEX IF NOT EXISTS idx_perception_fingerprint ON perception_events(app_id, fingerprint);
+        CREATE INDEX IF NOT EXISTS idx_perception_created ON perception_events(app_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_perception_type ON perception_events(app_id, type);
+    `);
+
+    // ----------------------------------------- migration: perception_events.agent_id (#67)
+    const peCols = db.pragma('table_info(perception_events)').map(c => c.name);
+    if (!peCols.includes('agent_id')) {
+        db.exec(`ALTER TABLE perception_events ADD COLUMN agent_id TEXT`);
+        console.log('[db] migrated: added column perception_events.agent_id');
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_perception_agent ON perception_events(app_id, agent_id)`);
+
+    // ----------------------------------------- schema: perception_issues (#69 dedup tracking)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS perception_issues (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            fingerprint     TEXT NOT NULL,
+            gitlab_issue_id TEXT,
+            gitlab_issue_url TEXT,
+            first_seen      TEXT NOT NULL,
+            last_seen       TEXT NOT NULL,
+            count           INTEGER NOT NULL DEFAULT 1,
+            status          TEXT NOT NULL DEFAULT 'open',
+            UNIQUE(app_id, fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pissues_app ON perception_issues(app_id);
+        CREATE INDEX IF NOT EXISTS idx_pissues_fp ON perception_issues(app_id, fingerprint);
+    `);
+
+    // ----------------------------------------- schema migration: auto-fix columns (#86)
+    const piCols = db.pragma('table_info(perception_issues)').map(c => c.name);
+    const autoFixCols = [
+        ['fix_status', "TEXT DEFAULT 'none'"],      // none | pending | in_progress | submitted | merged | failed
+        ['fix_branch', 'TEXT'],
+        ['fix_pr_url', 'TEXT'],
+        ['fix_pr_id', 'TEXT'],
+        ['fix_confidence', 'REAL'],
+        ['fix_attempt_count', 'INTEGER DEFAULT 0'],
+        ['last_fix_attempt', 'TEXT'],
+    ];
+    for (const [col, typedef] of autoFixCols) {
+        if (!piCols.includes(col)) {
+            db.exec(`ALTER TABLE perception_issues ADD COLUMN ${col} ${typedef}`);
+            console.log(`[db] migrated: added column perception_issues.${col}`);
+        }
+    }
+
+    // ----------------------------------------- schema: sessions (#73 Session Storage)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            agent_id        TEXT,
+            tab_id          TEXT,
+            url             TEXT,
+            title           TEXT,
+            start_time      TEXT NOT NULL,
+            end_time        TEXT,
+            event_count     INTEGER NOT NULL DEFAULT 0,
+            snapshot_count  INTEGER NOT NULL DEFAULT 0,
+            total_size      INTEGER NOT NULL DEFAULT 0,
+            status          TEXT NOT NULL DEFAULT 'active',
+            metadata        TEXT DEFAULT '{}',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_app ON sessions(app_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(app_id, agent_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(app_id, start_time);
+        CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS session_events (
+            id              TEXT PRIMARY KEY,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            type            TEXT NOT NULL,
+            timestamp       TEXT NOT NULL,
+            data            TEXT NOT NULL DEFAULT '{}',
+            size            INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id);
+        CREATE INDEX IF NOT EXISTS idx_session_events_ts ON session_events(session_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_session_events_type ON session_events(session_id, type);
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS session_snapshots (
+            id              TEXT PRIMARY KEY,
+            session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            trigger         TEXT NOT NULL DEFAULT 'manual',
+            timestamp       TEXT NOT NULL,
+            html            TEXT NOT NULL,
+            size            INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_snapshots_session ON session_snapshots(session_id);
+        CREATE INDEX IF NOT EXISTS idx_session_snapshots_ts ON session_snapshots(session_id, timestamp);
+    `);
+
+    // ----------------------------------------- schema: action_queue (#78 Action Queue)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS action_queue (
+            id              TEXT PRIMARY KEY,
+            agent_id        TEXT NOT NULL,
+            app_id          TEXT NOT NULL,
+            session_id      TEXT,
+            type            TEXT NOT NULL,
+            payload         TEXT NOT NULL DEFAULT '{}',
+            status          TEXT NOT NULL DEFAULT 'queued',
+            result          TEXT,
+            error           TEXT,
+            timeout_ms      INTEGER NOT NULL DEFAULT 30000,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            dispatched_at   TEXT,
+            completed_at    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_action_queue_agent ON action_queue(agent_id, status);
+        CREATE INDEX IF NOT EXISTS idx_action_queue_app ON action_queue(app_id, status);
+        CREATE INDEX IF NOT EXISTS idx_action_queue_status ON action_queue(status);
+        CREATE INDEX IF NOT EXISTS idx_action_queue_created ON action_queue(created_at);
+    `);
+
+    // ------------------------------------------------- schema: agents table (#68)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS agents (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            name            TEXT NOT NULL,
+            key_hash        TEXT NOT NULL UNIQUE,
+            key_prefix      TEXT NOT NULL,
+            callback_url    TEXT,
+            capabilities    TEXT DEFAULT '[]',
+            status          TEXT NOT NULL DEFAULT 'active',
+            created_by      TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            last_seen       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_agents_app ON agents(app_id);
+        CREATE INDEX IF NOT EXISTS idx_agents_key_hash ON agents(key_hash);
+        CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+        CREATE INDEX IF NOT EXISTS idx_agents_key_prefix ON agents(key_prefix);
+    `);
+
+    // ----------------------------------------- schema: agent_actions (#87 Dashboard)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_actions (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            agent_id        TEXT,
+            action_type     TEXT NOT NULL,
+            target_type     TEXT,
+            target_id       TEXT,
+            summary         TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'success',
+            metadata        TEXT DEFAULT '{}',
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_actions_app ON agent_actions(app_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_actions_agent ON agent_actions(app_id, agent_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_actions_type ON agent_actions(app_id, action_type);
+        CREATE INDEX IF NOT EXISTS idx_agent_actions_created ON agent_actions(app_id, created_at);
+    `);
+
+    // ----------------------------------------- schema: cdp_audit_log (#83 CDP Channel)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS cdp_audit_log (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            agent_id        TEXT NOT NULL,
+            session_key     TEXT NOT NULL,
+            tab_id          INTEGER NOT NULL,
+            method          TEXT NOT NULL,
+            params_hash     TEXT,
+            status          TEXT NOT NULL DEFAULT 'sent',
+            result_summary  TEXT,
+            error           TEXT,
+            duration_ms     INTEGER,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cdp_audit_app ON cdp_audit_log(app_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_cdp_audit_agent ON cdp_audit_log(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_cdp_audit_session ON cdp_audit_log(session_key);
+    `);
+
+    // ----------------------------------------- schema: agent_webhooks (#88 Webhook P1 Errors)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_webhooks (
+            id                      TEXT PRIMARY KEY,
+            app_id                  TEXT NOT NULL,
+            agent_id                TEXT NOT NULL,
+            url                     TEXT NOT NULL,
+            secret                  TEXT NOT NULL,
+            event_filters           TEXT NOT NULL DEFAULT '{}',
+            template                TEXT NOT NULL DEFAULT 'generic',
+            active                  INTEGER NOT NULL DEFAULT 1,
+            allow_http              INTEGER NOT NULL DEFAULT 0,
+            consecutive_failures    INTEGER NOT NULL DEFAULT 0,
+            created_at              TEXT NOT NULL,
+            updated_at              TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_webhooks_app ON agent_webhooks(app_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_webhooks_agent ON agent_webhooks(agent_id);
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS webhook_deliveries (
+            id              TEXT PRIMARY KEY,
+            webhook_id      TEXT NOT NULL,
+            event_type      TEXT NOT NULL,
+            payload         TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            status_code     INTEGER,
+            error           TEXT,
+            attempt         INTEGER NOT NULL DEFAULT 1,
+            next_retry_at   TEXT,
+            created_at      TEXT NOT NULL,
+            delivered_at    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id);
+        CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status ON webhook_deliveries(status);
+        CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_retry ON webhook_deliveries(status, next_retry_at);
+    `);
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -430,6 +674,195 @@ function initDb(dataDir) {
         ),
     };
 
+    // ------------------------------------------------- perception statements (#69)
+    const perceptionStmts = {
+        insertEvent: db.prepare(`
+            INSERT INTO perception_events
+                (id, app_id, agent_id, type, message, stack, source, line, severity, url, fingerprint, context, created_at)
+            VALUES
+                (@id, @app_id, @agent_id, @type, @message, @stack, @source, @line, @severity, @url, @fingerprint, @context, @created_at)
+        `),
+        getEventsByFingerprint: db.prepare(`
+            SELECT * FROM perception_events
+            WHERE app_id = ? AND fingerprint = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        countByFingerprint: db.prepare(`
+            SELECT fingerprint, COUNT(*) as count, MIN(created_at) as first_seen, MAX(created_at) as last_seen
+            FROM perception_events
+            WHERE app_id = ?
+            GROUP BY fingerprint
+            ORDER BY count DESC
+            LIMIT ?
+        `),
+        insertIssue: db.prepare(`
+            INSERT OR IGNORE INTO perception_issues
+                (id, app_id, fingerprint, first_seen, last_seen, count, status)
+            VALUES
+                (@id, @app_id, @fingerprint, @first_seen, @last_seen, @count, @status)
+        `),
+        getIssue: db.prepare(
+            'SELECT * FROM perception_issues WHERE app_id = ? AND fingerprint = ?'
+        ),
+        updateIssue: db.prepare(`
+            UPDATE perception_issues
+            SET last_seen = @last_seen, count = @count,
+                gitlab_issue_id = COALESCE(@gitlab_issue_id, gitlab_issue_id),
+                gitlab_issue_url = COALESCE(@gitlab_issue_url, gitlab_issue_url)
+            WHERE app_id = @app_id AND fingerprint = @fingerprint
+        `),
+        getOpenIssues: db.prepare(
+            "SELECT * FROM perception_issues WHERE app_id = ? AND status = 'open' ORDER BY count DESC"
+        ),
+        // Auto-fix statements (#86)
+        getFixCandidates: db.prepare(`
+            SELECT * FROM perception_issues
+            WHERE app_id = ? AND status = 'open'
+              AND gitlab_issue_id IS NOT NULL
+              AND (fix_status IS NULL OR fix_status = 'none' OR fix_status = 'failed')
+              AND fix_attempt_count < ?
+            ORDER BY count DESC
+            LIMIT ?
+        `),
+        updateFixStatus: db.prepare(`
+            UPDATE perception_issues
+            SET fix_status = @fix_status,
+                fix_branch = COALESCE(@fix_branch, fix_branch),
+                fix_pr_url = COALESCE(@fix_pr_url, fix_pr_url),
+                fix_pr_id = COALESCE(@fix_pr_id, fix_pr_id),
+                fix_confidence = COALESCE(@fix_confidence, fix_confidence),
+                fix_attempt_count = COALESCE(@fix_attempt_count, fix_attempt_count),
+                last_fix_attempt = COALESCE(@last_fix_attempt, last_fix_attempt)
+            WHERE app_id = @app_id AND fingerprint = @fingerprint
+        `),
+        getFixableIssue: db.prepare(
+            'SELECT * FROM perception_issues WHERE app_id = ? AND fingerprint = ? AND gitlab_issue_id IS NOT NULL'
+        ),
+    };
+
+    // ------------------------------------------------- session statements (#73)
+    const sessionStmts = {
+        insertSession: db.prepare(`
+            INSERT INTO sessions
+                (id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                 event_count, snapshot_count, total_size, status, metadata, created_at, updated_at)
+            VALUES
+                (@id, @app_id, @agent_id, @tab_id, @url, @title, @start_time, @end_time,
+                 @event_count, @snapshot_count, @total_size, @status, @metadata, @created_at, @updated_at)
+        `),
+        getSession: db.prepare('SELECT * FROM sessions WHERE id = ?'),
+        listSessions: db.prepare(`
+            SELECT id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                   event_count, snapshot_count, total_size, status, created_at, updated_at
+            FROM sessions
+            WHERE app_id = ? AND start_time > ?
+            ORDER BY start_time DESC
+            LIMIT ?
+        `),
+        listSessionsByAgent: db.prepare(`
+            SELECT id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                   event_count, snapshot_count, total_size, status, created_at, updated_at
+            FROM sessions
+            WHERE app_id = ? AND agent_id = ? AND start_time > ?
+            ORDER BY start_time DESC
+            LIMIT ?
+        `),
+        listSessionsBySite: db.prepare(`
+            SELECT id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                   event_count, snapshot_count, total_size, status, created_at, updated_at
+            FROM sessions
+            WHERE app_id = ? AND url LIKE ? ESCAPE '\\' AND start_time > ?
+            ORDER BY start_time DESC
+            LIMIT ?
+        `),
+        updateSession: db.prepare(`
+            UPDATE sessions
+            SET end_time = @end_time, event_count = @event_count, snapshot_count = @snapshot_count,
+                total_size = @total_size, status = @status, updated_at = @updated_at
+            WHERE id = @id
+        `),
+        insertEvent: db.prepare(`
+            INSERT INTO session_events (id, session_id, type, timestamp, data, size)
+            VALUES (@id, @session_id, @type, @timestamp, @data, @size)
+        `),
+        getEvents: db.prepare(`
+            SELECT * FROM session_events
+            WHERE session_id = ?
+            ORDER BY timestamp ASC
+        `),
+        getEventsInRange: db.prepare(`
+            SELECT * FROM session_events
+            WHERE session_id = ? AND timestamp >= ? AND timestamp <= ?
+            ORDER BY timestamp ASC
+        `),
+        insertSnapshot: db.prepare(`
+            INSERT INTO session_snapshots (id, session_id, trigger, timestamp, html, size)
+            VALUES (@id, @session_id, @trigger, @timestamp, @html, @size)
+        `),
+        getSnapshots: db.prepare(`
+            SELECT id, session_id, trigger, timestamp, size FROM session_snapshots
+            WHERE session_id = ?
+            ORDER BY timestamp ASC
+        `),
+        getSnapshot: db.prepare('SELECT * FROM session_snapshots WHERE id = ?'),
+        deleteOldSessions: db.prepare(`
+            DELETE FROM sessions WHERE status = 'completed' AND updated_at < ?
+        `),
+        deleteOrphanSessions: db.prepare(`
+            DELETE FROM sessions WHERE status = 'active' AND updated_at < ?
+        `),
+        countByApp: db.prepare(`
+            SELECT COUNT(*) AS count FROM sessions WHERE app_id = ?
+        `),
+    };
+
+    // ------------------------------------------------- action_queue statements (#78)
+    const actionStmts = {
+        insertAction: db.prepare(`
+            INSERT INTO action_queue
+                (id, agent_id, app_id, session_id, type, payload, status, timeout_ms, created_at, updated_at)
+            VALUES
+                (@id, @agent_id, @app_id, @session_id, @type, @payload, @status, @timeout_ms, @created_at, @updated_at)
+        `),
+        getAction: db.prepare('SELECT * FROM action_queue WHERE id = ?'),
+        listByAgent: db.prepare(`
+            SELECT * FROM action_queue
+            WHERE agent_id = ? AND status = ?
+            ORDER BY created_at ASC
+            LIMIT ?
+        `),
+        listByApp: db.prepare(`
+            SELECT * FROM action_queue
+            WHERE app_id = ? AND status IN ('queued', 'dispatched')
+            ORDER BY created_at ASC
+            LIMIT ?
+        `),
+        countPendingByAgent: db.prepare(`
+            SELECT COUNT(*) AS count FROM action_queue
+            WHERE agent_id = ? AND status IN ('queued', 'dispatched')
+        `),
+        updateStatus: db.prepare(`
+            UPDATE action_queue
+            SET status = @status, updated_at = @updated_at,
+                dispatched_at = COALESCE(@dispatched_at, dispatched_at),
+                completed_at = COALESCE(@completed_at, completed_at),
+                result = COALESCE(@result, result),
+                error = COALESCE(@error, error)
+            WHERE id = @id AND status = @expected_status
+        `),
+        getTimedOut: db.prepare(`
+            SELECT * FROM action_queue
+            WHERE status = 'dispatched'
+              AND dispatched_at IS NOT NULL
+              AND (julianday(@now) - julianday(dispatched_at)) * 86400000 > timeout_ms
+        `),
+        deleteOldActions: db.prepare(`
+            DELETE FROM action_queue
+            WHERE status IN ('completed', 'failed') AND updated_at < ?
+        `),
+    };
+
     // ------------------------------------------------- user_rules statements
     const ruleStmts = {
         insertRule: db.prepare(`
@@ -449,6 +882,70 @@ function initDb(dataDir) {
         `),
         deleteRule: db.prepare('DELETE FROM user_rules WHERE id = ?'),
         getAllRules: db.prepare('SELECT * FROM user_rules ORDER BY user_name, priority DESC'),
+    };
+
+    // ------------------------------------------------- agent statements (#68)
+    const agentStmts = {
+        insertAgent: db.prepare(`
+            INSERT INTO agents (id, app_id, name, key_hash, key_prefix, callback_url, capabilities, status, created_by, created_at, updated_at)
+            VALUES (@id, @app_id, @name, @key_hash, @key_prefix, @callback_url, @capabilities, @status, @created_by, @created_at, @updated_at)
+        `),
+        getAgentById: db.prepare('SELECT * FROM agents WHERE id = ?'),
+        getAgentByKeyHash: db.prepare("SELECT * FROM agents WHERE key_hash = ? AND status = 'active'"),
+        getAgentsByApp: db.prepare('SELECT id, app_id, name, key_prefix, callback_url, capabilities, status, created_by, created_at, updated_at, last_seen FROM agents WHERE app_id = ? ORDER BY created_at DESC'),
+        updateAgent: db.prepare(`
+            UPDATE agents SET name = @name, callback_url = @callback_url, capabilities = @capabilities, updated_at = @updated_at WHERE id = @id
+        `),
+        deactivateAgent: db.prepare("UPDATE agents SET status = 'inactive', updated_at = ? WHERE id = ?"),
+        updateAgentLastSeen: db.prepare('UPDATE agents SET last_seen = ? WHERE id = ?'),
+        updateAgentKey: db.prepare('UPDATE agents SET key_hash = @key_hash, key_prefix = @key_prefix, updated_at = @updated_at WHERE id = @id'),
+    };
+
+    // ------------------------------------------------- cdp_audit_log statements (#83)
+    const cdpStmts = {
+        insertLog: db.prepare(`
+            INSERT INTO cdp_audit_log (id, app_id, agent_id, session_key, tab_id, method, params_hash, status, created_at)
+            VALUES (@id, @app_id, @agent_id, @session_key, @tab_id, @method, @params_hash, @status, @created_at)
+        `),
+        updateLog: db.prepare(`
+            UPDATE cdp_audit_log SET status = @status, result_summary = @result_summary, error = @error, duration_ms = @duration_ms WHERE id = @id
+        `),
+        getBySession: db.prepare('SELECT * FROM cdp_audit_log WHERE session_key = ? ORDER BY created_at DESC LIMIT ?'),
+        getByAgent: db.prepare('SELECT * FROM cdp_audit_log WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?'),
+        getByApp: db.prepare('SELECT * FROM cdp_audit_log WHERE app_id = ? ORDER BY created_at DESC LIMIT ?'),
+        deleteOld: db.prepare('DELETE FROM cdp_audit_log WHERE created_at < ?'),
+    };
+
+    // ------------------------------------------------- webhook statements (#88)
+    const webhookStmts = {
+        insert: db.prepare(`
+            INSERT INTO agent_webhooks (id, app_id, agent_id, url, secret, event_filters, template, active, allow_http, consecutive_failures, created_at, updated_at)
+            VALUES (@id, @app_id, @agent_id, @url, @secret, @event_filters, @template, @active, @allow_http, 0, @created_at, @updated_at)
+        `),
+        getById: db.prepare('SELECT * FROM agent_webhooks WHERE id = ?'),
+        getByAgent: db.prepare('SELECT * FROM agent_webhooks WHERE agent_id = ? ORDER BY created_at DESC'),
+        getByApp: db.prepare('SELECT * FROM agent_webhooks WHERE app_id = ? ORDER BY created_at DESC'),
+        getActiveByApp: db.prepare("SELECT * FROM agent_webhooks WHERE app_id = ? AND active = 1"),
+        countByAgent: db.prepare('SELECT COUNT(*) AS count FROM agent_webhooks WHERE agent_id = ?'),
+        update: db.prepare(`
+            UPDATE agent_webhooks SET url = @url, event_filters = @event_filters, template = @template,
+            active = @active, allow_http = @allow_http, updated_at = @updated_at WHERE id = @id
+        `),
+        delete: db.prepare('DELETE FROM agent_webhooks WHERE id = ?'),
+        incrementFailures: db.prepare('UPDATE agent_webhooks SET consecutive_failures = consecutive_failures + 1, updated_at = ? WHERE id = ?'),
+        resetFailures: db.prepare('UPDATE agent_webhooks SET consecutive_failures = 0, updated_at = ? WHERE id = ?'),
+        disable: db.prepare("UPDATE agent_webhooks SET active = 0, updated_at = ? WHERE id = ?"),
+        // Delivery statements
+        insertDelivery: db.prepare(`
+            INSERT INTO webhook_deliveries (id, webhook_id, event_type, payload, status, attempt, next_retry_at, created_at)
+            VALUES (@id, @webhook_id, @event_type, @payload, @status, @attempt, @next_retry_at, @created_at)
+        `),
+        updateDelivery: db.prepare(`
+            UPDATE webhook_deliveries SET status = @status, status_code = @status_code, error = @error, delivered_at = @delivered_at WHERE id = @id
+        `),
+        getDeliveriesByWebhook: db.prepare('SELECT * FROM webhook_deliveries WHERE webhook_id = ? ORDER BY created_at DESC LIMIT ?'),
+        getPendingRetries: db.prepare("SELECT * FROM webhook_deliveries WHERE status = 'pending' AND next_retry_at <= ? AND attempt <= 3"),
+        deleteOldDeliveries: db.prepare("DELETE FROM webhook_deliveries WHERE created_at < ?"),
     };
 
     // ------------------------------------------------- user_auths statements
@@ -1481,6 +1978,881 @@ function initDb(dataDir) {
         ).all(app_id, cutoff, limit);
     }
 
+    // ------------------------------------------------- perception methods (#69)
+
+    function createPerceptionEvent({ app_id, agent_id, type, message, stack, source, line, severity, url, fingerprint, context }) {
+        const id = genId('pe');
+        const now = new Date().toISOString();
+        perceptionStmts.insertEvent.run({
+            id, app_id, agent_id: agent_id || null, type, message: message || '',
+            stack: stack || null, source: source || null, line: line || null,
+            severity: severity || 'error', url: url || null,
+            fingerprint, context: JSON.stringify(context || {}), created_at: now,
+        });
+        return { id, created_at: now };
+    }
+
+    function createPerceptionEvents(events) {
+        const insertMany = db.transaction((evts) => {
+            const results = [];
+            for (const evt of evts) {
+                results.push(createPerceptionEvent(evt));
+            }
+            return results;
+        });
+        return insertMany(events);
+    }
+
+    function getPerceptionEvents({ app_id, agent_id, cursor, severity, url, since, until, limit = 100 }) {
+        const conditions = ['app_id = ?'];
+        const params = [app_id];
+
+        if (agent_id) { conditions.push('agent_id = ?'); params.push(agent_id); }
+        if (severity) { conditions.push('severity = ?'); params.push(severity); }
+        if (url) { conditions.push('url LIKE ?'); params.push(`%${url}%`); }
+
+        const after = cursor || since || '1970-01-01T00:00:00.000Z';
+        conditions.push('created_at > ?');
+        params.push(after);
+
+        if (until) { conditions.push('created_at <= ?'); params.push(until); }
+
+        params.push(Math.min(limit, 500));
+        const sql = `SELECT * FROM perception_events WHERE ${conditions.join(' AND ')} ORDER BY created_at ASC LIMIT ?`;
+        return db.prepare(sql).all(...params);
+    }
+
+    function getPerceptionEventsByFingerprint({ app_id, fingerprint, limit = 20 }) {
+        return perceptionStmts.getEventsByFingerprint.all(app_id, fingerprint, limit);
+    }
+
+    function getPerceptionStats({ app_id, limit = 50 }) {
+        return perceptionStmts.countByFingerprint.all(app_id, limit);
+    }
+
+    function upsertPerceptionIssue({ app_id, fingerprint, count, first_seen, last_seen, gitlab_issue_id, gitlab_issue_url }) {
+        const existing = perceptionStmts.getIssue.get(app_id, fingerprint);
+        if (existing) {
+            perceptionStmts.updateIssue.run({
+                app_id, fingerprint,
+                last_seen: last_seen || new Date().toISOString(),
+                count: (existing.count || 0) + (count ?? 1),
+                gitlab_issue_id: gitlab_issue_id || null,
+                gitlab_issue_url: gitlab_issue_url || null,
+            });
+            return { ...existing, updated: true };
+        }
+        const id = genId('pi');
+        perceptionStmts.insertIssue.run({
+            id, app_id, fingerprint,
+            first_seen: first_seen || new Date().toISOString(),
+            last_seen: last_seen || new Date().toISOString(),
+            count: count ?? 1,
+            status: 'open',
+        });
+        return { id, created: true };
+    }
+
+    function getPerceptionIssue({ app_id, fingerprint }) {
+        return perceptionStmts.getIssue.get(app_id, fingerprint);
+    }
+
+    function getOpenPerceptionIssues({ app_id }) {
+        return perceptionStmts.getOpenIssues.all(app_id);
+    }
+
+    // ------------------------------------------------- auto-fix methods (#86)
+
+    function getAutoFixCandidates({ app_id, maxAttempts = 3, limit = 10 }) {
+        return perceptionStmts.getFixCandidates.all(app_id, maxAttempts, limit);
+    }
+
+    function updateAutoFixStatus({ app_id, fingerprint, fix_status, fix_branch, fix_pr_url, fix_pr_id, fix_confidence, fix_attempt_count, last_fix_attempt }) {
+        return perceptionStmts.updateFixStatus.run({
+            app_id, fingerprint, fix_status,
+            fix_branch: fix_branch || null,
+            fix_pr_url: fix_pr_url || null,
+            fix_pr_id: fix_pr_id || null,
+            fix_confidence: fix_confidence ?? null,
+            fix_attempt_count: fix_attempt_count ?? null,
+            last_fix_attempt: last_fix_attempt || null,
+        });
+    }
+
+    function getFixableIssue({ app_id, fingerprint }) {
+        return perceptionStmts.getFixableIssue.get(app_id, fingerprint);
+    }
+
+    // ------------------------------------------------- agent actions (#87 Dashboard)
+
+    const agentActionStmts = {
+        insert: db.prepare(`
+            INSERT INTO agent_actions (id, app_id, agent_id, action_type, target_type, target_id, summary, status, metadata, created_at)
+            VALUES (@id, @app_id, @agent_id, @action_type, @target_type, @target_id, @summary, @status, @metadata, @created_at)
+        `),
+        query: db.prepare(`
+            SELECT * FROM agent_actions
+            WHERE app_id = ? AND created_at >= ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        queryByAgent: db.prepare(`
+            SELECT * FROM agent_actions
+            WHERE app_id = ? AND agent_id = ? AND created_at >= ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        queryByType: db.prepare(`
+            SELECT * FROM agent_actions
+            WHERE app_id = ? AND action_type = ? AND created_at >= ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        queryByAgentAndType: db.prepare(`
+            SELECT * FROM agent_actions
+            WHERE app_id = ? AND agent_id = ? AND action_type = ? AND created_at >= ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `),
+        countByType: db.prepare(`
+            SELECT action_type, COUNT(*) AS count
+            FROM agent_actions
+            WHERE app_id = ? AND created_at >= ?
+            GROUP BY action_type
+            ORDER BY count DESC
+        `),
+    };
+
+    function logAgentAction({ app_id, agent_id, action_type, target_type, target_id, summary, status, metadata }) {
+        const id = genId('act');
+        agentActionStmts.insert.run({
+            id,
+            app_id,
+            agent_id: agent_id || null,
+            action_type,
+            target_type: target_type || null,
+            target_id: target_id || null,
+            summary: (summary || '').slice(0, 500),
+            status: status || 'success',
+            metadata: typeof metadata === 'object' ? JSON.stringify(metadata) : (metadata || '{}'),
+            created_at: new Date().toISOString(),
+        });
+        return id;
+    }
+
+    function getAgentActions({ app_id, agent_id, action_type, days = 30, limit = 100 }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        const safeLimit = Math.min(limit, 500);
+
+        if (agent_id && action_type) {
+            return agentActionStmts.queryByAgentAndType.all(app_id, agent_id, action_type, cutoff, safeLimit);
+        }
+        if (agent_id) {
+            return agentActionStmts.queryByAgent.all(app_id, agent_id, cutoff, safeLimit);
+        }
+        if (action_type) {
+            return agentActionStmts.queryByType.all(app_id, action_type, cutoff, safeLimit);
+        }
+        return agentActionStmts.query.all(app_id, cutoff, safeLimit);
+    }
+
+    function getAgentActionSummary({ app_id, days = 30 }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        return agentActionStmts.countByType.all(app_id, cutoff);
+    }
+
+    function cleanupOldActions(retentionDays = 90) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const result = db.prepare('DELETE FROM agent_actions WHERE created_at < ?').run(cutoff);
+        return { deleted: result.changes };
+    }
+
+    // ------------------------------------------------- error trends (#87 Dashboard)
+
+    function getErrorTrends({ app_id, days = 7, group_by = 'severity' }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        const dateFormat = "strftime('%Y-%m-%d', created_at)";
+
+        let groupCol = '';
+        let selectCol = '';
+        if (group_by === 'total') {
+            selectCol = ", 'total' AS group_value";
+        } else if (group_by === 'severity') {
+            groupCol = ', severity';
+            selectCol = ', severity AS group_value';
+        } else if (group_by === 'type') {
+            groupCol = ', type';
+            selectCol = ', type AS group_value';
+        }
+
+        const query = `
+            SELECT ${dateFormat} AS period, COUNT(*) AS count${selectCol}
+            FROM perception_events
+            WHERE app_id = ? AND created_at >= ?
+            GROUP BY ${dateFormat}${groupCol}
+            ORDER BY period ASC
+        `;
+        return db.prepare(query).all(app_id, cutoff);
+    }
+
+    function getErrorSummary({ app_id, days = 7 }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+        const total = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ?'
+        ).get(app_id, cutoff).count;
+
+        const bySeverity = db.prepare(
+            'SELECT severity, COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ? GROUP BY severity ORDER BY count DESC'
+        ).all(app_id, cutoff);
+
+        const byType = db.prepare(
+            'SELECT type, COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ? GROUP BY type ORDER BY count DESC'
+        ).all(app_id, cutoff);
+
+        const topFingerprints = db.prepare(`
+            SELECT fingerprint, message, severity, type, url, COUNT(*) AS count, MAX(created_at) AS last_seen
+            FROM perception_events
+            WHERE app_id = ? AND created_at >= ?
+            GROUP BY fingerprint
+            ORDER BY count DESC
+            LIMIT 10
+        `).all(app_id, cutoff);
+
+        // Spike detection: compare last 24h vs prior period average
+        const last24h = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ?'
+        ).get(app_id, new Date(Date.now() - 86400000).toISOString()).count;
+
+        const priorAvg = days > 1
+            ? db.prepare(`
+                SELECT CAST(COUNT(*) AS REAL) / ? AS avg_daily
+                FROM perception_events
+                WHERE app_id = ? AND created_at >= ? AND created_at < ?
+              `).get(days - 1, app_id, cutoff, new Date(Date.now() - 86400000).toISOString()).avg_daily
+            : last24h;
+
+        const spikeRatio = priorAvg > 0 ? last24h / priorAvg : 0;
+
+        return { total, bySeverity, byType, topFingerprints, last24h, priorAvgDaily: priorAvg, spikeRatio };
+    }
+
+    function getQualityReport({ app_id, days = 30 }) {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        const halfDays = Math.floor(days / 2);
+        const halfCutoff = new Date(Date.now() - halfDays * 86400000).toISOString();
+
+        // MTTR: avg time between first_seen and last_seen for resolved issues
+        const mttrResult = db.prepare(`
+            SELECT AVG(
+                (julianday(last_seen) - julianday(first_seen)) * 24
+            ) AS avg_hours, COUNT(*) AS resolved_count
+            FROM perception_issues
+            WHERE app_id = ? AND status != 'open' AND first_seen >= ?
+        `).get(app_id, cutoff);
+
+        // Auto-fix rate: issues with gitlab_issue_url / total issues
+        const issueStats = db.prepare(`
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN gitlab_issue_url IS NOT NULL THEN 1 ELSE 0 END) AS filed,
+                SUM(CASE WHEN status != 'open' THEN 1 ELSE 0 END) AS resolved
+            FROM perception_issues
+            WHERE app_id = ? AND first_seen >= ?
+        `).get(app_id, cutoff);
+
+        const autoFixRate = issueStats.total > 0
+            ? (issueStats.filed / issueStats.total) * 100
+            : 0;
+
+        // Error recurrence rate: fingerprints seen more than once / total fingerprints
+        const recurrenceResult = db.prepare(`
+            SELECT
+                COUNT(DISTINCT fingerprint) AS total_fps,
+                SUM(CASE WHEN cnt > 1 THEN 1 ELSE 0 END) AS recurring_fps
+            FROM (
+                SELECT fingerprint, COUNT(*) AS cnt
+                FROM perception_events
+                WHERE app_id = ? AND created_at >= ?
+                GROUP BY fingerprint
+            )
+        `).get(app_id, cutoff);
+
+        const recurrenceRate = recurrenceResult.total_fps > 0
+            ? (recurrenceResult.recurring_fps / recurrenceResult.total_fps) * 100
+            : 0;
+
+        // Coverage: distinct URLs monitored
+        const coverage = db.prepare(`
+            SELECT COUNT(DISTINCT url) AS sites
+            FROM perception_events
+            WHERE app_id = ? AND created_at >= ? AND url IS NOT NULL
+        `).get(app_id, cutoff);
+
+        // Comparison: same metrics for the prior half-period
+        const priorErrors = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ? AND created_at < ?'
+        ).get(app_id, cutoff, halfCutoff).count;
+
+        const currentErrors = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_events WHERE app_id = ? AND created_at >= ?'
+        ).get(app_id, halfCutoff).count;
+
+        const priorIssues = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_issues WHERE app_id = ? AND first_seen >= ? AND first_seen < ?'
+        ).get(app_id, cutoff, halfCutoff).count;
+
+        const currentIssues = db.prepare(
+            'SELECT COUNT(*) AS count FROM perception_issues WHERE app_id = ? AND first_seen >= ?'
+        ).get(app_id, halfCutoff).count;
+
+        return {
+            mttr: {
+                avgHours: mttrResult.avg_hours || 0,
+                resolvedCount: mttrResult.resolved_count || 0,
+            },
+            autoFixRate: Math.round(autoFixRate * 10) / 10,
+            filedCount: issueStats.filed || 0,
+            resolvedCount: issueStats.resolved || 0,
+            totalIssues: issueStats.total || 0,
+            recurrenceRate: Math.round(recurrenceRate * 10) / 10,
+            recurringFingerprints: recurrenceResult.recurring_fps || 0,
+            totalFingerprints: recurrenceResult.total_fps || 0,
+            coverage: coverage.sites || 0,
+            comparison: {
+                priorErrors,
+                currentErrors,
+                priorIssues,
+                currentIssues,
+                errorTrend: priorErrors > 0 ? ((currentErrors - priorErrors) / priorErrors) * 100 : 0,
+                issueTrend: priorIssues > 0 ? ((currentIssues - priorIssues) / priorIssues) * 100 : 0,
+            },
+        };
+    }
+
+    // ------------------------------------------------- session methods (#73)
+
+    const MAX_SESSION_SIZE = 50 * 1024 * 1024; // 50MB
+
+    // P2-4: Allowed event types per contract
+    const VALID_EVENT_TYPES = new Set([
+        'dom-mutation', 'console-log', 'console-error', 'network-error', 'click', 'scroll',
+    ]);
+
+    // P2-5: ISO 8601 date format validation
+    const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+
+    function createSession({ app_id, agent_id, tab_id, url, title, start_time, events, snapshots, metadata }) {
+        // P2-5: Validate start_time format
+        if (start_time && !ISO_DATE_RE.test(start_time)) {
+            throw new Error('INVALID_START_TIME');
+        }
+
+        const now = new Date().toISOString();
+        const sessionId = genId('sess');
+
+        const eventsData = (events || []).slice(0, 1000);
+        const snapshotsData = (snapshots || []).slice(0, 100);
+
+        // P2-4: Validate event types
+        for (const e of eventsData) {
+            if (e.type && !VALID_EVENT_TYPES.has(e.type)) {
+                throw new Error(`INVALID_EVENT_TYPE:${e.type}`);
+            }
+        }
+
+        // Calculate total size
+        let totalSize = 0;
+        for (const e of eventsData) {
+            totalSize += JSON.stringify(e.data || {}).length;
+        }
+        for (const s of snapshotsData) {
+            totalSize += (s.html || '').length;
+        }
+
+        if (totalSize > MAX_SESSION_SIZE) {
+            throw new Error('SESSION_TOO_LARGE');
+        }
+
+        const insertAll = db.transaction(() => {
+            sessionStmts.insertSession.run({
+                id: sessionId,
+                app_id,
+                agent_id: agent_id || null,
+                tab_id: tab_id || null,
+                url: (url || '').slice(0, 2048) || null,
+                title: (title || '').slice(0, 512) || null,
+                start_time: start_time || now,
+                end_time: null,
+                event_count: eventsData.length,
+                snapshot_count: snapshotsData.length,
+                total_size: totalSize,
+                status: 'active',
+                metadata: JSON.stringify(metadata || {}),
+                created_at: now,
+                updated_at: now,
+            });
+
+            for (const evt of eventsData) {
+                const dataStr = JSON.stringify(evt.data || {});
+                sessionStmts.insertEvent.run({
+                    id: genId('sevt'),
+                    session_id: sessionId,
+                    type: evt.type || 'unknown',
+                    timestamp: evt.timestamp || now,
+                    data: dataStr,
+                    size: dataStr.length,
+                });
+            }
+
+            for (const snap of snapshotsData) {
+                const html = (snap.html || '').slice(0, 50000);
+                sessionStmts.insertSnapshot.run({
+                    id: genId('ssnap'),
+                    session_id: sessionId,
+                    trigger: snap.trigger || 'manual',
+                    timestamp: snap.timestamp || now,
+                    html,
+                    size: html.length,
+                });
+            }
+        });
+
+        insertAll();
+
+        return {
+            id: sessionId,
+            app_id,
+            event_count: eventsData.length,
+            snapshot_count: snapshotsData.length,
+            total_size: totalSize,
+            created_at: now,
+        };
+    }
+
+    function appendSessionEvents(sessionId, { events, snapshots, agent_id }) {
+        const session = sessionStmts.getSession.get(sessionId);
+        if (!session) return null;
+
+        // P2-2: Verify agent ownership — prevent cross-agent injection
+        if (agent_id && session.agent_id && session.agent_id !== agent_id) {
+            return null;
+        }
+
+        // P2-6: Reject append to finalized sessions
+        if (session.status === 'completed') {
+            throw new Error('SESSION_FINALIZED');
+        }
+
+        const now = new Date().toISOString();
+        const eventsData = (events || []).slice(0, 1000);
+        const snapshotsData = (snapshots || []).slice(0, 100);
+
+        // P2-4: Validate event types
+        for (const e of eventsData) {
+            if (e.type && !VALID_EVENT_TYPES.has(e.type)) {
+                throw new Error(`INVALID_EVENT_TYPE:${e.type}`);
+            }
+        }
+
+        let addedSize = 0;
+        for (const e of eventsData) addedSize += JSON.stringify(e.data || {}).length;
+        for (const s of snapshotsData) addedSize += (s.html || '').length;
+
+        if (session.total_size + addedSize > MAX_SESSION_SIZE) {
+            throw new Error('SESSION_TOO_LARGE');
+        }
+
+        const appendAll = db.transaction(() => {
+            for (const evt of eventsData) {
+                const dataStr = JSON.stringify(evt.data || {});
+                sessionStmts.insertEvent.run({
+                    id: genId('sevt'),
+                    session_id: sessionId,
+                    type: evt.type || 'unknown',
+                    timestamp: evt.timestamp || now,
+                    data: dataStr,
+                    size: dataStr.length,
+                });
+            }
+
+            for (const snap of snapshotsData) {
+                const html = (snap.html || '').slice(0, 50000);
+                sessionStmts.insertSnapshot.run({
+                    id: genId('ssnap'),
+                    session_id: sessionId,
+                    trigger: snap.trigger || 'manual',
+                    timestamp: snap.timestamp || now,
+                    html,
+                    size: html.length,
+                });
+            }
+
+            sessionStmts.updateSession.run({
+                id: sessionId,
+                end_time: session.end_time,
+                event_count: session.event_count + eventsData.length,
+                snapshot_count: session.snapshot_count + snapshotsData.length,
+                total_size: session.total_size + addedSize,
+                status: session.status,
+                updated_at: now,
+            });
+        });
+
+        appendAll();
+
+        return {
+            id: sessionId,
+            events_added: eventsData.length,
+            snapshots_added: snapshotsData.length,
+            total_size: session.total_size + addedSize,
+        };
+    }
+
+    function finalizeSession(sessionId) {
+        const session = sessionStmts.getSession.get(sessionId);
+        if (!session) return null;
+        const now = new Date().toISOString();
+        sessionStmts.updateSession.run({
+            id: sessionId,
+            end_time: now,
+            event_count: session.event_count,
+            snapshot_count: session.snapshot_count,
+            total_size: session.total_size,
+            status: 'completed',
+            updated_at: now,
+        });
+        return { id: sessionId, status: 'completed', end_time: now };
+    }
+
+    function listSessions({ app_id, agent_id, site, after, limit = 50 }) {
+        const cutoff = after || '1970-01-01T00:00:00.000Z';
+        const maxLimit = Math.min(limit, 200);
+        if (agent_id) {
+            return sessionStmts.listSessionsByAgent.all(app_id, agent_id, cutoff, maxLimit);
+        }
+        if (site) {
+            // P2-3: Escape LIKE wildcards to prevent logic bypass
+            const escapedSite = site.replace(/[%_]/g, '\\$&');
+            return sessionStmts.listSessionsBySite.all(app_id, `%${escapedSite}%`, cutoff, maxLimit);
+        }
+        return sessionStmts.listSessions.all(app_id, cutoff, maxLimit);
+    }
+
+    function getSession(sessionId) {
+        return sessionStmts.getSession.get(sessionId) || null;
+    }
+
+    function getSessionEvents(sessionId, { start_time, end_time } = {}) {
+        if (start_time && end_time) {
+            return sessionStmts.getEventsInRange.all(sessionId, start_time, end_time);
+        }
+        return sessionStmts.getEvents.all(sessionId);
+    }
+
+    function getSessionSnapshots(sessionId) {
+        return sessionStmts.getSnapshots.all(sessionId);
+    }
+
+    function getSessionSnapshot(snapshotId) {
+        return sessionStmts.getSnapshot.get(snapshotId) || null;
+    }
+
+    function cleanupOldSessions(retentionDays = 30, orphanDays = 7) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const orphanCutoff = new Date(Date.now() - orphanDays * 86400000).toISOString();
+        const completed = sessionStmts.deleteOldSessions.run(cutoff);
+        // P2-7: Clean up orphaned active sessions (e.g. extension crash)
+        const orphaned = sessionStmts.deleteOrphanSessions.run(orphanCutoff);
+        return { deleted: completed.changes + orphaned.changes, completed: completed.changes, orphaned: orphaned.changes };
+    }
+
+    // ------------------------------------------------- action queue methods (#78)
+
+    const VALID_ACTION_TYPES = new Set(['navigate', 'click', 'screenshot']);
+    const MAX_QUEUE_DEPTH = 100;
+
+    // Valid state transitions for action queue
+    const VALID_TRANSITIONS = {
+        queued:     new Set(['dispatched', 'failed']),
+        dispatched: new Set(['completed', 'failed']),
+    };
+
+    function createAction({ agent_id, app_id, session_id, type, payload, timeout_ms }) {
+        if (!VALID_ACTION_TYPES.has(type)) {
+            throw new Error(`INVALID_ACTION_TYPE:${type}`);
+        }
+
+        const pending = actionStmts.countPendingByAgent.get(agent_id);
+        if (pending.count >= MAX_QUEUE_DEPTH) {
+            throw new Error('QUEUE_FULL');
+        }
+
+        const now = new Date().toISOString();
+        const id = genId('act');
+        actionStmts.insertAction.run({
+            id,
+            agent_id,
+            app_id,
+            session_id: session_id || null,
+            type,
+            payload: JSON.stringify(payload || {}),
+            status: 'queued',
+            timeout_ms: timeout_ms || 30000,
+            created_at: now,
+            updated_at: now,
+        });
+
+        return { id, agent_id, app_id, type, status: 'queued', created_at: now };
+    }
+
+    function getAction(actionId) {
+        return actionStmts.getAction.get(actionId) || null;
+    }
+
+    function listPendingActions(app_id, limit = 50) {
+        return actionStmts.listByApp.all(app_id, Math.min(limit, 200));
+    }
+
+    function listAgentActions(agent_id, status = 'queued', limit = 50) {
+        return actionStmts.listByAgent.all(agent_id, status, Math.min(limit, 200));
+    }
+
+    function updateActionStatus(actionId, { status, result, error }) {
+        const now = new Date().toISOString();
+        const action = actionStmts.getAction.get(actionId);
+        if (!action) return null;
+
+        const allowed = VALID_TRANSITIONS[action.status];
+        if (!allowed || !allowed.has(status)) {
+            throw new Error(`INVALID_TRANSITION:${action.status}→${status}`);
+        }
+
+        const res = actionStmts.updateStatus.run({
+            id: actionId,
+            status,
+            expected_status: action.status,
+            updated_at: now,
+            dispatched_at: status === 'dispatched' ? now : null,
+            completed_at: (status === 'completed' || status === 'failed') ? now : null,
+            result: result ? JSON.stringify(result) : null,
+            error: error || null,
+        });
+
+        if (res.changes === 0) return null; // Race: status changed between read and write
+
+        return actionStmts.getAction.get(actionId);
+    }
+
+    function getTimedOutActions() {
+        const now = new Date().toISOString();
+        return actionStmts.getTimedOut.all({ now });
+    }
+
+    function cleanupOldActions(retentionDays = 7) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const result = actionStmts.deleteOldActions.run(cutoff);
+        return { deleted: result.changes };
+    }
+
+    // ------------------------------------------------- agent methods (#68)
+
+    function registerAgent({ app_id, name, key_hash, key_prefix, callback_url, capabilities, created_by }) {
+        const id = genId('agent');
+        const now = new Date().toISOString();
+        agentStmts.insertAgent.run({
+            id, app_id, name, key_hash, key_prefix,
+            callback_url: callback_url || null,
+            capabilities: JSON.stringify(capabilities || []),
+            status: 'active',
+            created_by,
+            created_at: now,
+            updated_at: now,
+        });
+        return { id, app_id, name, key_prefix, callback_url: callback_url || null, capabilities: capabilities || [], status: 'active', created_by, created_at: now, updated_at: now };
+    }
+
+    function getAgentById(id) {
+        const row = agentStmts.getAgentById.get(id);
+        if (!row) return null;
+        // Exclude key_hash from returned object
+        const { key_hash, ...agent } = row;
+        return agent;
+    }
+
+    function getAgentByKeyHash(keyHash) {
+        return agentStmts.getAgentByKeyHash.get(keyHash) || null;
+    }
+
+    function getAgentsByApp(app_id) {
+        return agentStmts.getAgentsByApp.all(app_id);
+    }
+
+    function updateAgent(id, { name, callback_url, capabilities }) {
+        const now = new Date().toISOString();
+        agentStmts.updateAgent.run({
+            id, name, callback_url: callback_url || null,
+            capabilities: JSON.stringify(capabilities || []),
+            updated_at: now,
+        });
+        return getAgentById(id);
+    }
+
+    function deactivateAgent(id) {
+        const now = new Date().toISOString();
+        agentStmts.deactivateAgent.run(now, id);
+    }
+
+    function updateAgentLastSeen(id) {
+        const now = new Date().toISOString();
+        agentStmts.updateAgentLastSeen.run(now, id);
+    }
+
+    function rotateAgentKey(id, { key_hash, key_prefix }) {
+        const now = new Date().toISOString();
+        agentStmts.updateAgentKey.run({ id, key_hash, key_prefix, updated_at: now });
+    }
+
+    // ------------------------------------------------- CDP audit log methods (#83)
+
+    function createCdpAuditLog({ app_id, agent_id, session_key, tab_id, method, params_hash }) {
+        const id = genId('cdp');
+        const now = new Date().toISOString();
+        cdpStmts.insertLog.run({ id, app_id, agent_id, session_key, tab_id, method, params_hash: params_hash || null, status: 'sent', created_at: now });
+        return { id, created_at: now };
+    }
+
+    function updateCdpAuditLog(id, { status, result_summary, error, duration_ms }) {
+        cdpStmts.updateLog.run({ id, status, result_summary: result_summary || null, error: error || null, duration_ms: duration_ms || null });
+    }
+
+    function getCdpAuditBySession(session_key, limit = 100) {
+        return cdpStmts.getBySession.all(session_key, Math.min(limit, 500));
+    }
+
+    function getCdpAuditByAgent(agent_id, limit = 100) {
+        return cdpStmts.getByAgent.all(agent_id, Math.min(limit, 500));
+    }
+
+    function getCdpAuditByApp(app_id, limit = 100) {
+        return cdpStmts.getByApp.all(app_id, Math.min(limit, 500));
+    }
+
+    function cleanupOldCdpAuditLogs(retentionDays = 7) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const result = cdpStmts.deleteOld.run(cutoff);
+        return { deleted: result.changes };
+    }
+
+
+    // ------------------------------------------------- webhook methods (#88)
+
+    function createWebhook({ app_id, agent_id, url, secret, event_filters, template, allow_http }) {
+        const id = genId('wh');
+        const now = new Date().toISOString();
+        webhookStmts.insert.run({
+            id, app_id, agent_id, url, secret,
+            event_filters: JSON.stringify(event_filters || {}),
+            template: template || 'generic',
+            active: 1,
+            allow_http: allow_http ? 1 : 0,
+            created_at: now, updated_at: now,
+        });
+        return { id, app_id, agent_id, url, template: template || 'generic', active: true, allow_http: !!allow_http, created_at: now };
+    }
+
+    function getWebhook(id) {
+        return webhookStmts.getById.get(id) || null;
+    }
+
+    function listWebhooksByAgent(agent_id) {
+        return webhookStmts.getByAgent.all(agent_id);
+    }
+
+    function listWebhooksByApp(app_id) {
+        return webhookStmts.getByApp.all(app_id);
+    }
+
+    function getActiveWebhooksByApp(app_id) {
+        return webhookStmts.getActiveByApp.all(app_id);
+    }
+
+    function countWebhooksByAgent(agent_id) {
+        return webhookStmts.countByAgent.get(agent_id).count;
+    }
+
+    function updateWebhook(id, { url, event_filters, template, active, allow_http }) {
+        const now = new Date().toISOString();
+        webhookStmts.update.run({
+            id, url,
+            event_filters: JSON.stringify(event_filters || {}),
+            template: template || 'generic',
+            active: active ? 1 : 0,
+            allow_http: allow_http ? 1 : 0,
+            updated_at: now,
+        });
+        return getWebhook(id);
+    }
+
+    function deleteWebhook(id) {
+        webhookStmts.delete.run(id);
+    }
+
+    function incrementWebhookFailures(id) {
+        const now = new Date().toISOString();
+        webhookStmts.incrementFailures.run(now, id);
+        const wh = getWebhook(id);
+        if (wh && wh.consecutive_failures >= 10) {
+            webhookStmts.disable.run(now, id);
+            return { disabled: true, failures: wh.consecutive_failures };
+        }
+        return { disabled: false, failures: wh ? wh.consecutive_failures : 0 };
+    }
+
+    function resetWebhookFailures(id) {
+        const now = new Date().toISOString();
+        webhookStmts.resetFailures.run(now, id);
+    }
+
+    function createWebhookDelivery({ webhook_id, event_type, payload, next_retry_at }) {
+        const id = genId('whd');
+        const now = new Date().toISOString();
+        webhookStmts.insertDelivery.run({
+            id, webhook_id, event_type,
+            payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
+            status: 'pending',
+            attempt: 1,
+            next_retry_at: next_retry_at || now,
+            created_at: now,
+        });
+        return { id, created_at: now };
+    }
+
+    function updateWebhookDelivery(id, { status, status_code, error }) {
+        const now = new Date().toISOString();
+        webhookStmts.updateDelivery.run({
+            id, status,
+            status_code: status_code || null,
+            error: error || null,
+            delivered_at: status === 'delivered' ? now : null,
+        });
+    }
+
+    function getWebhookDeliveries(webhook_id, limit = 50) {
+        return webhookStmts.getDeliveriesByWebhook.all(webhook_id, Math.min(limit, 200));
+    }
+
+    function getPendingWebhookRetries() {
+        const now = new Date().toISOString();
+        return webhookStmts.getPendingRetries.all(now);
+    }
+
+    function cleanupOldWebhookDeliveries(retentionDays = 30) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const result = webhookStmts.deleteOldDeliveries.run(cutoff);
+        return { deleted: result.changes };
+    }
+
     return {
         db,
         genId,
@@ -1574,6 +2946,77 @@ function initDb(dataDir) {
         // User Settings
         getUserSettings,
         updateUserSettings,
+        // Agents (#68)
+        registerAgent,
+        getAgentById,
+        getAgentByKeyHash,
+        getAgentsByApp,
+        updateAgent,
+        deactivateAgent,
+        updateAgentLastSeen,
+        rotateAgentKey,
+        // Perception (#69 Error Sentinel)
+        createPerceptionEvent,
+        createPerceptionEvents,
+        getPerceptionEvents,
+        getPerceptionEventsByFingerprint,
+        getPerceptionStats,
+        upsertPerceptionIssue,
+        getPerceptionIssue,
+        getOpenPerceptionIssues,
+        // Auto-fix (#86)
+        getAutoFixCandidates,
+        updateAutoFixStatus,
+        getFixableIssue,
+        getErrorTrends,
+        getErrorSummary,
+        getQualityReport,
+        logAgentAction,
+        getAgentActions,
+        getAgentActionSummary,
+        cleanupOldActions,
+        // Sessions (#73)
+        createSession,
+        appendSessionEvents,
+        finalizeSession,
+        listSessions,
+        getSession,
+        getSessionEvents,
+        getSessionSnapshots,
+        getSessionSnapshot,
+        cleanupOldSessions,
+        // Actions (#78)
+        createAction,
+        getAction,
+        getValidActionTypes: () => [...VALID_ACTION_TYPES],
+        listPendingActions,
+        listAgentActions,
+        updateActionStatus,
+        getTimedOutActions,
+        cleanupOldActions,
+        // CDP Audit Log (#83)
+        createCdpAuditLog,
+        updateCdpAuditLog,
+        getCdpAuditBySession,
+        getCdpAuditByAgent,
+        getCdpAuditByApp,
+        cleanupOldCdpAuditLogs,
+        // Webhooks (#88)
+        createWebhook,
+        getWebhook,
+        listWebhooksByAgent,
+        listWebhooksByApp,
+        getActiveWebhooksByApp,
+        countWebhooksByAgent,
+        updateWebhook,
+        deleteWebhook,
+        incrementWebhookFailures,
+        resetWebhookFailures,
+        createWebhookDelivery,
+        updateWebhookDelivery,
+        getWebhookDeliveries,
+        getPendingWebhookRetries,
+        cleanupOldWebhookDeliveries,
     };
 }
 

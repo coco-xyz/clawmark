@@ -91,6 +91,9 @@
                 <li class="nav-item" data-tab="file-issues">
                     <span class="nav-icon">&#x1f4e4;</span> File Issues
                 </li>
+                <li class="nav-item" data-tab="monitoring">
+                    <span class="nav-icon">&#x1f6e1;</span> Monitoring
+                </li>
                 <li class="nav-item" data-tab="settings">
                     <span class="nav-icon">&#x2699;&#xfe0f;</span> Settings
                 </li>
@@ -212,6 +215,164 @@
                     </div>
                     <button class="btn btn-primary" id="btn-file-issues" disabled>File Selected as GitLab Issues</button>
                     <div id="file-results" class="file-results" style="display:none;"></div>
+                </div>
+            </section>
+
+            <!-- Monitoring Tab (#87) -->
+            <section class="tab-panel" id="tab-monitoring">
+                <div class="tab-header-row">
+                    <h1>Monitoring</h1>
+                    <div class="export-controls">
+                        <button class="btn btn-secondary btn-small" id="btn-export-csv">Export CSV</button>
+                        <button class="btn btn-secondary btn-small" id="btn-export-pdf">Export PDF</button>
+                    </div>
+                </div>
+
+                <!-- Error Summary Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="err-total">&mdash;</div>
+                        <div class="stat-label">Total Errors</div>
+                    </div>
+                    <div class="stat-card" id="err-spike-card">
+                        <div class="stat-value" id="err-last24h">&mdash;</div>
+                        <div class="stat-label">Last 24h</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="err-types">&mdash;</div>
+                        <div class="stat-label">Error Types</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="err-top-severity">&mdash;</div>
+                        <div class="stat-label">Top Severity</div>
+                    </div>
+                </div>
+
+                <!-- Spike Alert -->
+                <div class="card monitoring-alert" id="err-spike-alert" style="display:none;">
+                    <span class="alert-icon">&#x26a0;&#xfe0f;</span>
+                    <span id="err-spike-text"></span>
+                </div>
+
+                <!-- Error Trends Chart -->
+                <div class="card">
+                    <div class="card-header-row">
+                        <h3>Error Trends</h3>
+                        <div class="chart-controls">
+                            <select class="input input-small" id="err-range-select">
+                                <option value="1">24h</option>
+                                <option value="7" selected>7d</option>
+                                <option value="30">30d</option>
+                            </select>
+                            <select class="input input-small" id="err-group-select">
+                                <option value="severity" selected>By Severity</option>
+                                <option value="type">By Type</option>
+                                <option value="total">Total</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="chart-container" id="err-chart-container">
+                        <div class="empty-state">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Top Errors Table -->
+                <div class="card">
+                    <h3>Top Errors</h3>
+                    <div class="rules-table-wrapper">
+                        <table class="rules-table" id="err-top-table">
+                            <thead>
+                                <tr>
+                                    <th>Error</th>
+                                    <th>Type</th>
+                                    <th>Severity</th>
+                                    <th>Count</th>
+                                    <th>Last Seen</th>
+                                </tr>
+                            </thead>
+                            <tbody id="err-top-tbody"></tbody>
+                        </table>
+                        <div class="empty-state" id="err-top-empty">No errors recorded yet.</div>
+                    </div>
+                </div>
+
+                <!-- Severity Breakdown -->
+                <div class="card">
+                    <h3>Severity Breakdown</h3>
+                    <div id="err-severity-bars" class="severity-bars"></div>
+                </div>
+
+                <!-- Agent Action History -->
+                <div class="card">
+                    <div class="card-header-row">
+                        <h3>Agent Action History</h3>
+                        <div class="chart-controls">
+                            <select class="input input-small" id="action-type-filter">
+                                <option value="">All Types</option>
+                                <option value="perception_capture">Perception Capture</option>
+                                <option value="issue_created">Issue Created</option>
+                                <option value="issue_updated">Issue Updated</option>
+                                <option value="session_start">Session Start</option>
+                                <option value="session_end">Session End</option>
+                            </select>
+                            <select class="input input-small" id="action-range-select">
+                                <option value="7">7d</option>
+                                <option value="30" selected>30d</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Action Summary -->
+                    <div class="action-summary" id="action-summary"></div>
+
+                    <!-- Action List -->
+                    <div class="action-list" id="action-list">
+                        <div class="empty-state">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Quality Report -->
+                <div class="card">
+                    <div class="card-header-row">
+                        <h3>Quality Report</h3>
+                        <div class="chart-controls">
+                            <select class="input input-small" id="quality-range-select">
+                                <option value="7">7d</option>
+                                <option value="30" selected>30d</option>
+                                <option value="90">90d</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="quality-grid" id="quality-grid">
+                        <div class="quality-card">
+                            <div class="quality-value" id="q-mttr">&mdash;</div>
+                            <div class="quality-label">MTTR</div>
+                            <div class="quality-desc">Mean Time to Resolution</div>
+                        </div>
+                        <div class="quality-card">
+                            <div class="quality-value" id="q-autofix">&mdash;</div>
+                            <div class="quality-label">Issue Filing Rate</div>
+                            <div class="quality-desc">Issues filed to issue tracker</div>
+                        </div>
+                        <div class="quality-card">
+                            <div class="quality-value" id="q-recurrence">&mdash;</div>
+                            <div class="quality-label">Recurrence Rate</div>
+                            <div class="quality-desc">Errors seen more than once</div>
+                        </div>
+                        <div class="quality-card">
+                            <div class="quality-value" id="q-coverage">&mdash;</div>
+                            <div class="quality-label">Coverage</div>
+                            <div class="quality-desc">Sites monitored</div>
+                        </div>
+                    </div>
+
+                    <!-- Trend Comparison -->
+                    <h4 class="quality-section-heading">Volume Trend</h4>
+                    <div class="quality-comparison" id="quality-comparison"></div>
+
+                    <!-- Detail Stats -->
+                    <div class="quality-details" id="quality-details"></div>
                 </div>
             </section>
 

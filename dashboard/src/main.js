@@ -18,6 +18,9 @@ import {
     syncLoginToExtension, syncLogoutToExtension, getAuthFromExtension,
     previewIssues, batchFileIssues,
     getPassiveMonitorSettings, setPassiveMonitorSettings,
+    getErrorTrends,
+    getAgentActions,
+    getQualityReport,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -140,6 +143,8 @@ function switchTab(tab) {
     const panel = document.getElementById(`tab-${tab}`);
     if (panel) panel.classList.add('active');
     location.hash = tab;
+    // Lazy-load monitoring tab on first activation (#87)
+    if (tab === 'monitoring') loadMonitoring();
 }
 
 navItems.forEach(item => {
@@ -1262,6 +1267,498 @@ async function loadAbout() {
     } else {
         latestEl.textContent = '\u2014';
     }
+}
+
+// ------------------------------------------------------------------ Monitoring (#87)
+
+const SEVERITY_COLORS = {
+    error: '#ef4444',
+    warning: '#f59e0b',
+    info: '#3b82f6',
+    critical: '#dc2626',
+};
+
+let monitoringLoaded = false;
+
+async function loadMonitoring() {
+    if (monitoringLoaded) return;
+    monitoringLoaded = true;
+
+    document.getElementById('err-range-select').addEventListener('change', () => fetchErrorTrends());
+    document.getElementById('err-group-select').addEventListener('change', () => fetchErrorTrends());
+    document.getElementById('action-type-filter').addEventListener('change', () => fetchAgentActions());
+    document.getElementById('action-range-select').addEventListener('change', () => fetchAgentActions());
+    document.getElementById('quality-range-select').addEventListener('change', () => fetchQualityReport());
+    document.getElementById('btn-export-csv').addEventListener('click', exportMonitoringCSV);
+    document.getElementById('btn-export-pdf').addEventListener('click', exportMonitoringPDF);
+
+    fetchErrorTrends();
+    fetchAgentActions();
+    fetchQualityReport();
+}
+
+async function fetchErrorTrends() {
+    const days = parseInt(document.getElementById('err-range-select').value, 10) || 7;
+    const group_by = document.getElementById('err-group-select').value || 'severity';
+
+    document.getElementById('err-chart-container').innerHTML =
+        '<div class="empty-state"><span class="loading-spinner"></span>Loading error trends...</div>';
+
+    try {
+        const data = await getErrorTrends({ days, group_by });
+        renderErrorSummary(data.summary);
+        renderErrorChart(data.trends, data.summary, group_by);
+        renderTopErrors(data.summary.topFingerprints || []);
+        renderSeverityBars(data.summary.bySeverity || []);
+    } catch {
+        document.getElementById('err-chart-container').innerHTML =
+            '<div class="empty-state"><div class="empty-state-icon">&#x26a0;&#xfe0f;</div>Failed to load error trends</div>';
+    }
+}
+
+function renderErrorSummary(summary) {
+    document.getElementById('err-total').textContent = summary.total || 0;
+    document.getElementById('err-last24h').textContent = summary.last24h || 0;
+    document.getElementById('err-types').textContent = (summary.byType || []).length;
+
+    const topSev = (summary.bySeverity || [])[0];
+    document.getElementById('err-top-severity').textContent = topSev ? topSev.severity : 'none';
+
+    // Spike detection
+    const isSpike = summary.spikeRatio > 2 && summary.last24h > 5;
+
+    const spikeAlert = document.getElementById('err-spike-alert');
+    if (isSpike) {
+        document.getElementById('err-spike-text').textContent =
+            `Error spike detected: ${summary.last24h} errors in last 24h (${summary.spikeRatio.toFixed(1)}x above average)`;
+        spikeAlert.style.display = 'flex';
+    } else {
+        spikeAlert.style.display = 'none';
+    }
+
+    document.getElementById('err-spike-card').style.borderColor = isSpike ? 'var(--danger)' : '';
+}
+
+function renderErrorChart(trends, summary, groupBy) {
+    const container = document.getElementById('err-chart-container');
+
+    if (!trends || trends.length === 0) {
+        container.innerHTML = '<div class="empty-state">No error data for this period</div>';
+        return;
+    }
+
+    // Collect unique periods and groups
+    const periods = [...new Set(trends.map(t => t.period))].sort();
+    const groups = groupBy === 'total'
+        ? ['total']
+        : [...new Set(trends.map(t => t.group_value || 'unknown'))];
+
+    // Build data matrix: groups x periods -> count
+    const matrix = {};
+    for (const g of groups) matrix[g] = {};
+    for (const t of trends) {
+        const g = groupBy === 'total' ? 'total' : (t.group_value || 'unknown');
+        matrix[g][t.period] = (matrix[g][t.period] || 0) + t.count;
+    }
+
+    // Find max value for scaling
+    let maxVal = 0;
+    for (const g of groups) {
+        for (const p of periods) {
+            maxVal = Math.max(maxVal, matrix[g][p] || 0);
+        }
+    }
+    if (maxVal === 0) maxVal = 1;
+
+    // SVG chart dimensions
+    const W = 720;
+    const H = 240;
+    const padL = 48;
+    const padR = 16;
+    const padT = 16;
+    const padB = 40;
+    const chartW = W - padL - padR;
+    const chartH = H - padT - padB;
+
+    const barGroupW = chartW / periods.length;
+    const barW = Math.max(4, Math.min(24, (barGroupW - 4) / groups.length));
+
+    // Y-axis ticks
+    const yTicks = 4;
+    const yStep = Math.ceil(maxVal / yTicks);
+
+    let svg = `<svg viewBox="0 0 ${W} ${H}" class="err-chart-svg">`;
+
+    // Grid lines + Y labels
+    for (let i = 0; i <= yTicks; i++) {
+        const val = i * yStep;
+        const y = padT + chartH - (val / (yStep * yTicks)) * chartH;
+        svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="var(--border)" stroke-dasharray="4,4"/>`;
+        svg += `<text x="${padL - 8}" y="${y + 4}" text-anchor="end" fill="var(--text-muted)" font-size="11">${val}</text>`;
+    }
+
+    // Bars
+    for (let pi = 0; pi < periods.length; pi++) {
+        const period = periods[pi];
+        const groupX = padL + pi * barGroupW + barGroupW / 2;
+
+        for (let gi = 0; gi < groups.length; gi++) {
+            const g = groups[gi];
+            const val = matrix[g][period] || 0;
+            const barH = (val / (yStep * yTicks)) * chartH;
+            const x = groupX - (groups.length * barW) / 2 + gi * barW;
+            const y = padT + chartH - barH;
+            const color = SEVERITY_COLORS[g] || getGroupColor(gi);
+
+            svg += `<rect x="${x}" y="${y}" width="${barW - 1}" height="${barH}" fill="${color}" rx="2">`;
+            svg += `<title>${escHtml(g)}: ${val} on ${escHtml(period)}</title>`;
+            svg += `</rect>`;
+        }
+
+        // X-axis label
+        const label = period.length > 5 ? period.slice(5) : period; // Show MM-DD
+        svg += `<text x="${groupX}" y="${H - 8}" text-anchor="middle" fill="var(--text-muted)" font-size="10">${escHtml(label)}</text>`;
+    }
+
+    svg += '</svg>';
+
+    // Legend
+    let legend = '<div class="chart-legend">';
+    for (let gi = 0; gi < groups.length; gi++) {
+        const g = groups[gi];
+        const color = SEVERITY_COLORS[g] || getGroupColor(gi);
+        legend += `<span class="legend-item"><span class="legend-dot" style="background:${color}"></span>${escHtml(g)}</span>`;
+    }
+    legend += '</div>';
+
+    container.innerHTML = svg + legend;
+}
+
+function getGroupColor(index) {
+    const palette = ['#5865f2', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+    return palette[index % palette.length];
+}
+
+function renderTopErrors(topFingerprints) {
+    const tbody = document.getElementById('err-top-tbody');
+    const empty = document.getElementById('err-top-empty');
+
+    if (!topFingerprints || topFingerprints.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+    }
+
+    empty.style.display = 'none';
+    tbody.innerHTML = topFingerprints.map(fp => `
+        <tr>
+            <td class="err-msg-cell" title="${escHtml(fp.fingerprint)}">${escHtml((fp.message || '').slice(0, 80))}</td>
+            <td>${escHtml(fp.type || 'unknown')}</td>
+            <td><span class="severity-badge severity-${escHtml(fp.severity)}">${escHtml(fp.severity)}</span></td>
+            <td>${Number(fp.count)}</td>
+            <td>${fp.last_seen ? new Date(fp.last_seen).toLocaleString() : '\u2014'}</td>
+        </tr>
+    `).join('');
+}
+
+function renderSeverityBars(bySeverity) {
+    const container = document.getElementById('err-severity-bars');
+    if (!bySeverity || bySeverity.length === 0) {
+        container.innerHTML = '<div class="empty-state">No data</div>';
+        return;
+    }
+
+    const maxCount = Math.max(...bySeverity.map(s => s.count));
+    container.innerHTML = bySeverity.map(s => {
+        const pct = maxCount > 0 ? (s.count / maxCount) * 100 : 0;
+        const color = SEVERITY_COLORS[s.severity] || '#888';
+        return `
+            <div class="severity-bar-row">
+                <span class="severity-bar-label">${escHtml(s.severity)}</span>
+                <div class="severity-bar-track">
+                    <div class="severity-bar-fill" style="width:${pct}%;background:${color}"></div>
+                </div>
+                <span class="severity-bar-count">${s.count}</span>
+            </div>`;
+    }).join('');
+}
+
+// ------------------------------------------------------------------ Agent Actions (#87 Phase 2)
+
+const ACTION_ICONS = {
+    perception_capture: '\ud83d\udc41\ufe0f',
+    issue_created: '\ud83d\udce2',
+    issue_updated: '\ud83d\udd04',
+    session_start: '\u25b6\ufe0f',
+    session_end: '\u23f9\ufe0f',
+};
+
+const ACTION_LABELS = {
+    perception_capture: 'Perception Capture',
+    issue_created: 'Issue Created',
+    issue_updated: 'Issue Updated',
+    session_start: 'Session Start',
+    session_end: 'Session End',
+};
+
+async function fetchAgentActions() {
+    const days = parseInt(document.getElementById('action-range-select').value, 10) || 30;
+    const action_type = document.getElementById('action-type-filter').value || '';
+
+    document.getElementById('action-list').innerHTML =
+        '<div class="empty-state"><span class="loading-spinner"></span>Loading actions...</div>';
+
+    try {
+        const params = { days };
+        if (action_type) params.action_type = action_type;
+        const data = await getAgentActions(params);
+        renderActionSummary(action_type ? [] : (data.summary || []));
+        renderActionList(data.actions || []);
+    } catch {
+        document.getElementById('action-list').innerHTML =
+            '<div class="empty-state"><div class="empty-state-icon">&#x26a0;&#xfe0f;</div>Failed to load agent actions</div>';
+    }
+}
+
+function renderActionSummary(summary) {
+    const container = document.getElementById('action-summary');
+    if (!summary || summary.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = summary.map(s => {
+        const icon = ACTION_ICONS[s.action_type] || '\u2022';
+        const label = ACTION_LABELS[s.action_type] || s.action_type;
+        return `<span class="action-summary-badge">${icon} ${escHtml(label)}: <strong>${Number(s.count)}</strong></span>`;
+    }).join('');
+}
+
+function renderActionList(actions) {
+    const container = document.getElementById('action-list');
+    if (!actions || actions.length === 0) {
+        container.innerHTML = '<div class="empty-state">No agent actions recorded yet</div>';
+        return;
+    }
+
+    container.innerHTML = actions.map(a => {
+        const icon = ACTION_ICONS[a.action_type] || '\u2022';
+        const label = ACTION_LABELS[a.action_type] || a.action_type;
+        const time = a.created_at ? new Date(a.created_at).toLocaleString() : '';
+        const statusClass = a.status === 'success' ? 'action-status-ok' : 'action-status-fail';
+        return `
+            <div class="action-item">
+                <span class="action-icon">${icon}</span>
+                <div class="action-body">
+                    <div class="action-title">${escHtml(a.summary)}</div>
+                    <div class="action-meta">
+                        <span class="action-type-badge">${escHtml(label)}</span>
+                        ${a.agent_id ? `<span class="action-agent">Agent: ${escHtml(a.agent_id.slice(0, 12))}</span>` : ''}
+                        <span class="${statusClass}">${escHtml(a.status)}</span>
+                        <span class="action-time">${escHtml(time)}</span>
+                    </div>
+                </div>
+            </div>`;
+    }).join('');
+}
+
+// ------------------------------------------------------------------ Quality Report (#87 Phase 3)
+
+async function fetchQualityReport() {
+    const days = parseInt(document.getElementById('quality-range-select').value, 10) || 30;
+
+    try {
+        const data = await getQualityReport({ days });
+        renderQualityReport(data.report, days);
+    } catch {
+        document.getElementById('quality-details').innerHTML =
+            '<div class="empty-state">Failed to load quality report</div>';
+    }
+}
+
+function formatHours(hours) {
+    if (!hours || hours === 0) return '\u2014';
+    if (hours < 1) return `${Math.round(hours * 60)}m`;
+    if (hours < 24) return `${hours.toFixed(1)}h`;
+    return `${(hours / 24).toFixed(1)}d`;
+}
+
+function renderTrendArrow(pct) {
+    if (!pct || Math.abs(pct) < 1) return '<span class="trend-neutral">\u2014</span>';
+    const arrow = pct > 0 ? '\u2191' : '\u2193';
+    // For errors, down is good; for coverage, up is good
+    const cls = pct > 0 ? 'trend-up' : 'trend-down';
+    return `<span class="${cls}">${arrow} ${Math.abs(Math.round(pct))}%</span>`;
+}
+
+function renderQualityReport(report, days) {
+    // MTTR
+    const mttrEl = document.getElementById('q-mttr');
+    mttrEl.textContent = formatHours(report.mttr.avgHours);
+
+    // Auto-fix rate
+    const autofixEl = document.getElementById('q-autofix');
+    autofixEl.textContent = report.autoFixRate + '%';
+
+    // Recurrence rate
+    const recurrenceEl = document.getElementById('q-recurrence');
+    recurrenceEl.textContent = report.recurrenceRate + '%';
+
+    // Coverage
+    const coverageEl = document.getElementById('q-coverage');
+    coverageEl.textContent = report.coverage + ' sites';
+
+    // Comparison
+    const compEl = document.getElementById('quality-comparison');
+    const c = report.comparison;
+    const halfLabel = days <= 7 ? 'vs prior half' : `vs prior ${Math.floor(days / 2)}d`;
+    compEl.innerHTML = `
+        <div class="comparison-row">
+            <span class="comparison-label">Errors ${halfLabel}</span>
+            <span class="comparison-values">${Number(c.currentErrors)} current / ${Number(c.priorErrors)} prior</span>
+            ${renderTrendArrow(c.errorTrend)}
+        </div>
+        <div class="comparison-row">
+            <span class="comparison-label">Issues ${halfLabel}</span>
+            <span class="comparison-values">${Number(c.currentIssues)} current / ${Number(c.priorIssues)} prior</span>
+            ${renderTrendArrow(c.issueTrend)}
+        </div>`;
+
+    // Details
+    const detailsEl = document.getElementById('quality-details');
+    detailsEl.innerHTML = `
+        <div class="quality-detail-grid">
+            <div class="quality-detail">
+                <span class="detail-label">Resolved issues</span>
+                <span class="detail-value">${Number(report.resolvedCount)} / ${Number(report.totalIssues)}</span>
+            </div>
+            <div class="quality-detail">
+                <span class="detail-label">Issues filed to tracker</span>
+                <span class="detail-value">${Number(report.filedCount)} / ${Number(report.totalIssues)}</span>
+            </div>
+            <div class="quality-detail">
+                <span class="detail-label">Recurring fingerprints</span>
+                <span class="detail-value">${Number(report.recurringFingerprints)} / ${Number(report.totalFingerprints)}</span>
+            </div>
+            <div class="quality-detail">
+                <span class="detail-label">MTTR resolved count</span>
+                <span class="detail-value">${Number(report.mttr.resolvedCount)}</span>
+            </div>
+        </div>`;
+}
+
+// ------------------------------------------------------------------ Export (#87 Phase 4)
+
+function exportMonitoringCSV() {
+    const rows = [['Section', 'Metric', 'Value']];
+
+    // Error summary from stat cards
+    rows.push(['Error Summary', 'Total Errors', document.getElementById('err-total').textContent]);
+    rows.push(['Error Summary', 'Last 24h', document.getElementById('err-last24h').textContent]);
+    rows.push(['Error Summary', 'Error Types', document.getElementById('err-types').textContent]);
+    rows.push(['Error Summary', 'Top Severity', document.getElementById('err-top-severity').textContent]);
+
+    // Top errors from table
+    const topRows = document.querySelectorAll('#err-top-tbody tr');
+    topRows.forEach(tr => {
+        const cells = tr.querySelectorAll('td');
+        if (cells.length >= 4) {
+            rows.push(['Top Errors', cells[0].textContent.trim(), `${cells[1].textContent} | ${cells[2].textContent} | count:${cells[3].textContent}`]);
+        }
+    });
+
+    // Quality metrics
+    rows.push(['Quality', 'MTTR', document.getElementById('q-mttr').textContent]);
+    rows.push(['Quality', 'Issue Filing Rate', document.getElementById('q-autofix').textContent]);
+    rows.push(['Quality', 'Recurrence Rate', document.getElementById('q-recurrence').textContent]);
+    rows.push(['Quality', 'Coverage', document.getElementById('q-coverage').textContent]);
+
+    // Build CSV with formula injection protection
+    const csvSafe = (s) => {
+        s = String(s).replace(/"/g, '""');
+        if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+        return `"${s}"`;
+    };
+    const csv = rows.map(r => r.map(csvSafe).join(',')).join('\n');
+    downloadFile('clawmark-monitoring-report.csv', csv, 'text/csv');
+}
+
+function exportMonitoringPDF() {
+    // Generate a printable HTML report and open in new window for print-to-PDF
+    const title = 'ClawMark Monitoring Report';
+    const date = new Date().toLocaleString();
+
+    const errTotal = document.getElementById('err-total').textContent;
+    const errLast24h = document.getElementById('err-last24h').textContent;
+    const errTypes = document.getElementById('err-types').textContent;
+    const topSev = document.getElementById('err-top-severity').textContent;
+
+    const mttr = document.getElementById('q-mttr').textContent;
+    const autofix = document.getElementById('q-autofix').textContent;
+    const recurrence = document.getElementById('q-recurrence').textContent;
+    const coverage = document.getElementById('q-coverage').textContent;
+
+    // Grab top errors table HTML
+    const topTable = document.getElementById('err-top-table');
+    const topTableHtml = topTable ? topTable.outerHTML : '';
+
+    // Grab quality details
+    const qualityDetails = document.getElementById('quality-details');
+    const qualityHtml = qualityDetails ? qualityDetails.innerHTML : '';
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>${escHtml(title)}</title>
+<style>
+body{font-family:-apple-system,sans-serif;padding:40px;color:#333;max-width:800px;margin:0 auto;}
+h1{font-size:24px;margin-bottom:4px;}
+.date{color:#666;font-size:13px;margin-bottom:24px;}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:16px 0;}
+.card{text-align:center;padding:16px;border:1px solid #ddd;border-radius:8px;}
+.card .val{font-size:28px;font-weight:700;color:#111;}
+.card .lbl{font-size:13px;color:#666;margin-top:4px;}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;}
+th,td{padding:8px 12px;border:1px solid #ddd;text-align:left;}
+th{background:#f5f5f5;font-weight:600;}
+h2{margin-top:32px;font-size:18px;}
+@media print{body{padding:20px;}}
+</style></head><body>
+<h1>${escHtml(title)}</h1>
+<div class="date">Generated: ${escHtml(date)}</div>
+<h2>Error Summary</h2>
+<div class="grid">
+<div class="card"><div class="val">${escHtml(errTotal)}</div><div class="lbl">Total Errors</div></div>
+<div class="card"><div class="val">${escHtml(errLast24h)}</div><div class="lbl">Last 24h</div></div>
+<div class="card"><div class="val">${escHtml(errTypes)}</div><div class="lbl">Error Types</div></div>
+<div class="card"><div class="val">${escHtml(topSev)}</div><div class="lbl">Top Severity</div></div>
+</div>
+<h2>Top Errors</h2>
+${topTableHtml}
+<h2>Quality Metrics</h2>
+<div class="grid">
+<div class="card"><div class="val">${escHtml(mttr)}</div><div class="lbl">MTTR</div></div>
+<div class="card"><div class="val">${escHtml(autofix)}</div><div class="lbl">Issue Filing Rate</div></div>
+<div class="card"><div class="val">${escHtml(recurrence)}</div><div class="lbl">Recurrence Rate</div></div>
+<div class="card"><div class="val">${escHtml(coverage)}</div><div class="lbl">Coverage</div></div>
+</div>
+<h2>Details</h2>
+${qualityHtml}
+<script>window.print();</script>
+</body></html>`;
+
+    // Open in null origin via Blob URL to prevent XSS from DOM-scraped content
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function downloadFile(filename, content, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 // ------------------------------------------------------------------ start

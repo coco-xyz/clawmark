@@ -121,6 +121,10 @@ const { HxaConnectAdapter } = require('./adapters/hxa-connect');
 const { GitLabIssueAdapter } = require('./adapters/gitlab-issue');
 const { resolveTarget, resolveTargets } = require('./routing');
 const { autoSeverity } = require('./severity');
+const { hashKey, generateAgentKey, createAgentAuth } = require('./agent-auth');
+const { initActionWs } = require('./ws-actions');
+const { initCdpWs } = require('./ws-cdp');
+const { dispatchPerceptionWebhooks, retryFailedDeliveries } = require('./webhook-dispatcher');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
 
@@ -178,7 +182,7 @@ if (ALLOWED_ORIGINS.length) {
         if (origin && ALLOWED_ORIGINS.includes(origin)) {
             res.setHeader('Access-Control-Allow-Origin', origin);
             res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Agent-Key');
             res.setHeader('Access-Control-Allow-Credentials', 'true');
             if (req.method === 'OPTIONS') return res.sendStatus(204);
         }
@@ -225,6 +229,14 @@ const uploadLimiter = rateLimit({
     message: { error: 'Upload rate limit exceeded' },
 });
 
+const agentRegisterLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Agent registration rate limit exceeded' },
+});
+
 // ---------------------------------------------------------------------- multer
 
 const upload = multer({
@@ -251,7 +263,7 @@ const defaultGitHubTarget = config.distribution?.channels?.['github-clawmark']
         labels: config.distribution.channels['github-clawmark'].labels || ['clawmark'],
         assignees: config.distribution.channels['github-clawmark'].assignees || [],
     }
-    : { repo: 'coco-xyz/clawmark', labels: ['clawmark'], assignees: [] };
+    : null;
 
 /**
  * Dispatch event through the adapter registry (fire-and-forget).
@@ -324,21 +336,42 @@ async function sendWebhook(event, payload) {
             delete payload._selected_targets;
         }
 
+        // Filter out no_target entries — nothing to dispatch
+        filteredTargets = filteredTargets.filter(t => t.target_type && t.target_config);
+
+        if (filteredTargets.length === 0) {
+            console.log(`[routing] ${event}: no targets resolved — skipping dispatch`);
+            return [{ target_type: null, status: 'skipped', method: 'no_target' }];
+        }
+
         // Inject auth credentials from user_auths into targets that reference an auth_id.
         // Use spread to create a new object — the original target_config must stay clean
         // because dispatchToTargets serializes it into dispatch_log.
+        // #264: Skip targets whose auth_id is missing instead of dispatching with incomplete config.
+        const authValidTargets = [];
         for (const t of filteredTargets) {
             if (t.matched_rule && t.matched_rule.auth_id) {
-                const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
+                let auth;
+                try { auth = itemsDb.getUserAuth(t.matched_rule.auth_id); } catch (err) {
+                    console.error(`[routing] DB error fetching auth ${t.matched_rule.auth_id}: ${err.message}`);
+                    continue;
+                }
                 if (auth) {
                     let creds;
                     try { creds = typeof auth.credentials === 'string' ? JSON.parse(auth.credentials) : auth.credentials; } catch { creds = {}; }
                     t.target_config = { ...t.target_config, ...creds };
+                    authValidTargets.push(t);
                 } else {
-                    console.warn(`[routing] Auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
+                    console.warn(`[routing] Skipping target: auth ${t.matched_rule.auth_id} referenced by rule ${t.matched_rule.id} not found`);
                 }
+            } else {
+                authValidTargets.push(t);
             }
         }
+        if (filteredTargets.length > authValidTargets.length) {
+            console.warn(`[routing] ${filteredTargets.length - authValidTargets.length} of ${filteredTargets.length} targets dropped due to missing auth`);
+        }
+        filteredTargets = authValidTargets;
 
         // Inject ClawMark server URL for adapters that need to resolve relative image paths (#45)
         if (PUBLIC_URL) {
@@ -822,6 +855,21 @@ function v2Auth(req, res, next) {
         return res.status(401).json({ error: 'Invalid token' });
     }
     return res.status(401).json({ error: 'Authentication required (JWT or API key)' });
+}
+
+// -- Agent key auth middleware (#68)
+const agentAuth = createAgentAuth(itemsDb);
+
+// Combined middleware: accept either v2Auth (JWT/API key) or agent key
+function v2AuthOrAgent(req, res, next) {
+    if (req.headers['x-agent-key']) {
+        return agentAuth(req, res, () => {
+            // Map agent to v2Auth-compatible shape so perception handlers work
+            req.v2Auth = { app_id: req.agent.app_id, user_name: `agent:${req.agent.id}`, agent: req.agent };
+            next();
+        });
+    }
+    v2Auth(req, res, next);
 }
 
 // -- GET /api/v2/user/settings — get current user's settings
@@ -1447,27 +1495,58 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
         declaration,
     });
 
+    // #264: Validate auth_id references — filter out targets whose auth credentials are missing
+    const totalBeforeFilter = targets.length;
+    const validatedTargets = targets.filter(t => {
+        if (t.matched_rule && t.matched_rule.auth_id) {
+            try {
+                const auth = itemsDb.getUserAuth(t.matched_rule.auth_id);
+                if (!auth) {
+                    console.warn(`[routing/resolve] Dropping target: auth ${t.matched_rule.auth_id} from rule ${t.matched_rule.id} not found`);
+                    return false;
+                }
+            } catch (err) {
+                console.error(`[routing/resolve] DB error checking auth ${t.matched_rule.auth_id}: ${err.message}`);
+                return false;
+            }
+        }
+        return true;
+    });
+    const droppedCount = totalBeforeFilter - validatedTargets.length;
+    if (droppedCount > 0) {
+        console.warn(`[routing/resolve] ${droppedCount} of ${totalBeforeFilter} targets dropped due to missing auth`);
+    }
+
     // Include recent targets for recommendation (#48)
     const appId = req.v2Auth?.app_id;
     let recentTargets = [];
     if (user && appId) {
         try {
-            recentTargets = itemsDb.getRecentTargets(user, appId, 5).map(r => {
-                let config;
-                try { config = JSON.parse(r.target_config); } catch { config = {}; }
-                return {
-                    target_type: r.target_type,
-                    target_config: redactConfig(config),
-                    auth_id: r.auth_id,
-                    last_used: r.last_used,
-                    use_count: r.use_count,
-                };
-            });
+            recentTargets = itemsDb.getRecentTargets(user, appId, 5)
+                .filter(r => {
+                    // #264: Skip recent targets with missing auth
+                    if (r.auth_id) {
+                        try { if (!itemsDb.getUserAuth(r.auth_id)) return false; }
+                        catch { return false; }
+                    }
+                    return true;
+                })
+                .map(r => {
+                    let config;
+                    try { config = JSON.parse(r.target_config); } catch { config = {}; }
+                    return {
+                        target_type: r.target_type,
+                        target_config: redactConfig(config),
+                        auth_id: r.auth_id,
+                        last_used: r.last_used,
+                        use_count: r.use_count,
+                    };
+                });
         } catch { /* non-critical */ }
     }
 
     res.json({
-        targets: targets.map(t => ({
+        targets: validatedTargets.filter(t => t.target_type && t.target_config).map(t => ({
             target_type: t.target_type,
             target_config: redactConfig(
                 typeof t.target_config === 'string' ? JSON.parse(t.target_config) : t.target_config
@@ -1773,6 +1852,58 @@ app.get('/api/v2/analytics/hot-topics', apiReadLimiter, v2Auth, (req, res) => {
 
     const hotTopics = itemsDb.getHotTopics({ app_id, hours, threshold, allApps: false });
     res.json(hotTopics);
+});
+
+// -- GET /api/v2/analytics/quality-report — quality metrics (#87)
+app.get('/api/v2/analytics/quality-report', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 30));
+
+    try {
+        const report = itemsDb.getQualityReport({ app_id, days });
+        res.json({ report, days });
+    } catch (err) {
+        console.error('[analytics] quality-report error:', err.message);
+        res.status(500).json({ error: 'Failed to compute quality report' });
+    }
+});
+
+// -- GET /api/v2/analytics/agent-actions — agent action history (#87)
+app.get('/api/v2/analytics/agent-actions', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 30));
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 100));
+    const agent_id = req.query.agent_id || null;
+    const action_type = req.query.action_type || null;
+
+    try {
+        const actions = itemsDb.getAgentActions({ app_id, agent_id, action_type, days, limit });
+        const summary = itemsDb.getAgentActionSummary({ app_id, days });
+        res.json({ actions, summary, days });
+    } catch (err) {
+        console.error('[analytics] agent-actions error:', err.message);
+        res.status(500).json({ error: 'Failed to query agent actions' });
+    }
+});
+
+// -- GET /api/v2/analytics/error-trends — perception error time series (#87)
+app.get('/api/v2/analytics/error-trends', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 7));
+    const group_by = ['severity', 'type', 'total'].includes(req.query.group_by) ? req.query.group_by : 'severity';
+
+    try {
+        const trends = itemsDb.getErrorTrends({ app_id, days, group_by });
+        const summary = itemsDb.getErrorSummary({ app_id, days });
+        res.json({ trends, summary, days, group_by });
+    } catch (err) {
+        console.error('[analytics] error-trends error:', err.message);
+        res.status(500).json({ error: 'Failed to query error trends' });
+    }
 });
 
 // -- GET /api/v2/analytics/clusters — AI-powered annotation clustering
@@ -2344,6 +2475,773 @@ app.get('/stats', v2Auth, (req, res) => {
     res.json({ stats });
 });
 
+// ----------------------------------------------------------------- agent channel (#69 Error Sentinel)
+
+// POST /api/v2/agent-channel/perception — upload perception events from extension
+app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { events } = req.body;
+    if (!Array.isArray(events) || events.length === 0) {
+        return res.status(400).json({ error: 'events must be a non-empty array' });
+    }
+    if (events.length > 100) {
+        return res.status(400).json({ error: 'Max 100 events per request' });
+    }
+
+    const agent_id = req.agent?.id || null;
+    const enriched = events.map(e => ({
+        app_id,
+        agent_id,
+        type: e.type || 'unknown',
+        message: (e.message || '').slice(0, 4096),
+        stack: (e.stack || '').slice(0, 8192) || null,
+        source: (e.source || '').slice(0, 2048) || null,
+        line: e.line || null,
+        severity: e.severity || 'error',
+        url: (e.url || '').slice(0, 2048) || null,
+        fingerprint: e.fingerprint || '',
+        context: e.context || {},
+    }));
+
+    // Reject events without fingerprints
+    const valid = enriched.filter(e => e.fingerprint);
+    if (valid.length === 0) {
+        return res.status(400).json({ error: 'All events missing fingerprint' });
+    }
+
+    try {
+        const results = itemsDb.createPerceptionEvents(valid);
+        // Log action (#87)
+        try {
+            itemsDb.logAgentAction({
+                app_id,
+                agent_id: req.v2Auth?.agent_id || null,
+                action_type: 'perception_capture',
+                summary: `Captured ${results.length} error event(s)`,
+                metadata: { count: results.length },
+            });
+        } catch { /* non-critical */ }
+
+        // Trigger webhooks for P0/P1 events (#88)
+        const highSeverity = valid.filter(e => e.severity === 'P0' || e.severity === 'P1');
+        if (highSeverity.length > 0) {
+            // Non-blocking: dispatch in background
+            setImmediate(() => {
+                for (const event of highSeverity) {
+                    const issue = itemsDb.getPerceptionIssue({ app_id, fingerprint: event.fingerprint });
+                    dispatchPerceptionWebhooks(itemsDb, event, issue, app_id).catch(err => {
+                        console.error('[webhook] Dispatch error:', err.message);
+                    });
+                }
+            });
+        }
+
+        res.json({ created: results.length, events: results });
+    } catch (err) {
+        console.error('[agent-channel] perception POST error:', err.message);
+        res.status(500).json({ error: 'Failed to store events' });
+    }
+});
+
+// GET /api/v2/agent-channel/perception — query perception events (agent consumer)
+app.get('/api/v2/agent-channel/perception', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const cursor = req.query.cursor || null;
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const agent_id = req.query.agent_id || (req.agent?.id) || null;
+    const severity = req.query.severity || null;
+    const url = req.query.url || null;
+    const since = req.query.since || null;
+    const until = req.query.until || null;
+
+    try {
+        const events = itemsDb.getPerceptionEvents({ app_id, agent_id, cursor, severity, url, since, until, limit });
+        const nextCursor = events.length > 0 ? events[events.length - 1].created_at : cursor;
+        res.json({ events, cursor: nextCursor, count: events.length });
+    } catch (err) {
+        console.error('[agent-channel] perception GET error:', err.message);
+        res.status(500).json({ error: 'Failed to query events' });
+    }
+});
+
+// GET /api/v2/agent-channel/perception/stats — aggregated error stats by fingerprint
+app.get('/api/v2/agent-channel/perception/stats', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    try {
+        const stats = itemsDb.getPerceptionStats({ app_id, limit });
+        res.json({ stats });
+    } catch (err) {
+        console.error('[agent-channel] perception stats error:', err.message);
+        res.status(500).json({ error: 'Failed to query stats' });
+    }
+});
+
+// GET /api/v2/agent-channel/perception/issues — tracked perception issues
+app.get('/api/v2/agent-channel/perception/issues', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const issues = itemsDb.getOpenPerceptionIssues({ app_id });
+        res.json({ issues });
+    } catch (err) {
+        console.error('[agent-channel] perception issues error:', err.message);
+        res.status(500).json({ error: 'Failed to query issues' });
+    }
+});
+
+// POST /api/v2/agent-channel/perception/issues — upsert a tracked issue (agent creates after dedup)
+app.post('/api/v2/agent-channel/perception/issues', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { fingerprint, count, first_seen, last_seen, gitlab_issue_id, gitlab_issue_url } = req.body;
+    if (!fingerprint) return res.status(400).json({ error: 'fingerprint required' });
+
+    try {
+        const result = itemsDb.upsertPerceptionIssue({
+            app_id, fingerprint, count, first_seen, last_seen,
+            gitlab_issue_id, gitlab_issue_url,
+        });
+        // Log action (#87)
+        try {
+            const actionType = result.updated ? 'issue_updated' : 'issue_created';
+            itemsDb.logAgentAction({
+                app_id,
+                agent_id: req.v2Auth?.agent_id || null,
+                action_type: actionType,
+                target_type: 'perception_issue',
+                target_id: fingerprint,
+                summary: result.updated
+                    ? `Updated issue for ${fingerprint.slice(0, 20)}`
+                    : `Created issue for ${fingerprint.slice(0, 20)}`,
+                metadata: { gitlab_issue_url: gitlab_issue_url || null },
+            });
+        } catch { /* non-critical */ }
+        res.json(result);
+    } catch (err) {
+        console.error('[agent-channel] perception issue upsert error:', err.message);
+        res.status(500).json({ error: 'Failed to upsert issue' });
+    }
+});
+
+// ----------------------------------------------------------------- agent webhooks (#88)
+
+// POST /api/v2/agent-channel/webhooks — register a webhook
+app.post('/api/v2/agent-channel/webhooks', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id || !agent_id) return res.status(400).json({ error: 'Agent authentication required' });
+
+    const { url, secret, event_filters, template, allow_http } = req.body;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'url required' });
+
+    // Validate URL protocol
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'https:' && !(allow_http && parsed.protocol === 'http:')) {
+            return res.status(400).json({ error: 'HTTPS required (set allow_http: true for HTTP)' });
+        }
+    } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+
+    // Max 10 webhooks per agent
+    const count = itemsDb.countWebhooksByAgent(agent_id);
+    if (count >= 10) return res.status(400).json({ error: 'Max 10 webhooks per agent' });
+
+    // Generate secret if not provided
+    const webhookSecret = secret || require('crypto').randomBytes(32).toString('hex');
+
+    try {
+        const wh = itemsDb.createWebhook({ app_id, agent_id, url, secret: webhookSecret, event_filters, template, allow_http });
+        res.status(201).json({ ...wh, secret: webhookSecret });
+    } catch (err) {
+        console.error('[webhook] Create error:', err.message);
+        res.status(500).json({ error: 'Failed to create webhook' });
+    }
+});
+
+// GET /api/v2/agent-channel/webhooks — list webhooks
+app.get('/api/v2/agent-channel/webhooks', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const webhooks = agent_id
+            ? itemsDb.listWebhooksByAgent(agent_id)
+            : itemsDb.listWebhooksByApp(app_id);
+        // Strip secrets from list response
+        const safe = webhooks.map(({ secret, ...rest }) => rest);
+        res.json({ webhooks: safe, count: safe.length });
+    } catch (err) {
+        console.error('[webhook] List error:', err.message);
+        res.status(500).json({ error: 'Failed to list webhooks' });
+    }
+});
+
+// GET /api/v2/agent-channel/webhooks/:id — get webhook details + recent deliveries
+app.get('/api/v2/agent-channel/webhooks/:id', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const wh = itemsDb.getWebhook(req.params.id);
+        if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+        const { secret, ...safe } = wh;
+        const deliveries = itemsDb.getWebhookDeliveries(wh.id, 20);
+        res.json({ webhook: safe, deliveries });
+    } catch (err) {
+        console.error('[webhook] Get error:', err.message);
+        res.status(500).json({ error: 'Failed to get webhook' });
+    }
+});
+
+// PUT /api/v2/agent-channel/webhooks/:id — update webhook
+app.put('/api/v2/agent-channel/webhooks/:id', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const wh = itemsDb.getWebhook(req.params.id);
+    if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+
+    const { url, event_filters, template, active, allow_http } = req.body;
+
+    // Validate URL if changed
+    const newUrl = url || wh.url;
+    try {
+        const parsed = new URL(newUrl);
+        const httpAllowed = allow_http !== undefined ? allow_http : wh.allow_http;
+        if (parsed.protocol !== 'https:' && !(httpAllowed && parsed.protocol === 'http:')) {
+            return res.status(400).json({ error: 'HTTPS required (set allow_http: true for HTTP)' });
+        }
+    } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+
+    try {
+        const updated = itemsDb.updateWebhook(req.params.id, {
+            url: newUrl,
+            event_filters: event_filters || JSON.parse(wh.event_filters || '{}'),
+            template: template || wh.template,
+            active: active !== undefined ? active : wh.active,
+            allow_http: allow_http !== undefined ? allow_http : wh.allow_http,
+        });
+        const { secret, ...safe } = updated;
+        res.json(safe);
+    } catch (err) {
+        console.error('[webhook] Update error:', err.message);
+        res.status(500).json({ error: 'Failed to update webhook' });
+    }
+});
+
+// DELETE /api/v2/agent-channel/webhooks/:id — delete webhook
+app.delete('/api/v2/agent-channel/webhooks/:id', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const wh = itemsDb.getWebhook(req.params.id);
+    if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+
+    try {
+        itemsDb.deleteWebhook(req.params.id);
+        res.json({ deleted: true });
+    } catch (err) {
+        console.error('[webhook] Delete error:', err.message);
+        res.status(500).json({ error: 'Failed to delete webhook' });
+    }
+});
+
+// POST /api/v2/agent-channel/webhooks/:id/test — send sample payload
+app.post('/api/v2/agent-channel/webhooks/:id/test', apiWriteLimiter, v2AuthOrAgent, async (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const wh = itemsDb.getWebhook(req.params.id);
+    if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+
+    const { formatPayload, deliverWebhook } = require('./webhook-dispatcher');
+    const sampleEvent = {
+        type: 'js-error',
+        message: 'Test error: this is a sample P1 webhook payload',
+        severity: 'P1',
+        url: 'https://example.com/test',
+        fingerprint: 'test-fingerprint-sample',
+        stack: 'Error: Test error\n    at test.js:1:1',
+    };
+    const sampleIssue = { id: 'pi-test', count: 42, first_seen: new Date().toISOString(), last_seen: new Date().toISOString() };
+
+    const payload = formatPayload(wh.template, sampleEvent, sampleIssue, { app_id });
+
+    try {
+        const result = await deliverWebhook(wh.url, payload, wh.secret, wh.allow_http === 1);
+        res.json({ test: true, ...result, payload });
+    } catch (err) {
+        res.status(500).json({ test: true, ok: false, error: err.message });
+    }
+});
+
+// GET /api/v2/agent-channel/webhooks/:id/deliveries — list delivery history
+app.get('/api/v2/agent-channel/webhooks/:id/deliveries', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const wh = itemsDb.getWebhook(req.params.id);
+    if (!wh || wh.app_id !== app_id) return res.status(404).json({ error: 'Webhook not found' });
+
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    try {
+        const deliveries = itemsDb.getWebhookDeliveries(wh.id, limit);
+        res.json({ deliveries, count: deliveries.length });
+    } catch (err) {
+        console.error('[webhook] Deliveries query error:', err.message);
+        res.status(500).json({ error: 'Failed to query deliveries' });
+    }
+});
+
+// ----------------------------------------------------------------- agent registration (#68)
+
+// POST /api/v2/agent-channel/register — register a new agent
+app.post('/api/v2/agent-channel/register', agentRegisterLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { name, callback_url, capabilities } = req.body;
+    if (!name || typeof name !== 'string' || name.length < 1 || name.length > 100) {
+        return res.status(400).json({ error: 'name required (1-100 chars)' });
+    }
+    if (callback_url && typeof callback_url !== 'string') {
+        return res.status(400).json({ error: 'callback_url must be a string' });
+    }
+    if (capabilities && !Array.isArray(capabilities)) {
+        return res.status(400).json({ error: 'capabilities must be an array' });
+    }
+
+    try {
+        const { raw, hash, prefix } = generateAgentKey();
+        const agent = itemsDb.registerAgent({
+            app_id,
+            name: name.trim(),
+            key_hash: hash,
+            key_prefix: prefix,
+            callback_url: callback_url || null,
+            capabilities: capabilities || [],
+            created_by: req.v2Auth.user_name || req.v2Auth.user || 'api',
+        });
+        // Return the raw key ONLY on creation (never shown again)
+        res.status(201).json({ ...agent, api_key: raw });
+    } catch (err) {
+        console.error('[agent-channel] register error:', err.message);
+        res.status(500).json({ error: 'Failed to register agent' });
+    }
+});
+
+// GET /api/v2/agent-channel/agents — list agents for current app
+app.get('/api/v2/agent-channel/agents', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    try {
+        const agents = itemsDb.getAgentsByApp(app_id);
+        res.json({ agents });
+    } catch (err) {
+        console.error('[agent-channel] list agents error:', err.message);
+        res.status(500).json({ error: 'Failed to list agents' });
+    }
+});
+
+// GET /api/v2/agent-channel/agents/:id — get agent by ID
+app.get('/api/v2/agent-channel/agents/:id', apiReadLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    try {
+        const agent = itemsDb.getAgentById(req.params.id);
+        if (!agent) return res.status(404).json({ error: 'Agent not found' });
+        if (agent.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
+        res.json(agent);
+    } catch (err) {
+        console.error('[agent-channel] get agent error:', err.message);
+        res.status(500).json({ error: 'Failed to get agent' });
+    }
+});
+
+// PUT /api/v2/agent-channel/agents/:id — update agent metadata
+app.put('/api/v2/agent-channel/agents/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    const { name, callback_url, capabilities } = req.body;
+    try {
+        const existing = itemsDb.getAgentById(req.params.id);
+        if (!existing) return res.status(404).json({ error: 'Agent not found' });
+        if (existing.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
+        const updated = itemsDb.updateAgent(req.params.id, {
+            name: name !== undefined ? String(name).trim() : existing.name,
+            callback_url: callback_url !== undefined ? callback_url : existing.callback_url,
+            capabilities: capabilities !== undefined ? capabilities : JSON.parse(existing.capabilities || '[]'),
+        });
+        res.json(updated);
+    } catch (err) {
+        console.error('[agent-channel] update agent error:', err.message);
+        res.status(500).json({ error: 'Failed to update agent' });
+    }
+});
+
+// DELETE /api/v2/agent-channel/agents/:id — deactivate agent (soft delete)
+app.delete('/api/v2/agent-channel/agents/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    try {
+        const existing = itemsDb.getAgentById(req.params.id);
+        if (!existing) return res.status(404).json({ error: 'Agent not found' });
+        if (existing.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
+        itemsDb.deactivateAgent(req.params.id);
+        res.json({ id: req.params.id, status: 'inactive' });
+    } catch (err) {
+        console.error('[agent-channel] deactivate agent error:', err.message);
+        res.status(500).json({ error: 'Failed to deactivate agent' });
+    }
+});
+
+// POST /api/v2/agent-channel/agents/:id/rotate-key — rotate agent API key
+app.post('/api/v2/agent-channel/agents/:id/rotate-key', apiWriteLimiter, v2Auth, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+    try {
+        const existing = itemsDb.getAgentById(req.params.id);
+        if (!existing) return res.status(404).json({ error: 'Agent not found' });
+        if (existing.app_id !== app_id) return res.status(404).json({ error: 'Agent not found' });
+        const { raw, hash, prefix } = generateAgentKey();
+        itemsDb.rotateAgentKey(req.params.id, { key_hash: hash, key_prefix: prefix });
+        res.json({ id: req.params.id, api_key: raw, key_prefix: prefix });
+    } catch (err) {
+        console.error('[agent-channel] rotate key error:', err.message);
+        res.status(500).json({ error: 'Failed to rotate key' });
+    }
+});
+
+// ----------------------------------------------------------------- session storage (#73)
+
+const sessionLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    keyGenerator: (req) => req.v2Auth?.app_id || req.ip,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Session rate limit exceeded, try again later' },
+});
+
+// POST /api/v2/agent-channel/sessions — create or append to a session
+app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { session_id, tab_id, url, title, start_time, events, snapshots, metadata } = req.body;
+    const agent_id = req.v2Auth?.agent?.id || null;
+
+    // Validate events array
+    if (events && (!Array.isArray(events) || events.length > 1000)) {
+        return res.status(400).json({ error: 'events must be an array (max 1000)' });
+    }
+    if (snapshots && (!Array.isArray(snapshots) || snapshots.length > 100)) {
+        return res.status(400).json({ error: 'snapshots must be an array (max 100)' });
+    }
+
+    try {
+        // If session_id provided, append to existing session (chunked upload)
+        if (session_id) {
+            const existing = itemsDb.getSession(session_id);
+            if (!existing) return res.status(404).json({ error: 'Session not found' });
+            if (existing.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+            const result = itemsDb.appendSessionEvents(session_id, { events, snapshots, agent_id });
+            if (!result) return res.status(403).json({ error: 'Agent ownership mismatch' });
+            return res.json(result);
+        }
+
+        // Create new session
+        const result = itemsDb.createSession({
+            app_id,
+            agent_id,
+            tab_id,
+            url,
+            title,
+            start_time,
+            events,
+            snapshots,
+            metadata,
+        });
+        // Log action (#87)
+        try {
+            itemsDb.logAgentAction({
+                app_id,
+                agent_id: agent_id || null,
+                action_type: 'session_start',
+                target_type: 'session',
+                target_id: result.id,
+                summary: `Started session on ${(url || '').slice(0, 80)}`,
+                metadata: { url, title },
+            });
+        } catch { /* non-critical */ }
+        res.status(201).json(result);
+    } catch (err) {
+        if (err.message === 'SESSION_TOO_LARGE') {
+            return res.status(413).json({ error: 'Session exceeds maximum size (50MB)' });
+        }
+        if (err.message === 'SESSION_FINALIZED') {
+            return res.status(409).json({ error: 'Cannot append to a finalized session' });
+        }
+        if (err.message === 'INVALID_START_TIME') {
+            return res.status(400).json({ error: 'start_time must be ISO 8601 format (e.g. 2026-03-21T10:00:00.000Z)' });
+        }
+        if (err.message.startsWith('INVALID_EVENT_TYPE:')) {
+            const type = err.message.split(':')[1];
+            return res.status(400).json({ error: `Invalid event type: ${type}. Allowed: dom-mutation, console-log, console-error, network-error, click, scroll` });
+        }
+        console.error('[agent-channel] session POST error:', err.message);
+        res.status(500).json({ error: 'Failed to store session' });
+    }
+});
+
+// POST /api/v2/agent-channel/sessions/:id/finalize — mark session as completed
+app.post('/api/v2/agent-channel/sessions/:id/finalize', sessionLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const session = itemsDb.getSession(req.params.id);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+        if (session.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+        const result = itemsDb.finalizeSession(req.params.id);
+        // Log action (#87)
+        try {
+            itemsDb.logAgentAction({
+                app_id,
+                agent_id: session.agent_id || null,
+                action_type: 'session_end',
+                target_type: 'session',
+                target_id: req.params.id,
+                summary: `Finalized session (${result.event_count || 0} events)`,
+                metadata: { event_count: result.event_count, snapshot_count: result.snapshot_count },
+            });
+        } catch { /* non-critical */ }
+        res.json(result);
+    } catch (err) {
+        console.error('[agent-channel] session finalize error:', err.message);
+        res.status(500).json({ error: 'Failed to finalize session' });
+    }
+});
+
+// GET /api/v2/agent-channel/sessions — list sessions
+app.get('/api/v2/agent-channel/sessions', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { agent_id, site, after, limit } = req.query;
+
+    // P2-5: Validate after param format
+    const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+    if (after && !ISO_DATE_RE.test(after)) {
+        return res.status(400).json({ error: 'after must be ISO 8601 format (e.g. 2026-03-21T00:00:00.000Z)' });
+    }
+
+    try {
+        const sessions = itemsDb.listSessions({
+            app_id,
+            agent_id: agent_id || null,
+            site: site || null,
+            after: after || null,
+            limit: parseInt(limit) || 50,
+        });
+        res.json({ sessions, count: sessions.length });
+    } catch (err) {
+        console.error('[agent-channel] session list error:', err.message);
+        res.status(500).json({ error: 'Failed to list sessions' });
+    }
+});
+
+// GET /api/v2/agent-channel/sessions/:id — get session detail with events
+app.get('/api/v2/agent-channel/sessions/:id', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const session = itemsDb.getSession(req.params.id);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+        if (session.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+        const { start_time, end_time, include_snapshots } = req.query;
+        const events = itemsDb.getSessionEvents(req.params.id, {
+            start_time: start_time || null,
+            end_time: end_time || null,
+        });
+
+        let snapshots = null;
+        if (include_snapshots === 'true' || include_snapshots === '1') {
+            snapshots = itemsDb.getSessionSnapshots(req.params.id);
+        }
+
+        res.json({ session, events, ...(snapshots !== null ? { snapshots } : {}) });
+    } catch (err) {
+        console.error('[agent-channel] session detail error:', err.message);
+        res.status(500).json({ error: 'Failed to get session' });
+    }
+});
+
+// GET /api/v2/agent-channel/sessions/:id/snapshots/:snapshotId — get full snapshot HTML
+app.get('/api/v2/agent-channel/sessions/:id/snapshots/:snapshotId', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const session = itemsDb.getSession(req.params.id);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+        if (session.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+        const snapshot = itemsDb.getSessionSnapshot(req.params.snapshotId);
+        if (!snapshot || snapshot.session_id !== req.params.id) {
+            return res.status(404).json({ error: 'Snapshot not found' });
+        }
+
+        res.json(snapshot);
+    } catch (err) {
+        console.error('[agent-channel] snapshot detail error:', err.message);
+        res.status(500).json({ error: 'Failed to get snapshot' });
+    }
+});
+
+// ----------------------------------------------------------------- action queue REST (#78)
+
+// POST /api/v2/agent-channel/actions — submit action (REST alternative to WebSocket)
+app.post('/api/v2/agent-channel/actions', sessionLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id || !agent_id) return res.status(400).json({ error: 'Agent auth required' });
+
+    const { action_type, payload, session_id, timeout_ms } = req.body;
+    if (!action_type) return res.status(400).json({ error: 'action_type is required' });
+
+    try {
+        const action = itemsDb.createAction({
+            agent_id,
+            app_id,
+            session_id: session_id || null,
+            type: action_type,
+            payload: payload || {},
+            timeout_ms: timeout_ms || 30000,
+        });
+        res.status(201).json(action);
+    } catch (err) {
+        if (err.message.startsWith('INVALID_ACTION_TYPE:')) {
+            const type = err.message.split(':')[1];
+            return res.status(400).json({ error: `Invalid action_type: ${type}. Allowed: ${itemsDb.getValidActionTypes().join(', ')}` });
+        }
+        if (err.message === 'QUEUE_FULL') {
+            return res.status(429).json({ error: 'Action queue full (max 100 pending per agent)' });
+        }
+        console.error('[agent-channel] action POST error:', err.message);
+        res.status(500).json({ error: 'Failed to queue action' });
+    }
+});
+
+// GET /api/v2/agent-channel/actions/:id — poll action status
+app.get('/api/v2/agent-channel/actions/:id', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const action = itemsDb.getAction(req.params.id);
+    if (!action) return res.status(404).json({ error: 'Action not found' });
+    if (action.app_id !== app_id) return res.status(404).json({ error: 'Action not found' });
+
+    // Parse stored JSON fields
+    const result = {
+        ...action,
+        payload: JSON.parse(action.payload || '{}'),
+        result: action.result ? JSON.parse(action.result) : null,
+    };
+    res.json(result);
+});
+
+// POST /api/v2/agent-channel/actions/:id/result — extension submits result (webhook fallback)
+app.post('/api/v2/agent-channel/actions/:id/result', sessionLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const action = itemsDb.getAction(req.params.id);
+    if (!action) return res.status(404).json({ error: 'Action not found' });
+    if (action.app_id !== app_id) return res.status(404).json({ error: 'Action not found' });
+    if (action.status === 'completed' || action.status === 'failed') {
+        return res.status(409).json({ error: 'Action already resolved' });
+    }
+
+    const { result, error } = req.body;
+    const status = error ? 'failed' : 'completed';
+    try {
+        const updated = itemsDb.updateActionStatus(action.id, { status, result, error });
+        if (!updated) return res.status(409).json({ error: 'Status race condition' });
+        res.json({ action_id: action.id, status });
+    } catch (err) {
+        if (err.message?.startsWith('INVALID_TRANSITION')) {
+            return res.status(409).json({ error: 'Invalid state transition' });
+        }
+        throw err;
+    }
+});
+
+// GET /api/v2/agent-channel/actions — list agent's actions
+app.get('/api/v2/agent-channel/actions', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { status, limit } = req.query;
+    try {
+        let actions;
+        if (agent_id) {
+            actions = itemsDb.listAgentActions(agent_id, status || 'queued', parseInt(limit) || 50);
+        } else {
+            actions = itemsDb.listPendingActions(app_id, parseInt(limit) || 50);
+        }
+        res.json({ actions, count: actions.length });
+    } catch (err) {
+        console.error('[agent-channel] action list error:', err.message);
+        res.status(500).json({ error: 'Failed to list actions' });
+    }
+});
+
+// ----------------------------------------------------------------- CDP audit log (#83)
+
+// GET /api/v2/agent-channel/cdp/audit — query CDP audit logs
+app.get('/api/v2/agent-channel/cdp/audit', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { session_key, limit } = req.query;
+    const safeLimit = Math.min(parseInt(limit) || 100, 500);
+
+    try {
+        let logs;
+        if (session_key) {
+            // Filter by app_id to prevent cross-app leakage (P2 fix)
+            logs = itemsDb.getCdpAuditBySession(session_key, safeLimit)
+                .filter(l => l.app_id === app_id);
+        } else if (agent_id) {
+            logs = itemsDb.getCdpAuditByAgent(agent_id, safeLimit)
+                .filter(l => l.app_id === app_id);
+        } else {
+            logs = itemsDb.getCdpAuditByApp(app_id, safeLimit);
+        }
+        res.json({ logs, count: logs.length });
+    } catch (err) {
+        console.error('[cdp] Audit query error:', err.message);
+        res.status(500).json({ error: 'Failed to query CDP audit logs' });
+    }
+});
+
 // ----------------------------------------------------------------- health
 
 app.get('/health', (req, res) => {
@@ -2360,12 +3258,76 @@ app.get('/health', (req, res) => {
 
 // ----------------------------------------------------------------- listen
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`[+] ClawMark V2 server running on port ${PORT}`);
     console.log(`    data dir  : ${DATA_DIR}`);
     console.log(`    adapters  : ${Object.keys(registry.getStatus()).length} channel(s)`);
     console.log(`    auth      : JWT + API key (invite codes deprecated)`);
     console.log(`    api v2    : /api/v2/*`);
+    console.log(`    ws        : /ws/agent-channel/actions`);
+    console.log(`    ws        : /ws/agent-channel/cdp`);
+
+    // Action WebSocket (#78)
+    const actionWs = initActionWs(server, itemsDb);
+
+    // CDP Channel WebSocket (#83)
+    const cdpWs = initCdpWs(server, itemsDb);
+
+    // Action timeout checker: every 5s
+    setInterval(() => {
+        const n = actionWs.checkTimeouts();
+        if (n > 0) console.log(`[action] Timed out ${n} action(s)`);
+    }, 5000);
+
+    // Action cleanup: daily, delete completed/failed actions older than 7 days
+    const runActionCleanup = () => {
+        try {
+            const result = itemsDb.cleanupOldActions(7);
+            if (result.deleted > 0) console.log(`[action] Cleaned up ${result.deleted} old action(s)`);
+        } catch (err) {
+            console.error('[action] Cleanup error:', err.message);
+        }
+    };
+    runActionCleanup();
+    setInterval(runActionCleanup, 24 * 60 * 60 * 1000);
+
+    // Session + action cleanup job: run daily + on startup (#73, #87)
+    const runSessionCleanup = () => {
+        try {
+            const result = itemsDb.cleanupOldSessions(30, 7);
+            if (result.deleted > 0) {
+                console.log(`[session] Cleaned up ${result.completed} expired + ${result.orphaned} orphaned session(s)`);
+            }
+        } catch (err) {
+            console.error('[session] Cleanup error:', err.message);
+        }
+        try {
+            const result = itemsDb.cleanupOldActions(90);
+            if (result.deleted > 0) {
+                console.log(`[actions] Cleaned up ${result.deleted} old action(s) (>90d)`);
+            }
+        } catch (err) {
+            console.error('[actions] Cleanup error:', err.message);
+        }
+        try {
+            const result = itemsDb.cleanupOldCdpAuditLogs(7);
+            if (result.deleted > 0) {
+                console.log(`[cdp] Cleaned up ${result.deleted} old audit log(s) (>7d)`);
+            }
+        } catch (err) {
+            console.error('[cdp] Cleanup error:', err.message);
+        }
+        try {
+            const result = itemsDb.cleanupOldWebhookDeliveries(30);
+            if (result.deleted > 0) {
+                console.log(`[webhook] Cleaned up ${result.deleted} old delivery(ies) (>30d)`);
+            }
+        } catch (err) {
+            console.error('[webhook] Cleanup error:', err.message);
+        }
+    };
+    runSessionCleanup(); // run on startup
+    setInterval(runSessionCleanup, 24 * 60 * 60 * 1000); // every 24h
 
     // Start dispatch retry worker (every 30s, exponential backoff per entry)
     let retryBusy = false;
@@ -2377,5 +3339,17 @@ app.listen(PORT, () => {
         }).catch(err => {
             console.error('[dispatch] Retry worker error:', err.message);
         }).finally(() => { retryBusy = false; });
+    }, 30000);
+
+    // Webhook retry worker (#88): every 30s, retry failed webhook deliveries
+    let webhookRetryBusy = false;
+    setInterval(() => {
+        if (webhookRetryBusy) return;
+        webhookRetryBusy = true;
+        retryFailedDeliveries(itemsDb).then(n => {
+            if (n > 0) console.log(`[webhook] Retried ${n} failed delivery(ies)`);
+        }).catch(err => {
+            console.error('[webhook] Retry worker error:', err.message);
+        }).finally(() => { webhookRetryBusy = false; });
     }, 30000);
 });

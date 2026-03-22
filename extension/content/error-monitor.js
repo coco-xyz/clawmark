@@ -1,18 +1,22 @@
 /**
- * ClawMark — ErrorMonitor Content Script (#43 sub-1, #54)
+ * ClawMark — ErrorMonitor Content Script (#63 Error Sentinel)
  *
- * Passive error monitoring: captures runtime errors on any page and
- * forwards them to the service worker for storage + badge update.
+ * Agent Embed perception layer: captures runtime errors on monitored pages
+ * and forwards structured events to the service worker for storage + badge.
  *
  * Captures:
  *   - window.onerror / unhandledrejection
- *   - console.error (patched)
- *   - fetch/XHR 4xx/5xx responses
+ *   - console.error (patched, React noise filtered)
+ *   - fetch/XHR 4xx/5xx + timeout
  *   - Resource load failures (img, script, link)
  *   - Long tasks (>200ms via PerformanceObserver)
  *
- * Dedup: fingerprint-based, same fingerprint within 5s is skipped.
- * Rate limit: max 30 errors per minute per tab.
+ * #63 enhancements:
+ *   - Fingerprint: hash(type + message + source + line) with 5s dedup window
+ *   - Domain whitelist: only collect on configured allowed domains
+ *   - Sensitive data sanitization: strip tokens, passwords, keys
+ *   - React noise filtering for console.error
+ *   - Fetch timeout detection
  */
 
 'use strict';
@@ -28,23 +32,88 @@
     const DEDUP_WINDOW_MS = 5000;
     const RATE_LIMIT_PER_MIN = 30;
     const LONG_TASK_THRESHOLD_MS = 200;
+    const FETCH_TIMEOUT_MS = 30000;
 
-    // ── State ────────────────────────────────────────────────────────
+    // Default allowed domains (coco ecosystem)
+    const DEFAULT_ALLOWED_DOMAINS = [
+        'coco.xyz', 'coco.site', 'hxa.net', 'hxa.one',
+        'clawmark.dev', 'localhost',
+    ];
+    let allowedDomains = [...DEFAULT_ALLOWED_DOMAINS];
+
+    // ── React noise patterns ───────────────────────────────────────
+
+    const REACT_NOISE_PATTERNS = [
+        /^Warning:/,
+        /Each child in a list should have a unique/,
+        /Cannot update a component/,
+        /Cannot update during an existing state transition/,
+        /findDOMNode is deprecated/,
+        /Legacy context API has been detected/,
+        /componentWillMount has been renamed/,
+        /componentWillReceiveProps has been renamed/,
+        /componentWillUpdate has been renamed/,
+        /React does not recognize the .* prop/,
+        /Invalid DOM property/,
+        /Unknown event handler property/,
+        /validateDOMNesting/,
+    ];
+
+    function isReactNoise(message) {
+        return REACT_NOISE_PATTERNS.some(p => p.test(message));
+    }
+
+    // ── Sensitive data sanitization ────────────────────────────────
+
+    const SENSITIVE_PATTERNS = [
+        // Tokens & keys
+        /(?:bearer|token|api[_-]?key|auth(?:orization)?|secret|password|passwd|pwd|credential)[\s]*[=:]\s*["']?[^\s"',}{)]+/gi,
+        // JWT tokens
+        /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+        // Generic hex/base64 secrets (32+ chars after key= or token=)
+        /(?:key|token|secret|password)=[A-Za-z0-9+/=_-]{32,}/gi,
+    ];
+
+    function sanitize(text) {
+        if (typeof text !== 'string') return text;
+        let result = text;
+        for (const pattern of SENSITIVE_PATTERNS) {
+            result = result.replace(pattern, '[REDACTED]');
+        }
+        return result;
+    }
+
+    // ── Domain whitelist check ─────────────────────────────────────
+
+    function isDomainAllowed() {
+        const hostname = location.hostname;
+        return allowedDomains.some(domain =>
+            hostname === domain || hostname.endsWith('.' + domain)
+        );
+    }
+
+    // ── Fingerprint dedup (hash of type+message+source+line) ──────
 
     const recentFingerprints = new Map(); // fingerprint → timestamp
     let errorCountThisMinute = 0;
     let minuteResetTimer = null;
 
-    // ── Helpers ──────────────────────────────────────────────────────
+    function hashFingerprint(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+        }
+        return hash.toString(36);
+    }
 
-    function isDuplicate(type, message) {
-        const key = `${type}:${message}`.slice(0, 200);
+    function isDuplicate(type, message, source, line) {
+        const raw = `${type}\0${message}\0${source || ''}\0${line || 0}`;
+        const key = hashFingerprint(raw);
         const now = Date.now();
         if (recentFingerprints.has(key) && now - recentFingerprints.get(key) < DEDUP_WINDOW_MS) {
             return true;
         }
         recentFingerprints.set(key, now);
-        // Prune old entries
         if (recentFingerprints.size > 100) {
             for (const [k, t] of recentFingerprints) {
                 if (now - t > DEDUP_WINDOW_MS) recentFingerprints.delete(k);
@@ -63,30 +132,37 @@
         return ++errorCountThisMinute <= RATE_LIMIT_PER_MIN;
     }
 
+    // ── Emit ───────────────────────────────────────────────────────
+
     function emit(error) {
         if (!monitorEnabled) return;
+        if (!isDomainAllowed()) return;
         if (errorLevelOnly && error.severity !== 'error') return;
-        if (isDuplicate(error.type, error.message)) return;
+        if (isDuplicate(error.type, error.message, error.source, error.line)) return;
         if (!rateLimitOk()) return;
 
         try {
             chrome.runtime.sendMessage({
                 type: 'error:captured',
                 payload: {
-                    ...error,
+                    type: error.type,
+                    message: sanitize(error.message),
+                    stack: sanitize(error.stack || ''),
+                    source: error.source || '',
+                    line: error.line || 0,
+                    severity: error.severity,
                     url: location.href,
                     timestamp: Date.now(),
                 },
             });
         } catch {
-            // Extension context invalidated — stop monitoring
             teardown();
         }
     }
 
     // ── Listeners ────────────────────────────────────────────────────
 
-    // 1. window error event (addEventListener receives ErrorEvent, not 5 args)
+    // 1. window error event
     function onWindowError(event) {
         if (!(event instanceof ErrorEvent)) return;
         emit({
@@ -94,6 +170,7 @@
             message: event.message || String(event),
             stack: event.error?.stack || `${event.filename || ''}:${event.lineno || 0}:${event.colno || 0}`,
             source: event.filename || '',
+            line: event.lineno || 0,
             severity: 'error',
         });
     }
@@ -109,7 +186,7 @@
         });
     }
 
-    // 3. console.error patch
+    // 3. console.error patch (with React noise filtering)
     const originalConsoleError = console.error;
     function patchedConsoleError(...args) {
         originalConsoleError.apply(console, args);
@@ -120,6 +197,9 @@
             }
             return String(a);
         }).join(' ');
+
+        if (isReactNoise(message)) return;
+
         emit({
             type: 'console-error',
             message: message.slice(0, 500),
@@ -128,24 +208,40 @@
         });
     }
 
-    // 4. fetch intercept for 4xx/5xx + network failures
+    // 4. fetch intercept for 4xx/5xx + network failures + timeout
     const originalFetch = window.fetch;
     async function patchedFetch(...args) {
+        const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+
+        // Add timeout via AbortController if caller didn't provide a signal
+        let timeoutId;
+        let controller;
+        const init = args[1] || {};
+        if (!init.signal) {
+            controller = new AbortController();
+            args[1] = { ...init, signal: controller.signal };
+            timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        }
+
         let response;
         try {
             response = await originalFetch.apply(window, args);
         } catch (err) {
-            const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+            if (timeoutId) clearTimeout(timeoutId);
+            const isTimeout = controller && err.name === 'AbortError';
             emit({
                 type: 'network-error',
-                message: `fetch failed: ${err.message} — ${url.slice(0, 200)}`,
+                message: isTimeout
+                    ? `fetch timeout (${FETCH_TIMEOUT_MS}ms): ${url.slice(0, 200)}`
+                    : `fetch failed: ${err.message} — ${url.slice(0, 200)}`,
                 stack: err.stack || '',
                 severity: 'error',
             });
-            throw err; // re-throw so caller sees the original error
+            throw err;
         }
+        if (timeoutId) clearTimeout(timeoutId);
+
         if (response.status >= 400) {
-            const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
             emit({
                 type: 'network-error',
                 message: `${response.status} ${response.statusText} — ${url.slice(0, 200)}`,
@@ -175,6 +271,14 @@
                     severity: this.status >= 500 ? 'error' : 'warning',
                 });
             }
+        }, { once: true });
+        this.addEventListener('timeout', function () {
+            emit({
+                type: 'network-error',
+                message: `XHR timeout — ${(this.__clawmarkUrl || '').slice(0, 200)}`,
+                stack: '',
+                severity: 'error',
+            });
         }, { once: true });
         return originalXHRSend.apply(this, args);
     }
@@ -224,7 +328,7 @@
         window.fetch = patchedFetch;
         XMLHttpRequest.prototype.open = patchedXHROpen;
         XMLHttpRequest.prototype.send = patchedXHRSend;
-        document.addEventListener('error', onResourceError, true); // capture phase
+        document.addEventListener('error', onResourceError, true);
         setupLongTaskObserver();
     }
 
@@ -248,8 +352,10 @@
                 passiveMonitorEnabled: false,
                 passiveMonitorErrorOnly: true,
                 passiveMonitorDisabledSites: [],
+                agentEmbedAllowedDomains: DEFAULT_ALLOWED_DOMAINS,
             });
             errorLevelOnly = settings.passiveMonitorErrorOnly;
+            allowedDomains = settings.agentEmbedAllowedDomains;
             const siteDisabled = settings.passiveMonitorDisabledSites.includes(location.hostname);
             return settings.passiveMonitorEnabled && !siteDisabled;
         } catch {
@@ -260,7 +366,11 @@
     // React to settings changes
     chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'sync') return;
-        if (changes.passiveMonitorEnabled || changes.passiveMonitorErrorOnly || changes.passiveMonitorDisabledSites) {
+        const relevant = changes.passiveMonitorEnabled
+            || changes.passiveMonitorErrorOnly
+            || changes.passiveMonitorDisabledSites
+            || changes.agentEmbedAllowedDomains;
+        if (relevant) {
             loadSettings().then(enabled => {
                 if (enabled && !monitorEnabled) {
                     monitorEnabled = true;

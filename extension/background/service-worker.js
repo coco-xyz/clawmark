@@ -12,6 +12,15 @@
 
 importScripts('../config.js');
 importScripts('./error-storage.js');
+importScripts('./perception-storage.js');
+importScripts('./session-storage.js');
+importScripts('./action-queue.js');
+importScripts('./cdp-session-manager.js');
+importScripts('./cdp-tab-targeter.js');
+importScripts('./cdp-event-forwarder.js');
+importScripts('./cdp-whitelist.js');
+importScripts('./cdp-safety.js');
+importScripts('./cdp-relay.js');
 
 // ------------------------------------------------------------------ config
 
@@ -388,6 +397,66 @@ async function handleExternalMessage(message, sender) {
             await chrome.storage.sync.set(updates);
             return { success: true };
         }
+        case 'GET_AGENT_PERCEPTION_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                agentPerceptionEnabled: false,
+                agentPerceptionDisabledSites: [],
+            });
+            return {
+                agentPerceptionEnabled: settings.agentPerceptionEnabled,
+                agentPerceptionDisabledSites: settings.agentPerceptionDisabledSites,
+            };
+        }
+        case 'SET_AGENT_PERCEPTION_SETTINGS': {
+            const updates = {};
+            if (typeof message.agentPerceptionEnabled === 'boolean') {
+                updates.agentPerceptionEnabled = message.agentPerceptionEnabled;
+            }
+            if (Array.isArray(message.agentPerceptionDisabledSites)) {
+                updates.agentPerceptionDisabledSites = message.agentPerceptionDisabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
+        case 'GET_SESSION_RECORDING_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                sessionRecordingEnabled: true,
+            });
+            return { sessionRecordingEnabled: settings.sessionRecordingEnabled };
+        }
+        case 'SET_SESSION_RECORDING_SETTINGS': {
+            const updates = {};
+            if (typeof message.sessionRecordingEnabled === 'boolean') {
+                updates.sessionRecordingEnabled = message.sessionRecordingEnabled;
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
+        case 'GET_AGENT_ACTION_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                agentActionEnabled: false,
+                agentActionDisabledSites: [],
+            });
+            return {
+                agentActionEnabled: settings.agentActionEnabled,
+                agentActionDisabledSites: settings.agentActionDisabledSites,
+            };
+        }
+        case 'SET_AGENT_ACTION_SETTINGS': {
+            const updates = {};
+            if (typeof message.agentActionEnabled === 'boolean') {
+                updates.agentActionEnabled = message.agentActionEnabled;
+            }
+            if (Array.isArray(message.agentActionDisabledSites)) {
+                updates.agentActionDisabledSites = message.agentActionDisabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
         case 'PING':
             return { pong: true, version: chrome.runtime.getManifest().version };
         default:
@@ -497,6 +566,47 @@ async function handleMessage(message, sender) {
             await markErrorsRead(message.tabId || sender.tab?.id);
             return { success: true };
 
+        // ── Agent perception (#66) ────────────────────────────────────
+        case 'perception:event':
+            await handlePerceptionEvent(message.payload, sender.tab?.id);
+            return { success: true };
+
+        case 'GET_PERCEPTION_EVENTS':
+            return getPerceptionEvents(message.tabId || sender.tab?.id);
+
+        case 'GET_ALL_PERCEPTION_EVENTS':
+            return getAllPerceptionEvents();
+
+        case 'CLEAR_PERCEPTION_EVENTS':
+            await clearPerceptionEvents(message.tabId || sender.tab?.id);
+            return { success: true };
+
+        case 'CLEAR_ALL_PERCEPTION_EVENTS':
+            await clearAllPerceptionEvents();
+            return { success: true };
+
+        // ── Session recording (#72) ───────────────────────────────────
+        case 'session:batch':
+            await handleSessionBatch(message.payload, sender.tab?.id);
+            return { success: true };
+
+        case 'GET_SESSION_INDEX':
+            return getSessionIndex(message.tabId || sender.tab?.id);
+
+        case 'GET_SESSION':
+            return getSession(message.tabId || sender.tab?.id, message.sessionId);
+
+        case 'GET_TAB_SESSIONS':
+            return getTabSessions(message.tabId || sender.tab?.id);
+
+        case 'CLEAR_TAB_SESSIONS':
+            await clearTabSessions(message.tabId || sender.tab?.id);
+            return { success: true };
+
+        case 'CLEAR_ALL_SESSIONS':
+            await clearAllSessions();
+            return { success: true };
+
         // Screenshot + upload messages
         case 'CAPTURE_TAB':
             return captureTab(sender.tab?.id);
@@ -595,6 +705,183 @@ async function handleMessage(message, sender) {
             chrome.tabs.create({ url: dashUrl + hash });
             return { success: true };
         }
+
+        // ── Action execution (#77) ──────────────────────────────────
+        case 'action:dispatch': {
+            const tabId = message.tabId || sender.tab?.id;
+            const result = await dispatchAction(tabId, message.payload);
+            return result;
+        }
+
+        case 'GET_TAB_ACTIONS':
+            return getTabActions(message.tabId || sender.tab?.id);
+
+        case 'GET_ACTION_HISTORY':
+            return getGlobalActionHistory();
+
+        case 'CLEAR_TAB_ACTIONS':
+            await clearTabActions(message.tabId || sender.tab?.id);
+            return { success: true };
+
+        case 'CLEAR_ALL_ACTIONS':
+            await clearAllActions();
+            return { success: true };
+
+        // ── Action settings (#77) ───────────────────────────────────
+        case 'GET_AGENT_ACTION_SETTINGS': {
+            const settings = await chrome.storage.sync.get({
+                agentActionEnabled: false,
+                agentActionDisabledSites: [],
+            });
+            return {
+                agentActionEnabled: settings.agentActionEnabled,
+                agentActionDisabledSites: settings.agentActionDisabledSites,
+            };
+        }
+
+        case 'SET_AGENT_ACTION_SETTINGS': {
+            const updates = {};
+            if (typeof message.agentActionEnabled === 'boolean') {
+                updates.agentActionEnabled = message.agentActionEnabled;
+            }
+            if (Array.isArray(message.agentActionDisabledSites)) {
+                updates.agentActionDisabledSites = message.agentActionDisabledSites
+                    .filter(s => typeof s === 'string' && s.length > 0)
+                    .slice(0, 100);
+            }
+            await chrome.storage.sync.set(updates);
+            return { success: true };
+        }
+
+        // ── CDP mode toggle (#84) ─────────────────────────────────
+        case 'GET_CDP_MODE': {
+            const { cdpModeEnabled = false } = await chrome.storage.sync.get({ cdpModeEnabled: false });
+            // Enrich sessions with tab titles
+            const rawSessions = cdpGetSessions();
+            const sessions = await Promise.all(rawSessions.map(async (s) => {
+                try {
+                    const tab = await chrome.tabs.get(s.tabId);
+                    return { ...s, title: tab.title || tab.url || `Tab ${s.tabId}` };
+                } catch {
+                    return { ...s, title: `Tab ${s.tabId}` };
+                }
+            }));
+            return { cdpModeEnabled, sessions };
+        }
+
+        case 'SET_CDP_MODE': {
+            const enabled = !!message.enabled;
+            await chrome.storage.sync.set({ cdpModeEnabled: enabled });
+            if (!enabled) {
+                // Capture affected tab IDs before detaching
+                const affectedTabs = cdpGetSessions().map(s => s.tabId);
+                await cdpDetachAll();
+                // Refresh badge on all previously-attached tabs
+                for (const tid of affectedTabs) {
+                    await updateCdpBadge(tid);
+                }
+            }
+            // Also update active tab badge
+            const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (activeTab) {
+                await updateCdpBadge(activeTab.id);
+            }
+            return { success: true };
+        }
+
+        case 'CDP_FORCE_DETACH': {
+            const tabId = message.tabId;
+            if (tabId) {
+                await cdpStopSession(tabId);
+                await updateCdpBadge(tabId);
+                // If no sessions remain, auto-disable CDP mode
+                if (cdpGetSessions().length === 0) {
+                    await chrome.storage.sync.set({ cdpModeEnabled: false });
+                }
+            }
+            return { success: true };
+        }
+
+        // ── CDP session management (#81) ────────────────────────────
+        case 'cdp:start': {
+            const target = await resolveTabTarget(message.target || { tabId: message.tabId || sender.tab?.id });
+            if (target.error) return { success: false, error: target.error };
+            return cdpStartSession(target.tabId, message.domains);
+        }
+
+        case 'cdp:stop': {
+            const tabId = message.tabId || sender.tab?.id;
+            return cdpStopSession(tabId);
+        }
+
+        case 'cdp:command': {
+            const tabId = message.tabId ?? sender.tab?.id;
+            const relayResult = await cdpRelayCommand({
+                commandId: message.commandId ?? `local-${Date.now()}`,
+                tabId,
+                method: message.method,
+                params: message.params,
+                options: message.options,
+            });
+            return relayResult;
+        }
+
+        case 'cdp:status': {
+            const tabId = message.tabId || sender.tab?.id;
+            if (tabId) {
+                return { attached: cdpIsAttached(tabId) };
+            }
+            return { sessions: cdpGetSessions() };
+        }
+
+        case 'cdp:events': {
+            const tabId = message.tabId || sender.tab?.id;
+            return getCdpEvents(tabId, message.filter || {});
+        }
+
+        case 'cdp:clear-events': {
+            const tabId = message.tabId || sender.tab?.id;
+            if (tabId) {
+                clearCdpEvents(tabId);
+            } else {
+                clearAllCdpEvents();
+            }
+            return { success: true };
+        }
+
+        case 'cdp:list-tabs':
+            return listTargetableTabs();
+
+        // ── CDP relay (#82) ─────────────────────────────────────────
+        case 'cdp:relay': {
+            // Server-originated CDP command routed through relay
+            if (!message.payload) {
+                return { success: false, error: 'Missing payload' };
+            }
+            const relayResult = await cdpRelayCommand(message.payload);
+            return relayResult;
+        }
+
+        case 'cdp:batch': {
+            if (!message.payload || !Array.isArray(message.payload.commands)) {
+                return { success: false, error: 'Missing payload or payload.commands array' };
+            }
+            const batchResults = await cdpRelayBatch(
+                message.payload.commands,
+                message.payload.options,
+            );
+            return { results: batchResults };
+        }
+
+        case 'cdp:audit-log':
+            return { entries: cdpGetAuditLog(message.filter || {}) };
+
+        case 'cdp:clear-audit-log':
+            cdpClearAuditLog();
+            return { success: true };
+
+        case 'cdp:whitelist-info':
+            return cdpWhitelistInfo();
 
         default:
             return { error: `Unknown message type: ${message.type}` };
@@ -741,9 +1028,34 @@ function compareVersions(a, b) {
     return 0;
 }
 
+// ------------------------------------------------------------------ CDP badge (#84)
+
+async function updateCdpBadge(tabId) {
+    if (!tabId) return;
+    const attached = cdpIsAttached(tabId);
+    if (attached) {
+        await chrome.action.setBadgeText({ tabId, text: 'CDP' });
+        await chrome.action.setBadgeBackgroundColor({ tabId, color: '#f97316' }); // Orange
+    } else {
+        // Restore normal badge (annotation count)
+        try {
+            const tab = await chrome.tabs.get(tabId);
+            if (tab?.url) await updateBadgeForTab(tabId, tab.url);
+        } catch {
+            await chrome.action.setBadgeText({ tabId, text: '' });
+        }
+    }
+}
+
 // ------------------------------------------------------------------ Badge updater (Phase 2)
 
 async function updateBadgeForTab(tabId, url) {
+    // CDP badge takes priority
+    if (cdpIsAttached(tabId)) {
+        await chrome.action.setBadgeText({ tabId, text: 'CDP' });
+        await chrome.action.setBadgeBackgroundColor({ tabId, color: '#f97316' });
+        return;
+    }
     if (!url || url.startsWith('chrome') || url.startsWith('chrome-extension')) {
         await chrome.action.setBadgeText({ tabId, text: '' });
         return;

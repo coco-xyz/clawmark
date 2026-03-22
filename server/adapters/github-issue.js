@@ -146,7 +146,7 @@ class GitHubIssueAdapter {
             }
         }
 
-        return { status: 'created', issue_number: result.number, url: result.html_url };
+        return { status: 'created', issue_number: result.number, url: result.html_url, external_id: String(result.number), external_url: result.html_url };
     }
 
     async _closeIssue(item, context) {

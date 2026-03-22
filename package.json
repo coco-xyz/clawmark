@@ -1,6 +1,6 @@
 {
   "name": "clawmark",
-  "version": "0.8.3",
+  "version": "1.0.0",
   "description": "AI-native feedback & collaboration widget — annotate, comment, and track issues on any web page",
   "main": "server/index.js",
   "scripts": {
@@ -26,7 +26,8 @@
     "helmet": "^8.1.0",
     "js-yaml": "^4.1.1",
     "jsonwebtoken": "^9.0.3",
-    "multer": "^2.1.1"
+    "multer": "^2.1.1",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2"

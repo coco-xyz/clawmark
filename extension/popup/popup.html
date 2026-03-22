@@ -499,6 +499,37 @@
         .message.success { color: #22c55e; }
         .message.error { color: #ef4444; }
 
+        /* ---- Connection Error Banner ---- */
+
+        .connection-error {
+            display: none;
+            padding: 10px 16px;
+            background: rgba(239,68,68,0.12);
+            border-bottom: 1px solid #4a2020;
+            font-size: 12px;
+            color: #ef4444;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .connection-error.visible { display: flex; }
+
+        .connection-error-icon { font-size: 14px; }
+
+        .connection-error-text { flex: 1; }
+
+        .connection-error-retry {
+            background: rgba(239,68,68,0.2);
+            color: #ef4444;
+            border: 1px solid rgba(239,68,68,0.3);
+            border-radius: 4px;
+            padding: 3px 10px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        .connection-error-retry:hover { background: rgba(239,68,68,0.3); }
+
         /* ---- Update Banner ---- */
 
         .update-banner {
@@ -545,6 +576,180 @@
         }
 
         .update-banner .update-dismiss:hover { color: #aaa; }
+
+        /* ---- CDP Mode (#84) ---- */
+        .cdp-section {
+            padding: 10px 16px;
+            border-bottom: 1px solid #2a2a3e;
+        }
+
+        .cdp-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .cdp-label {
+            font-size: 11px;
+            color: #888;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .cdp-indicator {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #444;
+        }
+
+        .cdp-indicator.active { background: #f97316; }
+
+        .cdp-toggle {
+            position: relative;
+            width: 32px;
+            height: 18px;
+            flex-shrink: 0;
+        }
+
+        .cdp-toggle input { opacity: 0; width: 0; height: 0; }
+
+        .cdp-toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #333;
+            border-radius: 18px;
+            transition: background 0.2s;
+        }
+
+        .cdp-toggle-slider::before {
+            content: '';
+            position: absolute;
+            height: 12px; width: 12px;
+            left: 3px; bottom: 3px;
+            background: #888;
+            border-radius: 50%;
+            transition: transform 0.2s, background 0.2s;
+        }
+
+        .cdp-toggle input:checked + .cdp-toggle-slider {
+            background: #f97316;
+        }
+
+        .cdp-toggle input:checked + .cdp-toggle-slider::before {
+            transform: translateX(14px);
+            background: #fff;
+        }
+
+        .cdp-sessions {
+            margin-top: 6px;
+        }
+
+        .cdp-session-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #aaa;
+        }
+
+        .cdp-session-item:hover { background: rgba(255,255,255,0.04); }
+
+        .cdp-session-tab {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .cdp-session-detach {
+            font-size: 10px;
+            padding: 2px 6px;
+            background: rgba(239,68,68,0.1);
+            border: 1px solid rgba(239,68,68,0.3);
+            border-radius: 3px;
+            color: #f87171;
+            cursor: pointer;
+        }
+
+        .cdp-session-detach:hover { background: rgba(239,68,68,0.2); }
+
+        .cdp-empty {
+            font-size: 11px;
+            color: #555;
+            padding: 4px 8px;
+        }
+
+        .cdp-confirm-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+        .cdp-confirm-overlay.visible { display: flex; }
+
+        .cdp-confirm-dialog {
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            border-radius: 10px;
+            padding: 16px;
+            max-width: 280px;
+        }
+
+        .cdp-confirm-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #f97316;
+            margin-bottom: 8px;
+        }
+
+        .cdp-confirm-text {
+            font-size: 12px;
+            color: #aaa;
+            line-height: 1.5;
+            margin-bottom: 14px;
+        }
+
+        .cdp-confirm-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .cdp-confirm-actions button {
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            border: none;
+            font-family: inherit;
+        }
+
+        .cdp-confirm-cancel {
+            background: rgba(255,255,255,0.08);
+            color: #aaa;
+        }
+
+        .cdp-confirm-cancel:hover { background: rgba(255,255,255,0.14); }
+
+        .cdp-confirm-enable {
+            background: #f97316;
+            color: #fff;
+        }
+
+        .cdp-confirm-enable:hover { background: #ea580c; }
     </style>
 </head>
 <body>
@@ -558,6 +763,13 @@
             </label>
         </div>
         <button class="gear-btn" id="gear-btn" title="Open Dashboard">&#x2699;</button>
+    </div>
+
+    <!-- Server connection error banner -->
+    <div class="connection-error" id="connection-error">
+        <span class="connection-error-icon">&#x26A0;</span>
+        <span class="connection-error-text">Cannot connect to server</span>
+        <button class="connection-error-retry" id="connection-retry">Retry</button>
     </div>
 
     <!-- Update banner -->
@@ -588,12 +800,41 @@
         <button class="settings-link" id="settings-link">Open Settings</button>
     </div>
 
+    <!-- CDP confirmation dialog (#84) -->
+    <div class="cdp-confirm-overlay" id="cdp-confirm-overlay">
+        <div class="cdp-confirm-dialog">
+            <div class="cdp-confirm-title">&#x26A0; Enable CDP Mode</div>
+            <div class="cdp-confirm-text">
+                CDP (Chrome DevTools Protocol) gives ClawMark full browser inspection access across all tabs, including DOM, network, and console data.<br><br>
+                This is a global setting &mdash; once enabled, any tab can be attached for debugging. Only enable this if you need advanced debugging features.
+            </div>
+            <div class="cdp-confirm-actions">
+                <button class="cdp-confirm-cancel" id="cdp-confirm-cancel">Cancel</button>
+                <button class="cdp-confirm-enable" id="cdp-confirm-enable">Enable CDP</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Main content (logged in + master ON) -->
     <div class="main-content" id="main-content">
         <!-- Current tab -->
         <div class="current-tab">
             <span class="tab-icon">&#x1f4c4;</span>
             <span class="tab-url" id="tab-url">Loading...</span>
+        </div>
+
+        <!-- CDP Mode (#84) -->
+        <div class="cdp-section">
+            <div class="cdp-header">
+                <span class="cdp-label"><span class="cdp-indicator" id="cdp-indicator"></span> CDP Mode</span>
+                <label class="cdp-toggle" title="Enable/disable CDP inspection">
+                    <input type="checkbox" id="cdp-toggle">
+                    <span class="cdp-toggle-slider"></span>
+                </label>
+            </div>
+            <div class="cdp-sessions" id="cdp-sessions">
+                <div class="cdp-empty" id="cdp-empty">No active CDP sessions</div>
+            </div>
         </div>
 
         <!-- Delivery targets -->
