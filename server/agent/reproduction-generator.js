@@ -37,8 +37,11 @@ function describeEvent(event) {
         }
         case 'dom-mutation':
             return `DOM change: ${(data.summary || data.type || 'mutation').slice(0, 60)}`;
-        default:
-            return `${event.type}: ${JSON.stringify(data).slice(0, 60)}`;
+        default: {
+            // Only stringify keys to avoid serializing large nested objects
+            const keys = Object.keys(data).slice(0, 5).join(', ');
+            return `${event.type}${keys ? ': ' + keys : ''}`;
+        }
     }
 }
 
@@ -59,7 +62,9 @@ function generateSteps(events, errorTime, opts = {}) {
     // Only include events before or at error time
     const preError = events.filter(e => new Date(e.timestamp).getTime() <= errorTs);
 
-    // Prioritize user actions and significant events
+    // Prioritize user actions and significant events.
+    // Note: console-log is intentionally excluded here (noise) but still
+    // described in describeEvent() for use in full timeline views.
     const significant = preError.filter(e =>
         e.type === 'click' || e.type === 'scroll' ||
         e.type === 'network-error' || e.type === 'console-error'

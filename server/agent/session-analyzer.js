@@ -21,13 +21,19 @@ const DEFAULT_AFTER_MS  = 10000; // 10s after error
  * @returns {object[]} Matching sessions
  */
 function findOverlappingSessions(db, appId, errorTime, url) {
+    let hostname;
+    if (url) {
+        try { hostname = new URL(url).hostname; } catch {}
+    }
+
+    const errorTs = new Date(errorTime).getTime();
     const sessions = db.listSessions({
         app_id: appId,
-        site: url ? new URL(url).hostname : undefined,
+        site: hostname,
+        after: new Date(errorTs - 3600000).toISOString(), // 1h before error
         limit: 50,
     });
 
-    const errorTs = new Date(errorTime).getTime();
     return sessions.filter(s => {
         const start = new Date(s.start_time).getTime();
         const end = s.end_time ? new Date(s.end_time).getTime() : Date.now();
@@ -98,13 +104,21 @@ function correlate(db, errorEvent, opts = {}) {
     const sessions = findOverlappingSessions(db, appId, errorTime, errorEvent.url);
     if (sessions.length === 0) return null;
 
-    // Prefer session whose URL matches the error URL most closely
+    // Prefer session whose origin matches the error URL's origin
     let bestSession = sessions[0];
     if (errorEvent.url && sessions.length > 1) {
-        for (const s of sessions) {
-            if (s.url && errorEvent.url.startsWith(s.url)) {
-                bestSession = s;
-                break;
+        let errorOrigin;
+        try { errorOrigin = new URL(errorEvent.url).origin; } catch {}
+
+        if (errorOrigin) {
+            for (const s of sessions) {
+                if (!s.url) continue;
+                try {
+                    if (new URL(s.url).origin === errorOrigin) {
+                        bestSession = s;
+                        break;
+                    }
+                } catch {}
             }
         }
     }
