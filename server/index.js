@@ -3024,9 +3024,12 @@ app.get('/api/v2/agent-channel/cdp/audit', apiReadLimiter, v2AuthOrAgent, (req, 
     try {
         let logs;
         if (session_key) {
-            logs = itemsDb.getCdpAuditBySession(session_key, safeLimit);
+            // Filter by app_id to prevent cross-app leakage (P2 fix)
+            logs = itemsDb.getCdpAuditBySession(session_key, safeLimit)
+                .filter(l => l.app_id === app_id);
         } else if (agent_id) {
-            logs = itemsDb.getCdpAuditByAgent(agent_id, safeLimit);
+            logs = itemsDb.getCdpAuditByAgent(agent_id, safeLimit)
+                .filter(l => l.app_id === app_id);
         } else {
             logs = itemsDb.getCdpAuditByApp(app_id, safeLimit);
         }

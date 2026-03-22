@@ -374,8 +374,8 @@ describe('CDP WS — command relay', () => {
         assert.equal(cmd.method, 'Runtime.evaluate');
         assert.deepEqual(cmd.params, { expression: '1+1' });
 
-        // Extension sends result back
-        send(ext, { type: 'cdp:result', commandId: 'cmd-1', result: { result: { value: 2 } }, durationMs: 5, _auditId: cmd._auditId, tabId: 1 });
+        // Extension sends result back (no _auditId — tracked server-side)
+        send(ext, { type: 'cdp:result', commandId: 'cmd-1', result: { result: { value: 2 } }, durationMs: 5, tabId: 1 });
 
         // Agent receives result
         const result = await waitMsg(agent, m => m.type === 'cdp:result' && m.commandId === 'cmd-1');
@@ -404,7 +404,7 @@ describe('CDP WS — command relay', () => {
         send(agent, { type: 'cdp:command', commandId: 'cmd-err', method: 'BadDomain.badMethod', tabId: 1 });
         const cmd = await waitMsg(ext, m => m.type === 'cdp:command');
 
-        send(ext, { type: 'cdp:result', commandId: 'cmd-err', error: 'Protocol error', _auditId: cmd._auditId, tabId: 1 });
+        send(ext, { type: 'cdp:result', commandId: 'cmd-err', error: 'Protocol error', tabId: 1 });
 
         const result = await waitMsg(agent, m => m.type === 'cdp:result' && m.commandId === 'cmd-err');
         assert.equal(result.error, 'Protocol error');
