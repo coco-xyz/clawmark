@@ -167,10 +167,13 @@ function resolveTarget({ source_url, user_name, type, priority, tags, db, defaul
         };
     }
 
-    // Step 4: System default fallback
+    // Step 4: System default fallback (only if defaultTarget is configured)
+    if (!defaultTarget) {
+        return { target_type: null, target_config: null, matched_rule: null, method: 'no_target' };
+    }
     return {
         target_type: 'github-issue',
-        target_config: defaultTarget || { repo: 'coco-xyz/clawmark', labels: ['clawmark'], assignees: [] },
+        target_config: defaultTarget,
         matched_rule: null,
         method: 'system_default',
     };
@@ -193,6 +196,7 @@ function resolveTargets(params) {
     const seen = new Set();
 
     function dedup(target) {
+        if (!target.target_type || !target.target_config) return true; // no_target — skip dedup
         const key = `${target.target_type}:${target.target_config.repo || target.target_config.webhook_url || target.target_config.chat_id || JSON.stringify(target.target_config)}`;
         if (seen.has(key)) return false;
         seen.add(key);
@@ -259,14 +263,18 @@ function resolveTargets(params) {
         }
     }
 
-    // Step 4: System default if still empty
+    // Step 4: System default if still empty (only if defaultTarget is configured)
     if (targets.length === 0) {
-        targets.push({
-            target_type: 'github-issue',
-            target_config: defaultTarget || { repo: 'coco-xyz/clawmark', labels: ['clawmark'], assignees: [] },
-            matched_rule: null,
-            method: 'system_default',
-        });
+        if (defaultTarget) {
+            targets.push({
+                target_type: 'github-issue',
+                target_config: defaultTarget,
+                matched_rule: null,
+                method: 'system_default',
+            });
+        } else {
+            targets.push({ target_type: null, target_config: null, matched_rule: null, method: 'no_target' });
+        }
     }
 
     return targets;

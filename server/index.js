@@ -263,7 +263,7 @@ const defaultGitHubTarget = config.distribution?.channels?.['github-clawmark']
         labels: config.distribution.channels['github-clawmark'].labels || ['clawmark'],
         assignees: config.distribution.channels['github-clawmark'].assignees || [],
     }
-    : { repo: 'coco-xyz/clawmark', labels: ['clawmark'], assignees: [] };
+    : null;
 
 /**
  * Dispatch event through the adapter registry (fire-and-forget).
@@ -334,6 +334,14 @@ async function sendWebhook(event, payload) {
             }
 
             delete payload._selected_targets;
+        }
+
+        // Filter out no_target entries — nothing to dispatch
+        filteredTargets = filteredTargets.filter(t => t.target_type && t.target_config);
+
+        if (filteredTargets.length === 0) {
+            console.log(`[routing] ${event}: no targets resolved — skipping dispatch`);
+            return [{ target_type: null, status: 'skipped', method: 'no_target' }];
         }
 
         // Inject auth credentials from user_auths into targets that reference an auth_id.
@@ -1538,7 +1546,7 @@ app.post('/api/v2/routing/resolve', apiReadLimiter, v2Auth, async (req, res) => 
     }
 
     res.json({
-        targets: validatedTargets.map(t => ({
+        targets: validatedTargets.filter(t => t.target_type && t.target_config).map(t => ({
             target_type: t.target_type,
             target_config: redactConfig(
                 typeof t.target_config === 'string' ? JSON.parse(t.target_config) : t.target_config

@@ -313,6 +313,30 @@ describe('resolveTarget', () => {
         // Kevin's rule should NOT match for Jessie
         assert.strictEqual(result.method, 'system_default');
     });
+
+    it('returns no_target when no rules match and no defaultTarget configured (#253)', () => {
+        const result = resolveTarget({
+            source_url: 'https://docs.anthropic.com/en/docs/welcome',
+            user_name: 'Kevin',
+            db: mockDb([]),
+            defaultTarget: null,
+        });
+
+        assert.strictEqual(result.method, 'no_target');
+        assert.strictEqual(result.target_type, null);
+        assert.strictEqual(result.target_config, null);
+    });
+
+    it('returns no_target when defaultTarget is undefined (#253)', () => {
+        const result = resolveTarget({
+            source_url: 'https://docs.anthropic.com/en/docs/welcome',
+            user_name: 'Kevin',
+            db: mockDb([]),
+        });
+
+        assert.strictEqual(result.method, 'no_target');
+        assert.strictEqual(result.target_type, null);
+    });
 });
 
 // ==================================================================
@@ -412,6 +436,21 @@ describe('resolveTargets — multi-target', () => {
         assert.equal(targets[0].method, 'system_default');
     });
 
+    it('returns no_target when nothing matches and no defaultTarget (#253)', () => {
+        const mockDb = { getUserRules: () => [] };
+
+        const targets = resolveTargets({
+            source_url: 'https://docs.example.com/page',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: null,
+        });
+
+        assert.equal(targets.length, 1);
+        assert.equal(targets[0].method, 'no_target');
+        assert.equal(targets[0].target_type, null);
+    });
+
     it('declaration takes priority and coexists with user rules', () => {
         const mockDb = {
             getUserRules: () => [
@@ -449,6 +488,23 @@ describe('resolveTargets — multi-target', () => {
         // Disabled rule skipped, falls to system default
         assert.equal(targets.length, 1);
         assert.equal(targets[0].method, 'system_default');
+    });
+
+    it('no_target result does not crash dedup (null target_config)', () => {
+        const mockDb = { getUserRules: () => [] };
+
+        // Should not throw — dedup must handle null target_config
+        const targets = resolveTargets({
+            source_url: 'https://random-site.com/page',
+            user_name: 'testuser',
+            db: mockDb,
+            defaultTarget: null,
+        });
+
+        assert.equal(targets.length, 1);
+        assert.equal(targets[0].method, 'no_target');
+        assert.equal(targets[0].target_type, null);
+        assert.equal(targets[0].target_config, null);
     });
 
     it('matches tag rules alongside url rules', () => {
