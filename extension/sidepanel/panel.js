@@ -131,7 +131,10 @@ async function loadItems(skipCache = false) {
         renderItems();
     } catch (err) {
         const msg = isConnectionError(err) ? 'Cannot connect to server. Check your server URL in settings.' : err.message;
-        itemsContainer.innerHTML = `<div class="error-msg">${msg}</div>`;
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-msg';
+        errorDiv.textContent = msg;
+        itemsContainer.replaceChildren(errorDiv);
     }
 }
 

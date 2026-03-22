@@ -624,11 +624,12 @@ async function checkServerConnection() {
 connectionRetryEl.addEventListener('click', async () => {
     connectionRetryEl.textContent = '...';
     connectionRetryEl.disabled = true;
-    const ok = await checkServerConnection();
-    connectionRetryEl.textContent = 'Retry';
-    connectionRetryEl.disabled = false;
-    if (ok && isLoggedIn && masterToggle.checked) {
-        loadPageData();
+    try {
+        const ok = await checkServerConnection();
+        if (ok && isLoggedIn && masterToggle.checked) loadPageData();
+    } finally {
+        connectionRetryEl.textContent = 'Retry';
+        connectionRetryEl.disabled = false;
     }
 });
 
