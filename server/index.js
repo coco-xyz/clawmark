@@ -123,6 +123,7 @@ const { resolveTarget, resolveTargets } = require('./routing');
 const { autoSeverity } = require('./severity');
 const { hashKey, generateAgentKey, createAgentAuth } = require('./agent-auth');
 const { initActionWs } = require('./ws-actions');
+const { initCdpWs } = require('./ws-cdp');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
 
@@ -3009,6 +3010,33 @@ app.get('/api/v2/agent-channel/actions', apiReadLimiter, v2AuthOrAgent, (req, re
     }
 });
 
+// ----------------------------------------------------------------- CDP audit log (#83)
+
+// GET /api/v2/agent-channel/cdp/audit — query CDP audit logs
+app.get('/api/v2/agent-channel/cdp/audit', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    const agent_id = req.v2Auth?.agent?.id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    const { session_key, limit } = req.query;
+    const safeLimit = Math.min(parseInt(limit) || 100, 500);
+
+    try {
+        let logs;
+        if (session_key) {
+            logs = itemsDb.getCdpAuditBySession(session_key, safeLimit);
+        } else if (agent_id) {
+            logs = itemsDb.getCdpAuditByAgent(agent_id, safeLimit);
+        } else {
+            logs = itemsDb.getCdpAuditByApp(app_id, safeLimit);
+        }
+        res.json({ logs, count: logs.length });
+    } catch (err) {
+        console.error('[cdp] Audit query error:', err.message);
+        res.status(500).json({ error: 'Failed to query CDP audit logs' });
+    }
+});
+
 // ----------------------------------------------------------------- health
 
 app.get('/health', (req, res) => {
@@ -3032,9 +3060,13 @@ const server = app.listen(PORT, () => {
     console.log(`    auth      : JWT + API key (invite codes deprecated)`);
     console.log(`    api v2    : /api/v2/*`);
     console.log(`    ws        : /ws/agent-channel/actions`);
+    console.log(`    ws        : /ws/agent-channel/cdp`);
 
     // Action WebSocket (#78)
     const actionWs = initActionWs(server, itemsDb);
+
+    // CDP Channel WebSocket (#83)
+    const cdpWs = initCdpWs(server, itemsDb);
 
     // Action timeout checker: every 5s
     setInterval(() => {
@@ -3071,6 +3103,14 @@ const server = app.listen(PORT, () => {
             }
         } catch (err) {
             console.error('[actions] Cleanup error:', err.message);
+        }
+        try {
+            const result = itemsDb.cleanupOldCdpAuditLogs(7);
+            if (result.deleted > 0) {
+                console.log(`[cdp] Cleaned up ${result.deleted} old audit log(s) (>7d)`);
+            }
+        } catch (err) {
+            console.error('[cdp] Cleanup error:', err.message);
         }
     };
     runSessionCleanup(); // run on startup
