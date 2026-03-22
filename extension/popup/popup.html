@@ -499,6 +499,37 @@
         .message.success { color: #22c55e; }
         .message.error { color: #ef4444; }
 
+        /* ---- Connection Error Banner ---- */
+
+        .connection-error {
+            display: none;
+            padding: 10px 16px;
+            background: rgba(239,68,68,0.12);
+            border-bottom: 1px solid #4a2020;
+            font-size: 12px;
+            color: #ef4444;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .connection-error.visible { display: flex; }
+
+        .connection-error-icon { font-size: 14px; }
+
+        .connection-error-text { flex: 1; }
+
+        .connection-error-retry {
+            background: rgba(239,68,68,0.2);
+            color: #ef4444;
+            border: 1px solid rgba(239,68,68,0.3);
+            border-radius: 4px;
+            padding: 3px 10px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        .connection-error-retry:hover { background: rgba(239,68,68,0.3); }
+
         /* ---- Update Banner ---- */
 
         .update-banner {
@@ -732,6 +763,13 @@
             </label>
         </div>
         <button class="gear-btn" id="gear-btn" title="Open Dashboard">&#x2699;</button>
+    </div>
+
+    <!-- Server connection error banner -->
+    <div class="connection-error" id="connection-error">
+        <span class="connection-error-icon">&#x26A0;</span>
+        <span class="connection-error-text">Cannot connect to server</span>
+        <button class="connection-error-retry" id="connection-retry">Retry</button>
     </div>
 
     <!-- Update banner -->

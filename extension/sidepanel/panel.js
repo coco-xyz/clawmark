@@ -6,6 +6,11 @@
 
 'use strict';
 
+function isConnectionError(err) {
+    const msg = (err.message || '').toLowerCase();
+    return msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('network error') || msg.includes('load failed');
+}
+
 // ------------------------------------------------------------------ state
 
 let items = [];
@@ -133,7 +138,11 @@ async function loadItems(skipCache = false) {
         updateCounts();
         renderItems();
     } catch (err) {
-        itemsContainer.innerHTML = `<div class="error-msg">${err.message}</div>`;
+        const msg = isConnectionError(err) ? 'Cannot connect to server. Check your server URL in settings.' : err.message;
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-msg';
+        errorDiv.textContent = msg;
+        itemsContainer.replaceChildren(errorDiv);
     }
 }
 
