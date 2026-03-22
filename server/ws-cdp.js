@@ -134,13 +134,14 @@ function initCdpWs(server, db) {
                 if (set.size === 0) registry.delete(ctx.app_id);
             }
 
-            // Clean up CDP locks owned by this agent
+            // Clean up CDP locks and rate limiter entries owned by this agent
             if (ctx.role === 'agent') {
                 for (const [lockKey, lock] of cdpLocks) {
                     if (lock.agent_id === ctx.agent_id && lockKey.startsWith(ctx.app_id + ':')) {
                         cdpLocks.delete(lockKey);
                     }
                 }
+                rateLimits.delete(ctx.agent_id);
             }
         });
     });
@@ -263,7 +264,6 @@ function initCdpWs(server, db) {
                 tabId,
                 domains: subscribedDomains,
                 sessionKey,
-                agent_id: ctx.agent_id,
             }));
         } catch {
             cdpLocks.delete(lockKey);
@@ -379,7 +379,7 @@ function initCdpWs(server, db) {
         const tracked = pendingCommands.get(cmdKey);
         if (tracked) {
             pendingCommands.delete(cmdKey);
-            const elapsed = tracked.auditId ? (durationMs || Date.now() - tracked.sentAt) : null;
+            const elapsed = tracked.auditId ? (durationMs ?? Date.now() - tracked.sentAt) : null;
             if (tracked.auditId) {
                 try {
                     db.updateCdpAuditLog(tracked.auditId, {
