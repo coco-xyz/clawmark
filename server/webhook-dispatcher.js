@@ -3,7 +3,8 @@
 const https = require('https');
 const http = require('http');
 const crypto = require('crypto');
-const { isSafeUrl } = require('./target-declaration');
+const { lookup } = require('dns/promises');
+const { isPrivateIP } = require('./target-declaration');
 
 /**
  * Webhook Dispatcher (#88)
@@ -13,7 +14,7 @@ const { isSafeUrl } = require('./target-declaration');
  * auto-disable after 10 consecutive failures, and rate limiting.
  */
 
-// Rate limiter: agent_id -> { count, windowStart }
+// Rate limiter: agent_id -> timestamps array (sliding window)
 const rateLimits = new Map();
 const RATE_LIMIT_MAX = 100; // 100 deliveries/minute per agent
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
@@ -22,18 +23,23 @@ const RATE_LIMIT_WINDOW = 60000; // 1 minute
 const RETRY_DELAYS = [0, 30000, 120000, 600000]; // immediate, 30s, 2min, 10min
 
 /**
- * Check rate limit for an agent.
+ * Check rate limit for an agent (true sliding window).
  * @returns {boolean} true if allowed
  */
 function checkRateLimit(agentId) {
     const now = Date.now();
-    let entry = rateLimits.get(agentId);
-    if (!entry || now - entry.windowStart >= RATE_LIMIT_WINDOW) {
-        entry = { count: 0, windowStart: now };
-        rateLimits.set(agentId, entry);
+    let timestamps = rateLimits.get(agentId);
+    if (!timestamps) {
+        timestamps = [];
+        rateLimits.set(agentId, timestamps);
     }
-    if (entry.count >= RATE_LIMIT_MAX) return false;
-    entry.count++;
+    // Evict entries older than the window
+    const cutoff = now - RATE_LIMIT_WINDOW;
+    while (timestamps.length > 0 && timestamps[0] <= cutoff) {
+        timestamps.shift();
+    }
+    if (timestamps.length >= RATE_LIMIT_MAX) return false;
+    timestamps.push(now);
     return true;
 }
 
@@ -175,21 +181,30 @@ function formatDingTalk(data) {
  * @returns {Promise<{ ok: boolean, status_code?: number, error?: string }>}
  */
 async function deliverWebhook(url, body, secret, allowHttp = false) {
-    // SSRF protection
-    const safe = await isSafeUrl(url);
-    if (!safe) {
-        return { ok: false, error: 'URL blocked by SSRF protection' };
+    // Validate URL and protocol
+    let parsed;
+    try { parsed = new URL(url); } catch { return { ok: false, error: 'Invalid URL' }; }
+
+    const isHttps = parsed.protocol === 'https:';
+    if (!isHttps && !allowHttp) {
+        return { ok: false, error: 'HTTPS required (set allow_http to enable HTTP)' };
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        return { ok: false, error: 'Only HTTP(S) protocols allowed' };
+    }
+
+    // SSRF protection: DNS resolve and block private IPs
+    try {
+        const { address } = await lookup(parsed.hostname);
+        if (isPrivateIP(address)) {
+            return { ok: false, error: 'URL blocked by SSRF protection (private IP)' };
+        }
+    } catch {
+        return { ok: false, error: 'DNS resolution failed' };
     }
 
     const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
     const signature = crypto.createHmac('sha256', secret).update(bodyStr).digest('hex');
-
-    const parsed = new URL(url);
-    const isHttps = parsed.protocol === 'https:';
-
-    if (!isHttps && !allowHttp) {
-        return { ok: false, error: 'HTTPS required (set allow_http to enable HTTP)' };
-    }
 
     const transport = isHttps ? https : http;
 
