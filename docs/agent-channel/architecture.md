@@ -29,12 +29,13 @@ flowchart LR
         ISS["perception_issues"]
     end
 
-    subgraph Agent["AI Agent"]
-        PC["PerceptionConsumer<br/>(轮询)"]
+    subgraph Agent["内置 Agent 消费者（进程内）"]
+        PC["PerceptionConsumer<br/>(定时轮询 DB)"]
         DD["ErrorDeduplicator<br/>(去重)"]
         IC["IssueCreator<br/>(建 Issue)"]
     end
 
+    EA["外部 Agent<br/>(HTTP 轮询)"]
     GL["GitLab"]
 
     CS_ERR -->|PerceptionEvent| SW
@@ -44,13 +45,14 @@ flowchart LR
     SW -->|POST /perception| API
     API -->|写入| DB
 
-    PC -->|GET /perception| API
-    API -->|events| PC
+    PC -->|db.getPerceptionEvents()| DB
     PC --> DD
     DD -->|唯一错误| IC
     IC -->|创建 Issue| GL
-    IC -->|POST /perception/issues| API
-    API -->|写入| ISS
+    PC -->|db.upsertPerceptionIssue()| ISS
+
+    EA -->|GET /perception| API
+    API -->|events| EA
 ```
 
 ---
@@ -104,33 +106,36 @@ flowchart LR
 
 ### 4. Agent 消费者（PerceptionConsumer）
 
-Agent 侧的事件处理流水线：
+PerceptionConsumer 作为 **进程内模块** 运行在 ClawMark Server 中，直接访问 SQLite 数据库，不经过 HTTP API。
+
+> **注意区分：** PerceptionConsumer 是内置消费者，直接调 `db.getPerceptionEvents()`。HTTP API（`GET /perception`）是给**外部 Agent** 用的拉取接口。两者数据源相同但访问方式不同。
 
 ```mermaid
 sequenceDiagram
-    participant PC as PerceptionConsumer
-    participant API as ClawMark API
+    participant PC as PerceptionConsumer<br/>(进程内)
+    participant DB as SQLite
     participant DD as ErrorDeduplicator
     participant IC as IssueCreator
     participant GL as GitLab
 
     loop 每 30 秒轮询
-        PC->>API: GET /perception?cursor=xxx&limit=100
-        API-->>PC: events[]
+        PC->>DB: db.getPerceptionEvents({app_id, cursor, limit})
+        DB-->>PC: events[]
 
         PC->>DD: filterBySeverity(events, 'error')
         DD->>DD: deduplicateEvents(filtered)
 
         loop 每个唯一 fingerprint
             DD->>PC: {fingerprint, count, representative}
-            PC->>API: 检查是否已追踪
+            PC->>DB: db.getPerceptionIssue({fingerprint})
             alt 新错误
+                PC->>DB: db.upsertPerceptionIssue(...)
                 PC->>IC: createIssue(group)
                 IC->>GL: POST GitLab Issue
                 GL-->>IC: {iid, url}
-                IC->>API: POST /perception/issues
+                PC->>DB: 更新 gitlab_issue_id/url
             else 已知错误
-                PC->>API: 更新 count + last_seen
+                PC->>DB: 更新 count + last_seen
             end
         end
     end
