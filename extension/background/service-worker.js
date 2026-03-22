@@ -18,6 +18,9 @@ importScripts('./action-queue.js');
 importScripts('./cdp-session-manager.js');
 importScripts('./cdp-tab-targeter.js');
 importScripts('./cdp-event-forwarder.js');
+importScripts('./cdp-whitelist.js');
+importScripts('./cdp-safety.js');
+importScripts('./cdp-relay.js');
 
 // ------------------------------------------------------------------ config
 
@@ -813,12 +816,14 @@ async function handleMessage(message, sender) {
 
         case 'cdp:command': {
             const tabId = message.tabId || sender.tab?.id;
-            try {
-                const result = await cdpSendCommand(tabId, message.method, message.params);
-                return { success: true, result };
-            } catch (err) {
-                return { success: false, error: err.message };
-            }
+            const relayResult = await cdpRelayCommand({
+                commandId: message.commandId || `local-${Date.now()}`,
+                tabId,
+                method: message.method,
+                params: message.params,
+                options: message.options,
+            });
+            return relayResult;
         }
 
         case 'cdp:status': {
@@ -846,6 +851,31 @@ async function handleMessage(message, sender) {
 
         case 'cdp:list-tabs':
             return listTargetableTabs();
+
+        // ── CDP relay (#82) ─────────────────────────────────────────
+        case 'cdp:relay': {
+            // Server-originated CDP command routed through relay
+            const relayResult = await cdpRelayCommand(message.payload);
+            return relayResult;
+        }
+
+        case 'cdp:batch': {
+            const batchResults = await cdpRelayBatch(
+                message.payload.commands,
+                message.payload.options,
+            );
+            return { results: batchResults };
+        }
+
+        case 'cdp:audit-log':
+            return { entries: cdpGetAuditLog(message.filter || {}) };
+
+        case 'cdp:clear-audit-log':
+            cdpClearAuditLog();
+            return { success: true };
+
+        case 'cdp:whitelist-info':
+            return cdpWhitelistInfo();
 
         default:
             return { error: `Unknown message type: ${message.type}` };
