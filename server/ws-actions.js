@@ -201,14 +201,16 @@ function initActionWs(server, db) {
         const ext = extSockets.values().next().value;
         if (ext.readyState !== 1) return false; // WebSocket.OPEN
 
-        ext.send(JSON.stringify({
-            type: 'action',
-            action_id: action.id,
-            action_type: action.type,
-            payload: JSON.parse(action.payload),
-            session_id: action.session_id,
-            timeout_ms: action.timeout_ms,
-        }));
+        try {
+            ext.send(JSON.stringify({
+                type: 'action',
+                action_id: action.id,
+                action_type: action.type,
+                payload: JSON.parse(action.payload),
+                session_id: action.session_id,
+                timeout_ms: action.timeout_ms,
+            }));
+        } catch { return false; } // TOCTOU: socket closed between readyState check and send
 
         db.updateActionStatus(actionId, { status: 'dispatched' });
         return true;
