@@ -510,6 +510,27 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_agent_actions_created ON agent_actions(app_id, created_at);
     `);
 
+    // ----------------------------------------- schema: cdp_audit_log (#83 CDP Channel)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS cdp_audit_log (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            agent_id        TEXT NOT NULL,
+            session_key     TEXT NOT NULL,
+            tab_id          INTEGER NOT NULL,
+            method          TEXT NOT NULL,
+            params_hash     TEXT,
+            status          TEXT NOT NULL DEFAULT 'sent',
+            result_summary  TEXT,
+            error           TEXT,
+            duration_ms     INTEGER,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cdp_audit_app ON cdp_audit_log(app_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_cdp_audit_agent ON cdp_audit_log(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_cdp_audit_session ON cdp_audit_log(session_key);
+    `);
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -795,6 +816,21 @@ function initDb(dataDir) {
         deactivateAgent: db.prepare("UPDATE agents SET status = 'inactive', updated_at = ? WHERE id = ?"),
         updateAgentLastSeen: db.prepare('UPDATE agents SET last_seen = ? WHERE id = ?'),
         updateAgentKey: db.prepare('UPDATE agents SET key_hash = @key_hash, key_prefix = @key_prefix, updated_at = @updated_at WHERE id = @id'),
+    };
+
+    // ------------------------------------------------- cdp_audit_log statements (#83)
+    const cdpStmts = {
+        insertLog: db.prepare(`
+            INSERT INTO cdp_audit_log (id, app_id, agent_id, session_key, tab_id, method, params_hash, status, created_at)
+            VALUES (@id, @app_id, @agent_id, @session_key, @tab_id, @method, @params_hash, @status, @created_at)
+        `),
+        updateLog: db.prepare(`
+            UPDATE cdp_audit_log SET status = @status, result_summary = @result_summary, error = @error, duration_ms = @duration_ms WHERE id = @id
+        `),
+        getBySession: db.prepare('SELECT * FROM cdp_audit_log WHERE session_key = ? ORDER BY created_at DESC LIMIT ?'),
+        getByAgent: db.prepare('SELECT * FROM cdp_audit_log WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?'),
+        getByApp: db.prepare('SELECT * FROM cdp_audit_log WHERE app_id = ? ORDER BY created_at DESC LIMIT ?'),
+        deleteOld: db.prepare('DELETE FROM cdp_audit_log WHERE created_at < ?'),
     };
 
     // ------------------------------------------------- user_auths statements
@@ -1898,7 +1934,7 @@ function initDb(dataDir) {
 
     // ------------------------------------------------- agent actions (#87 Dashboard)
 
-    const actionStmts = {
+    const agentActionStmts = {
         insert: db.prepare(`
             INSERT INTO agent_actions (id, app_id, agent_id, action_type, target_type, target_id, summary, status, metadata, created_at)
             VALUES (@id, @app_id, @agent_id, @action_type, @target_type, @target_id, @summary, @status, @metadata, @created_at)
@@ -1938,7 +1974,7 @@ function initDb(dataDir) {
 
     function logAgentAction({ app_id, agent_id, action_type, target_type, target_id, summary, status, metadata }) {
         const id = genId('act');
-        actionStmts.insert.run({
+        agentActionStmts.insert.run({
             id,
             app_id,
             agent_id: agent_id || null,
@@ -1958,20 +1994,20 @@ function initDb(dataDir) {
         const safeLimit = Math.min(limit, 500);
 
         if (agent_id && action_type) {
-            return actionStmts.queryByAgentAndType.all(app_id, agent_id, action_type, cutoff, safeLimit);
+            return agentActionStmts.queryByAgentAndType.all(app_id, agent_id, action_type, cutoff, safeLimit);
         }
         if (agent_id) {
-            return actionStmts.queryByAgent.all(app_id, agent_id, cutoff, safeLimit);
+            return agentActionStmts.queryByAgent.all(app_id, agent_id, cutoff, safeLimit);
         }
         if (action_type) {
-            return actionStmts.queryByType.all(app_id, action_type, cutoff, safeLimit);
+            return agentActionStmts.queryByType.all(app_id, action_type, cutoff, safeLimit);
         }
-        return actionStmts.query.all(app_id, cutoff, safeLimit);
+        return agentActionStmts.query.all(app_id, cutoff, safeLimit);
     }
 
     function getAgentActionSummary({ app_id, days = 30 }) {
         const cutoff = new Date(Date.now() - days * 86400000).toISOString();
-        return actionStmts.countByType.all(app_id, cutoff);
+        return agentActionStmts.countByType.all(app_id, cutoff);
     }
 
     function cleanupOldActions(retentionDays = 90) {
@@ -2526,6 +2562,37 @@ function initDb(dataDir) {
         agentStmts.updateAgentKey.run({ id, key_hash, key_prefix, updated_at: now });
     }
 
+    // ------------------------------------------------- CDP audit log methods (#83)
+
+    function createCdpAuditLog({ app_id, agent_id, session_key, tab_id, method, params_hash }) {
+        const id = genId('cdp');
+        const now = new Date().toISOString();
+        cdpStmts.insertLog.run({ id, app_id, agent_id, session_key, tab_id, method, params_hash: params_hash || null, status: 'sent', created_at: now });
+        return { id, created_at: now };
+    }
+
+    function updateCdpAuditLog(id, { status, result_summary, error, duration_ms }) {
+        cdpStmts.updateLog.run({ id, status, result_summary: result_summary || null, error: error || null, duration_ms: duration_ms || null });
+    }
+
+    function getCdpAuditBySession(session_key, limit = 100) {
+        return cdpStmts.getBySession.all(session_key, Math.min(limit, 500));
+    }
+
+    function getCdpAuditByAgent(agent_id, limit = 100) {
+        return cdpStmts.getByAgent.all(agent_id, Math.min(limit, 500));
+    }
+
+    function getCdpAuditByApp(app_id, limit = 100) {
+        return cdpStmts.getByApp.all(app_id, Math.min(limit, 500));
+    }
+
+    function cleanupOldCdpAuditLogs(retentionDays = 7) {
+        const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+        const result = cdpStmts.deleteOld.run(cutoff);
+        return { deleted: result.changes };
+    }
+
     return {
         db,
         genId,
@@ -2663,6 +2730,13 @@ function initDb(dataDir) {
         updateActionStatus,
         getTimedOutActions,
         cleanupOldActions,
+        // CDP Audit Log (#83)
+        createCdpAuditLog,
+        updateCdpAuditLog,
+        getCdpAuditBySession,
+        getCdpAuditByAgent,
+        getCdpAuditByApp,
+        cleanupOldCdpAuditLogs,
     };
 }
 
