@@ -81,7 +81,10 @@ function openDashboard(hash) {
 
 gearBtn.addEventListener('click', () => openDashboard());
 
-settingsLink.addEventListener('click', () => openDashboard('account'));
+settingsLink.addEventListener('click', () => {
+    chrome.runtime.openOptionsPage();
+    window.close();
+});
 
 // ------------------------------------------------------------------ auth
 
