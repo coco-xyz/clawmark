@@ -1,7 +1,9 @@
 /**
- * ClawMark — GitLab Issue Creator for Perception Events (#69)
+ * ClawMark — GitLab Issue Creator for Perception Events (#69, #74)
  *
  * Creates well-formatted GitLab issues from deduplicated perception errors.
+ * Enhanced with session context: reproduction steps, user action timeline,
+ * and snapshot references (#74).
  * Uses the GitLab API directly (same pattern as adapters/gitlab-issue.js).
  */
 
@@ -34,12 +36,15 @@ class PerceptionIssueCreator {
      * Create a GitLab issue from a deduplicated error group.
      *
      * @param {object} group - Dedup group { fingerprint, count, representative, events }
+     * @param {object} [sessionContext] - Optional session context from session-analyzer (#74)
+     * @param {object} [sessionContext.report] - Output from reproduction-generator.generateReport()
+     * @param {object} [sessionContext.correlation] - Output from session-analyzer.correlate()
      * @returns {Promise<{ iid: number, url: string }>}
      */
-    async createIssue(group) {
+    async createIssue(group, sessionContext) {
         const { representative, count, fingerprint, events } = group;
         const title = this._buildTitle(representative);
-        const description = this._buildDescription(group);
+        const description = this._buildDescription(group, sessionContext);
 
         const labels = [...this.labels];
         if (representative.severity === 'critical') {
@@ -82,7 +87,7 @@ class PerceptionIssueCreator {
         return `[ErrorSentinel][${typeLabel}] ${msg}`;
     }
 
-    _buildDescription(group) {
+    _buildDescription(group, sessionContext) {
         const { representative, count, fingerprint, events } = group;
         const firstSeen = events.length > 0
             ? events.reduce((min, e) => e.created_at < min ? e.created_at : min, events[0].created_at)
@@ -116,11 +121,24 @@ class PerceptionIssueCreator {
             lines.push('## Stack Trace', '', '```', representative.stack.slice(0, 4096), '```', '');
         }
 
-        if (ctx.userAction || ctx.sessionPhase) {
+        // Session context: reproduction steps and user action timeline (#74)
+        if (sessionContext && sessionContext.report) {
+            const report = sessionContext.report;
+            if (report.timeline) {
+                lines.push('## Reproduction', '', report.timeline, '');
+            }
+        } else if (ctx.userAction || ctx.sessionPhase) {
             lines.push('## Context', '');
             if (ctx.userAction) lines.push(`- **User Action**: ${ctx.userAction}`);
             if (ctx.sessionPhase) lines.push(`- **Session Phase**: ${ctx.sessionPhase}`);
             lines.push('');
+        }
+
+        // Session snapshot reference (#74)
+        if (sessionContext && sessionContext.correlation && sessionContext.correlation.closestSnapshot) {
+            const snap = sessionContext.correlation.closestSnapshot;
+            lines.push('## Snapshot', '');
+            lines.push(`Session snapshot at ${snap.timestamp} (ID: \`${snap.id}\`)`, '');
         }
 
         if (this.parentIssueIid) {

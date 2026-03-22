@@ -14,6 +14,8 @@
 
 const { deduplicateEvents, filterBySeverity, generateFingerprint } = require('./error-deduplicator');
 const PerceptionIssueCreator = require('./issue-creator');
+const { correlate } = require('./session-analyzer');
+const { generateReport } = require('./reproduction-generator');
 
 class PerceptionConsumer {
     /**
@@ -131,7 +133,19 @@ class PerceptionConsumer {
         // Create GitLab issue if creator is configured
         if (this.issueCreator) {
             try {
-                const result = await this.issueCreator.createIssue(group);
+                // Correlate with session data for enhanced issue reports (#74)
+                let sessionContext = null;
+                try {
+                    const correlation = correlate(this.db, representative);
+                    if (correlation) {
+                        const report = generateReport(correlation, representative);
+                        sessionContext = { correlation, report };
+                    }
+                } catch (err) {
+                    console.warn(`[perception-consumer] Session correlation failed for ${fingerprint}: ${err.message}`);
+                }
+
+                const result = await this.issueCreator.createIssue(group, sessionContext);
                 // Update the tracked issue with GitLab info
                 this.db.upsertPerceptionIssue({
                     app_id: this.appId,
