@@ -2490,8 +2490,10 @@ app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (re
         return res.status(400).json({ error: 'Max 100 events per request' });
     }
 
+    const agent_id = req.agent?.id || null;
     const enriched = events.map(e => ({
         app_id,
+        agent_id,
         type: e.type || 'unknown',
         message: (e.message || '').slice(0, 4096),
         stack: (e.stack || '').slice(0, 8192) || null,
@@ -2550,9 +2552,14 @@ app.get('/api/v2/agent-channel/perception', apiReadLimiter, v2AuthOrAgent, (req,
 
     const cursor = req.query.cursor || null;
     const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const agent_id = req.query.agent_id || (req.agent?.id) || null;
+    const severity = req.query.severity || null;
+    const url = req.query.url || null;
+    const since = req.query.since || null;
+    const until = req.query.until || null;
 
     try {
-        const events = itemsDb.getPerceptionEvents({ app_id, cursor, limit });
+        const events = itemsDb.getPerceptionEvents({ app_id, agent_id, cursor, severity, url, since, until, limit });
         const nextCursor = events.length > 0 ? events[events.length - 1].created_at : cursor;
         res.json({ events, cursor: nextCursor, count: events.length });
     } catch (err) {

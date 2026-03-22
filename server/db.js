@@ -374,6 +374,14 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_perception_type ON perception_events(app_id, type);
     `);
 
+    // ----------------------------------------- migration: perception_events.agent_id (#67)
+    const peCols = db.pragma('table_info(perception_events)').map(c => c.name);
+    if (!peCols.includes('agent_id')) {
+        db.exec(`ALTER TABLE perception_events ADD COLUMN agent_id TEXT`);
+        console.log('[db] migrated: added column perception_events.agent_id');
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_perception_agent ON perception_events(app_id, agent_id)`);
+
     // ----------------------------------------- schema: perception_issues (#69 dedup tracking)
     db.exec(`
         CREATE TABLE IF NOT EXISTS perception_issues (
@@ -670,15 +678,9 @@ function initDb(dataDir) {
     const perceptionStmts = {
         insertEvent: db.prepare(`
             INSERT INTO perception_events
-                (id, app_id, type, message, stack, source, line, severity, url, fingerprint, context, created_at)
+                (id, app_id, agent_id, type, message, stack, source, line, severity, url, fingerprint, context, created_at)
             VALUES
-                (@id, @app_id, @type, @message, @stack, @source, @line, @severity, @url, @fingerprint, @context, @created_at)
-        `),
-        getEvents: db.prepare(`
-            SELECT * FROM perception_events
-            WHERE app_id = ? AND created_at > ?
-            ORDER BY created_at ASC
-            LIMIT ?
+                (@id, @app_id, @agent_id, @type, @message, @stack, @source, @line, @severity, @url, @fingerprint, @context, @created_at)
         `),
         getEventsByFingerprint: db.prepare(`
             SELECT * FROM perception_events
@@ -1978,11 +1980,11 @@ function initDb(dataDir) {
 
     // ------------------------------------------------- perception methods (#69)
 
-    function createPerceptionEvent({ app_id, type, message, stack, source, line, severity, url, fingerprint, context }) {
+    function createPerceptionEvent({ app_id, agent_id, type, message, stack, source, line, severity, url, fingerprint, context }) {
         const id = genId('pe');
         const now = new Date().toISOString();
         perceptionStmts.insertEvent.run({
-            id, app_id, type, message: message || '',
+            id, app_id, agent_id: agent_id || null, type, message: message || '',
             stack: stack || null, source: source || null, line: line || null,
             severity: severity || 'error', url: url || null,
             fingerprint, context: JSON.stringify(context || {}), created_at: now,
@@ -2001,9 +2003,23 @@ function initDb(dataDir) {
         return insertMany(events);
     }
 
-    function getPerceptionEvents({ app_id, cursor, limit = 100 }) {
-        const after = cursor || '1970-01-01T00:00:00.000Z';
-        return perceptionStmts.getEvents.all(app_id, after, Math.min(limit, 500));
+    function getPerceptionEvents({ app_id, agent_id, cursor, severity, url, since, until, limit = 100 }) {
+        const conditions = ['app_id = ?'];
+        const params = [app_id];
+
+        if (agent_id) { conditions.push('agent_id = ?'); params.push(agent_id); }
+        if (severity) { conditions.push('severity = ?'); params.push(severity); }
+        if (url) { conditions.push('url LIKE ?'); params.push(`%${url}%`); }
+
+        const after = cursor || since || '1970-01-01T00:00:00.000Z';
+        conditions.push('created_at > ?');
+        params.push(after);
+
+        if (until) { conditions.push('created_at <= ?'); params.push(until); }
+
+        params.push(Math.min(limit, 500));
+        const sql = `SELECT * FROM perception_events WHERE ${conditions.join(' AND ')} ORDER BY created_at ASC LIMIT ?`;
+        return db.prepare(sql).all(...params);
     }
 
     function getPerceptionEventsByFingerprint({ app_id, fingerprint, limit = 20 }) {
