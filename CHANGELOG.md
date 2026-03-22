@@ -4,6 +4,83 @@
 
 ## [0.8.0] — 2026-03-06
 
+## [1.0.0] — 2026-03-23
+
+### ✨ 新增
+
+- auto-fix PR pipeline — blame analysis, LLM fix generation, MR creation
+- patrol scripts framework — runner, assertions, scheduler, examples
+- webhook notification system for P1 error alerts
+- CDP channel WebSocket endpoint
+- #74 session-error correlation and reproduction steps
+- #82 CDP Relay + command whitelist + safety filter
+- #87 Phase 4 — export + polish + Phase 3 review fixes
+- #87 Phase 3 — quality report + Phase 2 review fixes
+- #87 Phase 2 — agent action history + Phase 1 review fixes
+- #87 Phase 1 — error trends panel with time-series chart
+- #84 CDP mode toggle + visual indicator
+- #75 Phase 4 — integration polish + review fixes
+- #75 Phase 3 — DOM reconstruction in sandboxed iframe
+- #75 Phase 2 — replay timeline with playback controls
+- #75 Phase 1 — session list tab in side panel
+- #78 Action Queue + WebSocket bidirectional channel
+- #73 session storage + query API
+- #67 enhance perception API with agent_id + filtering
+- #68 Agent registration + API key management
+- #69 perception consumer + auto-issue creation
+- CDP session management via chrome.debugger API
+- ActionExecutor content script + ElementFinder + ActionQueue
+- add SessionRecorder + PrivacyFilter content scripts (#72)
+- add NetworkMonitor + ConsoleProxy content scripts (#66)
+- #63 ErrorMonitor Error Sentinel enhancements
+
+### 🐛 修复
+
+- address Boot review — null target_config guards (#253)
+- #253 remove hardcoded coco-xyz/clawmark fallback from routing
+- address Boot review — XSS + retry button resilience
+- address Vila R1 review — 3 P2 + 3 P3
+- address Vila R1 review — 2 P1 + 5 P2 + 3 P3
+- address Boot R1 review — 1 P1 + 1 P2
+- address Boot R1 review — 5 P2 fixes
+- wrap ext.send in try/catch for TOCTOU race
+- address Boot review B1-B3 blocking issues
+- #84 follow-up — CDP confirm wording + onDetach auto-disable
+- #91 address lova P3 review — ID prefix, response shapes
+- #78 dynamically generate allowed action types in REST error
+- #78 address lova review — 7 P2 fixes
+- #73 address lova review — 8 P2 fixes
+- #71 P2 修正 PerceptionConsumer 描述 — 进程内直接读 DB，非 HTTP 轮询
+- P1 add app_id ownership check on agent CRUD endpoints
+- R1 fixes — try/catch getUserAuth + aggregated drop warning
+- #60 show connection error when server is unreachable
+- #264 validate auth credentials before recommending targets
+- use nullish coalescing for perception issue count to handle explicit zero
+- #99 return external_url in dispatch results
+
+### 📋 文档
+
+- #91 #92 Perception API + Agent Registration contracts
+- #93 #94 session data format and action protocol contracts
+- R1 fixes — Widget badge, URL consistency, email clarification, meta tag
+- GH#271 complete ClawMark capability guide
+- CDP 独立为 Phase 4，不再是可选项
+- PRD 补充每 Phase 文档交付 + 参考实现对标
+- address Kevin review comments on Agent Embed PRD
+- PRD 增加权限模型 + CDP 升级路径
+- PRD 升级为 Agent Embed — 去除 Link 依赖
+- 前端错误哨兵 PRD（Frontend Error Sentinel）
+- add issue submission tutorial with screenshots and video (#271)
+- #40 mark encryptionKey as required in all docs
+
+### 🔧 其他
+
+- docs(agent-channel): #71 API reference + architecture + user guide
+
+
+---
+
+
 ## [0.8.3] — 2026-03-16
 
 ### ✨ 新增
