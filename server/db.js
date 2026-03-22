@@ -392,6 +392,24 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_pissues_fp ON perception_issues(app_id, fingerprint);
     `);
 
+    // ----------------------------------------- schema migration: auto-fix columns (#86)
+    const piCols = db.pragma('table_info(perception_issues)').map(c => c.name);
+    const autoFixCols = [
+        ['fix_status', "TEXT DEFAULT 'none'"],      // none | pending | in_progress | submitted | merged | failed
+        ['fix_branch', 'TEXT'],
+        ['fix_pr_url', 'TEXT'],
+        ['fix_pr_id', 'TEXT'],
+        ['fix_confidence', 'REAL'],
+        ['fix_attempt_count', 'INTEGER DEFAULT 0'],
+        ['last_fix_attempt', 'TEXT'],
+    ];
+    for (const [col, typedef] of autoFixCols) {
+        if (!piCols.includes(col)) {
+            db.exec(`ALTER TABLE perception_issues ADD COLUMN ${col} ${typedef}`);
+            console.log(`[db] migrated: added column perception_issues.${col}`);
+        }
+    }
+
     // ----------------------------------------- schema: sessions (#73 Session Storage)
     db.exec(`
         CREATE TABLE IF NOT EXISTS sessions (
@@ -694,6 +712,30 @@ function initDb(dataDir) {
         `),
         getOpenIssues: db.prepare(
             "SELECT * FROM perception_issues WHERE app_id = ? AND status = 'open' ORDER BY count DESC"
+        ),
+        // Auto-fix statements (#86)
+        getFixCandidates: db.prepare(`
+            SELECT * FROM perception_issues
+            WHERE app_id = ? AND status = 'open'
+              AND gitlab_issue_id IS NOT NULL
+              AND (fix_status IS NULL OR fix_status = 'none' OR fix_status = 'failed')
+              AND fix_attempt_count < ?
+            ORDER BY count DESC
+            LIMIT ?
+        `),
+        updateFixStatus: db.prepare(`
+            UPDATE perception_issues
+            SET fix_status = @fix_status,
+                fix_branch = COALESCE(@fix_branch, fix_branch),
+                fix_pr_url = COALESCE(@fix_pr_url, fix_pr_url),
+                fix_pr_id = COALESCE(@fix_pr_id, fix_pr_id),
+                fix_confidence = COALESCE(@fix_confidence, fix_confidence),
+                fix_attempt_count = COALESCE(@fix_attempt_count, fix_attempt_count),
+                last_fix_attempt = COALESCE(@last_fix_attempt, last_fix_attempt)
+            WHERE app_id = @app_id AND fingerprint = @fingerprint
+        `),
+        getFixableIssue: db.prepare(
+            'SELECT * FROM perception_issues WHERE app_id = ? AND fingerprint = ? AND gitlab_issue_id IS NOT NULL'
         ),
     };
 
@@ -2003,6 +2045,28 @@ function initDb(dataDir) {
         return perceptionStmts.getOpenIssues.all(app_id);
     }
 
+    // ------------------------------------------------- auto-fix methods (#86)
+
+    function getAutoFixCandidates({ app_id, maxAttempts = 3, limit = 10 }) {
+        return perceptionStmts.getFixCandidates.all(app_id, maxAttempts, limit);
+    }
+
+    function updateAutoFixStatus({ app_id, fingerprint, fix_status, fix_branch, fix_pr_url, fix_pr_id, fix_confidence, fix_attempt_count, last_fix_attempt }) {
+        return perceptionStmts.updateFixStatus.run({
+            app_id, fingerprint, fix_status,
+            fix_branch: fix_branch || null,
+            fix_pr_url: fix_pr_url || null,
+            fix_pr_id: fix_pr_id || null,
+            fix_confidence: fix_confidence ?? null,
+            fix_attempt_count: fix_attempt_count ?? null,
+            last_fix_attempt: last_fix_attempt || null,
+        });
+    }
+
+    function getFixableIssue({ app_id, fingerprint }) {
+        return perceptionStmts.getFixableIssue.get(app_id, fingerprint);
+    }
+
     // ------------------------------------------------- agent actions (#87 Dashboard)
 
     const agentActionStmts = {
@@ -2884,6 +2948,10 @@ function initDb(dataDir) {
         upsertPerceptionIssue,
         getPerceptionIssue,
         getOpenPerceptionIssues,
+        // Auto-fix (#86)
+        getAutoFixCandidates,
+        updateAutoFixStatus,
+        getFixableIssue,
         getErrorTrends,
         getErrorSummary,
         getQualityReport,
