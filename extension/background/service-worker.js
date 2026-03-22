@@ -498,6 +498,28 @@ async function handleMessage(message, sender) {
         case 'CHECK_HEALTH':
             return checkHealth();
 
+        // Agent connection test (#70)
+        case 'TEST_AGENT_CONNECTION': {
+            const testKey = message.key;
+            const testServerUrl = (message.serverUrl || (await getConfig()).serverUrl).replace(/\/$/, '');
+            try {
+                const resp = await fetch(`${testServerUrl}/api/v2/agent-channel/perception/stats`, {
+                    method: 'GET',
+                    headers: { 'X-Agent-Key': testKey },
+                });
+                if (resp.status === 401) {
+                    const body = await resp.json().catch(() => ({}));
+                    return { error: body.error || 'Invalid API key' };
+                }
+                if (!resp.ok) {
+                    return { error: `Server error (HTTP ${resp.status})` };
+                }
+                return { success: true };
+            } catch (err) {
+                return { error: err.message || 'Network error' };
+            }
+        }
+
         case 'OPEN_SIDE_PANEL':
             await chrome.sidePanel.open({ tabId: sender.tab?.id });
             return { success: true };
