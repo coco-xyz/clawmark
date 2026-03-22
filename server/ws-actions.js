@@ -18,10 +18,11 @@ const { hashKey } = require('./agent-auth');
  */
 
 const HEARTBEAT_INTERVAL = 30000;
-const VALID_ACTION_TYPES = new Set(['navigate', 'click', 'screenshot']);
+const MAX_PAYLOAD = 1 * 1024 * 1024; // 1 MB
 
 function initActionWs(server, db) {
-    const wss = new WebSocketServer({ noServer: true });
+    const VALID_ACTION_TYPES = new Set(db.getValidActionTypes());
+    const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 
     // Connection registries: app_id → Set<ws>
     const agentConnections = new Map();    // agent sockets by app_id
@@ -50,7 +51,7 @@ function initActionWs(server, db) {
                 return;
             }
             authContext = { role: 'agent', agent_id: agent.id, app_id: agent.app_id };
-            try { db.updateAgentLastSeen(agent.id); } catch {}
+            try { db.updateAgentLastSeen(agent.id); } catch (e) { console.debug('updateAgentLastSeen failed:', e.message); }
         } else if (key.startsWith('cmk_')) {
             const apiKey = db.validateApiKey(key);
             if (!apiKey) {
@@ -196,19 +197,20 @@ function initActionWs(server, db) {
         const action = db.getAction(actionId);
         if (!action || action.status !== 'queued') return false;
 
-        db.updateActionStatus(actionId, { status: 'dispatched' });
-
-        // Send to first available extension
+        // B2 fix: send WS first, then update DB — if socket is dead, action stays queued
         const ext = extSockets.values().next().value;
-        wsSend(ext, {
+        if (ext.readyState !== 1) return false; // WebSocket.OPEN
+
+        ext.send(JSON.stringify({
             type: 'action',
             action_id: action.id,
             action_type: action.type,
             payload: JSON.parse(action.payload),
             session_id: action.session_id,
             timeout_ms: action.timeout_ms,
-        });
+        }));
 
+        db.updateActionStatus(actionId, { status: 'dispatched' });
         return true;
     }
 
