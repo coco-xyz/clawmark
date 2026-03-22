@@ -34,9 +34,9 @@ async function cdpRelayCommand(command) {
     const { commandId, tabId, method, params = {}, options = {} } = command;
     const startTime = Date.now();
 
-    if (!commandId || !tabId || !method) {
+    if (commandId == null || tabId == null || !method) {
         return {
-            commandId: commandId || 'unknown',
+            commandId: commandId ?? 'unknown',
             success: false,
             error: 'commandId, tabId, and method are required',
         };
@@ -48,7 +48,7 @@ async function cdpRelayCommand(command) {
         cdpAuditLog({
             tabId,
             method,
-            params: _sanitizeParamsForLog(method, params),
+            params: sanitizeParamsForLog(method, params),
             allowed: false,
             reason: whitelistResult.reason,
         });
@@ -67,7 +67,7 @@ async function cdpRelayCommand(command) {
         cdpAuditLog({
             tabId,
             method,
-            params: _sanitizeParamsForLog(method, params),
+            params: sanitizeParamsForLog(method, params),
             allowed: false,
             reason: `Safety: ${safetyResult.reason}`,
         });
@@ -85,7 +85,7 @@ async function cdpRelayCommand(command) {
         cdpAuditLog({
             tabId,
             method,
-            params: _sanitizeParamsForLog(method, params),
+            params: sanitizeParamsForLog(method, params),
             allowed: false,
             reason: `No CDP session for tab ${tabId}`,
         });
@@ -98,14 +98,22 @@ async function cdpRelayCommand(command) {
     }
 
     // ── Step 4: Execute ──────────────────────────────────────────────
+    // Defense-in-depth: ask V8 to throw on side effects for read-only evals.
+    // This catches obfuscation bypasses (string concat, base64, indirect eval)
+    // that regex patterns cannot detect.
+    let execParams = params;
+    if (method === 'Runtime.evaluate' && !options.allowSideEffects) {
+        execParams = { ...params, throwOnSideEffect: true };
+    }
+
     try {
-        const result = await cdpSendCommand(tabId, method, params);
+        const result = await cdpSendCommand(tabId, method, execParams);
         const durationMs = Date.now() - startTime;
 
         cdpAuditLog({
             tabId,
             method,
-            params: _sanitizeParamsForLog(method, params),
+            params: sanitizeParamsForLog(method, params),
             allowed: true,
             success: true,
             durationMs,
@@ -123,7 +131,7 @@ async function cdpRelayCommand(command) {
         cdpAuditLog({
             tabId,
             method,
-            params: _sanitizeParamsForLog(method, params),
+            params: sanitizeParamsForLog(method, params),
             allowed: true,
             success: false,
             reason: err.message,
@@ -170,7 +178,7 @@ async function cdpRelayBatch(commands, options = {}) {
 /**
  * Strip sensitive/large data from params before logging.
  */
-function _sanitizeParamsForLog(method, params) {
+function sanitizeParamsForLog(method, params) {
     if (!params) return {};
 
     const safe = { ...params };
@@ -191,7 +199,7 @@ function _sanitizeParamsForLog(method, params) {
     return safe;
 }
 
-// ── WS message handler ──────────────────────────────────────────────
+// ── WS message handler (Phase 2: wired when action channel lands) ───
 
 /**
  * Handle an incoming CDP relay message from the WebSocket.
@@ -202,6 +210,11 @@ function _sanitizeParamsForLog(method, params) {
  */
 async function handleCdpRelayMessage(message, send) {
     const { type, payload } = message;
+
+    if (!payload && type !== 'cdp:whitelist-info') {
+        send({ type: 'cdp:error', payload: { error: 'Missing payload' } });
+        return;
+    }
 
     switch (type) {
         case 'cdp:command': {
@@ -215,6 +228,10 @@ async function handleCdpRelayMessage(message, send) {
         }
 
         case 'cdp:batch': {
+            if (!Array.isArray(payload.commands)) {
+                send({ type: 'cdp:error', payload: { error: 'payload.commands must be an array' } });
+                break;
+            }
             const results = await cdpRelayBatch(payload.commands, payload.options);
             send({ type: 'cdp:batch-result', payload: { results } });
             break;

@@ -27,7 +27,7 @@ const SIDE_EFFECT_PATTERNS = [
     // Network requests
     /\bfetch\s*\(/,
     /\bnew\s+XMLHttpRequest\b/,
-    /\.\s*(send|open)\s*\(/,
+    /\b(xhr|request|req|http)\s*\.\s*(send|open)\s*\(/i,
     /\bnew\s+WebSocket\b/,
     /\bnew\s+EventSource\b/,
     /\bnavigator\s*\.\s*sendBeacon\s*\(/,
@@ -44,10 +44,10 @@ const SIDE_EFFECT_PATTERNS = [
     /\bdocument\s*\.\s*cookie\s*=/,
     /\bindexedDB\s*\.\s*(open|deleteDatabase)\s*\(/,
 
-    // Form submission
+    // Form submission / interaction (focus removed — common in read-only inspection;
+    // throwOnSideEffect provides defense-in-depth for actual side effects)
     /\.\s*submit\s*\(\s*\)/,
     /\.\s*click\s*\(\s*\)/,
-    /\.\s*focus\s*\(\s*\)/,
 
     // Event dispatch
     /\.\s*dispatchEvent\s*\(/,
@@ -171,7 +171,9 @@ function cdpAuditLog(entry) {
         ...entry,
         timestamp: Date.now(),
     });
-    if (_cdpAuditLog.length > CDP_AUDIT_LOG_CAP) {
+    // Batch trim: only trim when 25% over cap to avoid frequent splices.
+    // Single splice operation is atomic w.r.t. the array state.
+    if (_cdpAuditLog.length > CDP_AUDIT_LOG_CAP * 1.25) {
         _cdpAuditLog.splice(0, _cdpAuditLog.length - CDP_AUDIT_LOG_CAP);
     }
 }

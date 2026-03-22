@@ -815,9 +815,9 @@ async function handleMessage(message, sender) {
         }
 
         case 'cdp:command': {
-            const tabId = message.tabId || sender.tab?.id;
+            const tabId = message.tabId ?? sender.tab?.id;
             const relayResult = await cdpRelayCommand({
-                commandId: message.commandId || `local-${Date.now()}`,
+                commandId: message.commandId ?? `local-${Date.now()}`,
                 tabId,
                 method: message.method,
                 params: message.params,
@@ -855,11 +855,17 @@ async function handleMessage(message, sender) {
         // ── CDP relay (#82) ─────────────────────────────────────────
         case 'cdp:relay': {
             // Server-originated CDP command routed through relay
+            if (!message.payload) {
+                return { success: false, error: 'Missing payload' };
+            }
             const relayResult = await cdpRelayCommand(message.payload);
             return relayResult;
         }
 
         case 'cdp:batch': {
+            if (!message.payload || !Array.isArray(message.payload.commands)) {
+                return { success: false, error: 'Missing payload or payload.commands array' };
+            }
             const batchResults = await cdpRelayBatch(
                 message.payload.commands,
                 message.payload.options,

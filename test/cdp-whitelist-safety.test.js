@@ -54,10 +54,10 @@ function loadExtensionModules() {
 
     const sandbox = vm.createContext(ctx);
 
-    // Load in dependency order
+    // Load only the modules under test — whitelist, safety, relay.
+    // cdp-session-manager and cdp-event-forwarder are not needed here
+    // and including them risks unrelated test failures from their chrome.* deps.
     const files = [
-        'cdp-session-manager.js',
-        'cdp-event-forwarder.js',
         'cdp-whitelist.js',
         'cdp-safety.js',
         'cdp-relay.js',
