@@ -3244,12 +3244,24 @@ app.get('/api/v2/agent-channel/cdp/audit', apiReadLimiter, v2AuthOrAgent, (req, 
 
 // ----------------------------------------------------------------- health
 
+// Build metadata for /health (#2)
+const serverCommit = (() => {
+    try { return require('child_process').execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim(); }
+    catch { return process.env.COMMIT_HASH || 'unknown'; }
+})();
+const serverBuildTime = (() => {
+    try { return require('child_process').execSync('git show -s --format=%cI HEAD', { encoding: 'utf-8' }).trim(); }
+    catch { return process.env.BUILD_TIME || new Date().toISOString(); }
+})();
+
 app.get('/health', (req, res) => {
     let dbOk = true;
     try { itemsDb.db.prepare('SELECT 1').get(); } catch { dbOk = false; }
     res.json({
         status: 'ok',
         version: pkg.version,
+        commit: serverCommit,
+        buildTime: serverBuildTime,
         uptime: process.uptime(),
         db_ok: dbOk,
         adapters: Object.keys(registry.getStatus()).length,
