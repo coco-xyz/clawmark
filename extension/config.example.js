@@ -15,8 +15,9 @@ const ClawMarkConfig = {
     GOOGLE_CLIENT_ID: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
     EXTENSION_ID: '',
     ENV: 'production',
-    GIT_COMMIT: '',
-    BUILD_TIME: '',
+    VERSION: '',       // Injected by build.sh (package.json version)
+    COMMIT: '',        // Injected by build.sh (git short hash)
+    BUILD_TIME: '',    // Injected by build.sh (git commit time ISO8601)
 };
 
 if (typeof Object.freeze === 'function') Object.freeze(ClawMarkConfig);

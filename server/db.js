@@ -2723,7 +2723,7 @@ function initDb(dataDir) {
     }
 
     function updateCdpAuditLog(id, { status, result_summary, error, duration_ms }) {
-        cdpStmts.updateLog.run({ id, status, result_summary: result_summary || null, error: error || null, duration_ms: duration_ms || null });
+        cdpStmts.updateLog.run({ id, status, result_summary: result_summary || null, error: error || null, duration_ms: duration_ms ?? null });
     }
 
     function getCdpAuditBySession(session_key, limit = 100) {

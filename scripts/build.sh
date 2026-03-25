@@ -49,9 +49,9 @@ case "$ENV" in
 esac
 
 VERSION=$(jq -r '.version' package.json)
-GIT_COMMIT=$(git rev-parse --short=8 HEAD 2>/dev/null || true)
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME=$(git show -s --format=%cI HEAD 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
-log "Building ClawMark v${VERSION} for ${ENV}"
+log "Building ClawMark v${VERSION} (${COMMIT}) for ${ENV}"
 info "Server:    $SERVER_URL"
 info "Dashboard: $DASHBOARD_URL"
 
@@ -75,7 +75,8 @@ const ClawMarkConfig = {
     GOOGLE_CLIENT_ID: '${GOOGLE_CLIENT_ID}',
     EXTENSION_ID: 'blgnfnelakbffkgainibpeejlfbimikn',
     ENV: '${ENV}',
-    GIT_COMMIT: '${GIT_COMMIT}',
+    VERSION: '${VERSION}',
+    COMMIT: '${COMMIT}',
     BUILD_TIME: '${BUILD_TIME}',
 };
 
