@@ -81,7 +81,10 @@ function openDashboard(hash) {
 
 gearBtn.addEventListener('click', () => openDashboard());
 
-settingsLink.addEventListener('click', () => openDashboard('account'));
+settingsLink.addEventListener('click', () => {
+    chrome.runtime.openOptionsPage();
+    window.close();
+});
 
 // ------------------------------------------------------------------ auth
 
@@ -752,6 +755,45 @@ cdpConfirmEnable.addEventListener('click', async () => {
     loadCdpMode();
 });
 
+// ----------------------------------------------------------- version footer
+
+function loadVersionFooter() {
+    const clientEl = document.getElementById('version-client');
+    const serverEl = document.getElementById('version-server');
+    if (!clientEl || !serverEl) return;
+
+    // Client version from manifest + config.js build metadata
+    const manifest = chrome.runtime.getManifest();
+    const commit = (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.COMMIT) || '';
+    const buildTime = (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.BUILD_TIME) || '';
+    let clientText = `v${manifest.version}`;
+    if (commit) clientText += ` (${commit})`;
+    clientEl.textContent = clientText;
+    if (buildTime) clientEl.title = `Built: ${buildTime}`;
+
+    // Server version from /health
+    serverEl.textContent = 'server: …';
+    chrome.storage.sync.get(['serverUrl'], async (result) => {
+        const serverUrl = (result.serverUrl || (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.DEFAULT_SERVER) || '').replace(/\/+$/, '');
+        if (!serverUrl) { serverEl.textContent = 'server: —'; return; }
+        try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 3000);
+            const resp = await fetch(`${serverUrl}/health`, { signal: ctrl.signal });
+            clearTimeout(timer);
+            if (!resp.ok) throw new Error('not ok');
+            const data = await resp.json();
+            let text = `server: v${data.version || '?'}`;
+            if (data.commit) text += ` (${data.commit})`;
+            serverEl.textContent = text;
+            if (data.buildTime) serverEl.title = `Server built: ${data.buildTime}`;
+        } catch {
+            serverEl.textContent = 'server: offline';
+            serverEl.style.color = '#a55';
+        }
+    });
+}
+
 // ------------------------------------------------------------------ init
 
 async function init() {
@@ -761,6 +803,8 @@ async function init() {
     if (isLoggedIn && masterToggle.checked) {
         await loadCdpMode();
     }
+    // #2: Show version footer immediately (client part is sync)
+    loadVersionFooter();
 
     // Phase 2: start network calls after the popup has painted
     // Use setTimeout(0) to yield to the renderer first

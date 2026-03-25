@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClawMark Settings</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            font-size: 13px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 24px 20px;
+        }
+
+        /* ---- Header ---- */
+
+        .page-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .page-header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+            flex: 1;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .header-btn {
+            padding: 6px 12px;
+            font-size: 12px;
+            background: rgba(255,255,255,0.06);
+            color: #aaa;
+            border: 1px solid #2a2a3e;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .header-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+        /* ---- Tabs ---- */
+
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #2a2a3e;
+            margin-bottom: 20px;
+        }
+
+        .tab-btn {
+            padding: 10px 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #888;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            font-family: inherit;
+            transition: color 0.2s, border-color 0.2s;
+        }
+
+        .tab-btn:hover { color: #ccc; }
+        .tab-btn.active { color: #5865f2; border-bottom-color: #5865f2; }
+
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        /* ---- Cards ---- */
+
+        .card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-desc {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 12px;
+            line-height: 1.5;
+        }
+
+        /* ---- Agent List ---- */
+
+        .agent-list { margin-bottom: 12px; }
+
+        .agent-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid #2a2a3e;
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+
+        .agent-item:last-child { margin-bottom: 0; }
+
+        .agent-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .agent-status-dot.connected { background: #22c55e; }
+        .agent-status-dot.disconnected { background: #ef4444; }
+        .agent-status-dot.unknown { background: #888; }
+
+        .agent-info { flex: 1; min-width: 0; }
+
+        .agent-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: #e0e0e0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .agent-key-preview {
+            font-size: 11px;
+            color: #666;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            margin-top: 2px;
+        }
+
+        .agent-actions {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .agent-btn {
+            padding: 4px 10px;
+            font-size: 11px;
+            border-radius: 4px;
+            border: 1px solid #333;
+            background: transparent;
+            color: #aaa;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .agent-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+        .agent-btn.danger { border-color: rgba(239,68,68,0.3); color: #f87171; }
+        .agent-btn.danger:hover { background: rgba(239,68,68,0.1); }
+
+        .agent-empty {
+            padding: 20px;
+            text-align: center;
+            color: #555;
+            font-size: 12px;
+        }
+
+        /* ---- Add Agent Form ---- */
+
+        .add-agent-form {
+            display: none;
+            background: rgba(88,101,242,0.05);
+            border: 1px solid rgba(88,101,242,0.2);
+            border-radius: 6px;
+            padding: 14px;
+            margin-top: 12px;
+        }
+
+        .add-agent-form.visible { display: block; }
+
+        .form-row {
+            margin-bottom: 10px;
+        }
+
+        .form-row label {
+            display: block;
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+
+        .form-row input {
+            width: 100%;
+            padding: 7px 10px;
+            font-size: 12px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-family: inherit;
+        }
+
+        .form-row input:focus {
+            border-color: #5865f2;
+            outline: none;
+        }
+
+        .form-row input.mono {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .btn {
+            padding: 7px 14px;
+            font-size: 12px;
+            border-radius: 6px;
+            border: 1px solid #333;
+            background: transparent;
+            color: #aaa;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+
+        .btn.primary {
+            background: #5865f2;
+            border-color: #5865f2;
+            color: #fff;
+        }
+
+        .btn.primary:hover { background: #4752c4; }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .form-status {
+            font-size: 11px;
+            margin-top: 8px;
+            min-height: 16px;
+        }
+
+        .form-status.success { color: #22c55e; }
+        .form-status.error { color: #ef4444; }
+        .form-status.testing { color: #f59e0b; }
+
+        /* ---- Site Permissions ---- */
+
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid #2a2a3e;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+
+        .mode-label {
+            font-size: 12px;
+            color: #aaa;
+            flex: 1;
+        }
+
+        .mode-label strong { color: #e0e0e0; }
+
+        .mode-switch {
+            display: flex;
+            background: #111;
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid #333;
+        }
+
+        .mode-option {
+            padding: 5px 12px;
+            font-size: 11px;
+            color: #888;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .mode-option.active {
+            background: #5865f2;
+            color: #fff;
+        }
+
+        .mode-option:hover:not(.active) { color: #ccc; }
+
+        .site-list { margin-bottom: 12px; }
+
+        .site-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid #2a2a3e;
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+
+        .site-item:last-child { margin-bottom: 0; }
+
+        .site-pattern {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .site-pattern-text {
+            font-size: 13px;
+            color: #e0e0e0;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .site-controls {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .monitor-toggle {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .monitor-toggle input { display: none; }
+
+        .monitor-chip {
+            padding: 3px 8px;
+            font-size: 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            border: 1px solid #333;
+            background: transparent;
+            color: #666;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .monitor-toggle input:checked + .monitor-chip {
+            background: rgba(88,101,242,0.2);
+            border-color: rgba(88,101,242,0.4);
+            color: #7c8af2;
+        }
+
+        .site-remove {
+            padding: 3px 8px;
+            font-size: 11px;
+            color: #666;
+            background: none;
+            border: none;
+            cursor: pointer;
+        }
+
+        .site-remove:hover { color: #f87171; }
+
+        .site-empty {
+            padding: 20px;
+            text-align: center;
+            color: #555;
+            font-size: 12px;
+        }
+
+        /* ---- Add Site Form ---- */
+
+        .add-site-form {
+            display: none;
+            background: rgba(88,101,242,0.05);
+            border: 1px solid rgba(88,101,242,0.2);
+            border-radius: 6px;
+            padding: 14px;
+            margin-top: 12px;
+        }
+
+        .add-site-form.visible { display: block; }
+
+        .checkbox-row {
+            display: flex;
+            gap: 16px;
+            margin-top: 8px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #aaa;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            accent-color: #5865f2;
+        }
+
+        /* ---- Import/Export ---- */
+
+        .import-export-section {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        /* ---- Toast ---- */
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            padding: 10px 20px;
+            background: #1a1a2e;
+            border: 1px solid #2a2a3e;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #e0e0e0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            transition: transform 0.3s ease;
+            z-index: 100;
+        }
+
+        .toast.visible { transform: translateX(-50%) translateY(0); }
+        .toast.success { border-color: rgba(34,197,94,0.4); color: #22c55e; }
+        .toast.error { border-color: rgba(239,68,68,0.4); color: #ef4444; }
+
+        /* ---- Hidden file input ---- */
+
+        .hidden { display: none; }
+
+        /* ---- Responsive ---- */
+
+        @media (max-width: 480px) {
+            .container { padding: 16px 12px; }
+            .agent-item { flex-wrap: wrap; }
+            .agent-actions { width: 100%; justify-content: flex-end; }
+            .site-item { flex-wrap: wrap; }
+            .site-controls { width: 100%; justify-content: flex-start; margin-top: 6px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="page-header">
+            <h1>ClawMark Settings</h1>
+            <div class="header-actions">
+                <button class="header-btn" id="btn-export" title="Export settings as JSON">Export</button>
+                <button class="header-btn" id="btn-import" title="Import settings from JSON">Import</button>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="agents">Agents</button>
+            <button class="tab-btn" data-tab="sites">Site Permissions</button>
+        </div>
+
+        <!-- ========== Agents Tab ========== -->
+        <div class="tab-panel active" id="tab-agents">
+            <div class="card">
+                <div class="card-title">Bound Agents</div>
+                <div class="card-desc">
+                    Connect your AI agents by entering their API key (<code>cmak_</code> prefix).
+                    Each agent can monitor errors, execute actions, and record sessions based on site permissions.
+                </div>
+
+                <div class="agent-list" id="agent-list">
+                    <div class="agent-empty" id="agent-empty">No agents bound yet</div>
+                </div>
+
+                <button class="btn primary" id="btn-add-agent">+ Add Agent</button>
+
+                <div class="add-agent-form" id="add-agent-form">
+                    <div class="form-row">
+                        <label for="agent-name-input">Agent Name</label>
+                        <input type="text" id="agent-name-input" placeholder="e.g. QA Bot" maxlength="64">
+                    </div>
+                    <div class="form-row">
+                        <label for="agent-key-input">API Key</label>
+                        <input type="password" id="agent-key-input" class="mono" placeholder="cmak_xxxxxxxxxxxx" autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <label for="agent-server-input">Server URL (optional, uses default if empty)</label>
+                        <input type="text" id="agent-server-input" placeholder="https://api.coco.xyz/clawmark">
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn" id="btn-cancel-agent">Cancel</button>
+                        <button class="btn primary" id="btn-save-agent">Test & Save</button>
+                    </div>
+                    <div class="form-status" id="agent-form-status"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== Site Permissions Tab ========== -->
+        <div class="tab-panel" id="tab-sites">
+            <div class="card">
+                <div class="card-title">Permission Mode</div>
+                <div class="mode-toggle">
+                    <div class="mode-label">
+                        <strong id="mode-label-text">Blacklist</strong> &mdash;
+                        <span id="mode-desc-text">monitor all sites except those listed below</span>
+                    </div>
+                    <div class="mode-switch">
+                        <button class="mode-option active" data-mode="blacklist">Blacklist</button>
+                        <button class="mode-option" data-mode="whitelist">Whitelist</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title" id="site-list-title">Blocked Sites</div>
+                <div class="card-desc" id="site-list-desc">
+                    Sites listed here will NOT be monitored. All other sites are monitored by default.
+                </div>
+
+                <div class="site-list" id="site-list">
+                    <div class="site-empty" id="site-empty">No sites configured</div>
+                </div>
+
+                <button class="btn primary" id="btn-add-site">+ Add Site</button>
+
+                <div class="add-site-form" id="add-site-form">
+                    <div class="form-row">
+                        <label for="site-pattern-input">Domain Pattern</label>
+                        <input type="text" id="site-pattern-input" class="mono" placeholder="e.g. *.example.com or github.com">
+                    </div>
+                    <div class="form-row">
+                        <label>Monitoring Controls</label>
+                        <div class="checkbox-row">
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="site-error-check" checked>
+                                Errors
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="site-network-check" checked>
+                                Network
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="site-console-check" checked>
+                                Console
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn" id="btn-cancel-site">Cancel</button>
+                        <button class="btn primary" id="btn-save-site">Add Site</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div class="toast" id="toast"></div>
+
+    <!-- Hidden file input for import -->
+    <input type="file" id="import-file" class="hidden" accept=".json">
+
+    <script src="../config.js"></script>
+    <script src="settings.js"></script>
+</body>
+</html>
