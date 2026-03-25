@@ -80,6 +80,29 @@
             background: #fff;
         }
 
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-settings-btn {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.08);
+            color: #cfcfe8;
+            font-size: 11px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            line-height: 1.2;
+            font-family: inherit;
+        }
+
+        .header-settings-btn:hover {
+            background: rgba(88,101,242,0.18);
+            color: #fff;
+        }
+
         .gear-btn {
             background: none;
             border: none;
@@ -91,6 +114,41 @@
         }
 
         .gear-btn:hover { color: #ccc; }
+
+        .version-section {
+            border-top: 1px solid #2a2a3e;
+            padding: 10px 16px 12px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            background: rgba(255,255,255,0.02);
+        }
+
+        .version-card {
+            min-width: 0;
+        }
+
+        .version-card-title {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #8d90ab;
+            margin-bottom: 4px;
+        }
+
+        .version-card-line {
+            font-size: 11px;
+            color: #d9daeb;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 1.45;
+        }
+
+        .version-card-line.muted {
+            color: #8f93b0;
+        }
 
         /* ---- Disabled State ---- */
 
@@ -776,7 +834,10 @@
                 <span class="master-slider"></span>
             </label>
         </div>
-        <button class="gear-btn" id="gear-btn" title="Open Dashboard">&#x2699;</button>
+        <div class="header-actions">
+            <button class="header-settings-btn" id="header-settings-btn" title="Open Extension Settings">Open Settings</button>
+            <button class="gear-btn" id="gear-btn" title="Open Dashboard">&#x2699;</button>
+        </div>
     </div>
 
     <!-- Server connection error banner -->
@@ -928,6 +989,21 @@
         <div class="actions-section">
             <button class="action-btn" id="btn-screenshot">&#x1f4f7; Screenshot</button>
             <button class="action-btn" id="btn-panel">&#x1f4cb; Open Panel</button>
+        </div>
+    </div>
+
+    <div class="version-section" id="version-section">
+        <div class="version-card">
+            <div class="version-card-title">Extension</div>
+            <div class="version-card-line" id="ext-version-line">v&mdash;</div>
+            <div class="version-card-line muted" id="ext-commit-line">commit &mdash;</div>
+            <div class="version-card-line muted" id="ext-build-line">built &mdash;</div>
+        </div>
+        <div class="version-card">
+            <div class="version-card-title">Server</div>
+            <div class="version-card-line" id="server-version-line">v&mdash;</div>
+            <div class="version-card-line muted" id="server-commit-line">commit &mdash;</div>
+            <div class="version-card-line muted" id="server-build-line">built &mdash;</div>
         </div>
     </div>
 
