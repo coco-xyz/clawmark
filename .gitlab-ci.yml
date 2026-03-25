@@ -67,6 +67,8 @@ e2e-api:
 e2e-staging:
   stage: e2e-staging
   # Runs on shell executor (jessie-shell-runner) — same host as staging server
+  tags:
+    - jessie-shell
   script:
     # 1. Deploy: pull latest develop and restart staging server
     - cd ~/zylos/workspace/clawmark-staging
