@@ -121,6 +121,7 @@ test.describe('Extension — load & manifest', () => {
         await page.goto(`chrome-extension://${extensionId}/popup/popup.html`);
         // Should have the ClawMark popup UI
         await expect(page.locator('.popup-header, #popup-title, h1')).toBeVisible({ timeout: 5000 });
+        await expect(page.locator('#header-settings-btn')).toBeVisible();
         await page.close();
     });
 

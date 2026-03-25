@@ -13,6 +13,11 @@ const STORAGE_KEY_SERVER = 'clawmark_server_url';
 const DEFAULT_SERVER = (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.DEFAULT_SERVER)
     || (import.meta.env && import.meta.env.VITE_SERVER_URL)
     || (window.location.origin + '/clawmark');
+export const CLIENT_BUILD_INFO = {
+    version: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '',
+    commit: typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : '',
+    buildTime: typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : '',
+};
 
 export function getServerUrl() {
     return localStorage.getItem(STORAGE_KEY_SERVER) || DEFAULT_SERVER;
@@ -239,6 +244,22 @@ export async function getAuthFromExtension() {
     return null;
 }
 
+export async function getExtensionInfo() {
+    const extId = await detectExtension();
+    if (!extId) return null;
+    try {
+        const resp = await chrome.runtime.sendMessage(extId, { type: 'PING' });
+        if (!resp?.pong) return null;
+        return {
+            version: resp.version || '',
+            commit: resp.commit || '',
+            buildTime: resp.buildTime || '',
+        };
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Sync a dashboard login to the extension.
  */
@@ -350,7 +371,12 @@ export async function checkLatestVersion() {
                 break;
             }
         }
-        return { latestVersion: latestTag, downloadUrl };
+        return {
+            latestVersion: latestTag,
+            downloadUrl,
+            publishedAt: release.published_at || '',
+            releaseUrl: release.html_url || 'https://github.com/coco-xyz/clawmark/releases/latest',
+        };
     } catch {
         return null;
     }
