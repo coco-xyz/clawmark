@@ -1,6 +1,6 @@
 {
   "name": "clawmark",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-native feedback & collaboration widget — annotate, comment, and track issues on any web page",
   "main": "server/index.js",
   "scripts": {
