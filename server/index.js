@@ -23,6 +23,24 @@ const https = require('https');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
+const { execFileSync } = require('child_process');
+
+function readGitValue(args) {
+    try {
+        return execFileSync('git', args, {
+            cwd: path.join(__dirname, '..'),
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+    } catch {
+        return '';
+    }
+}
+
+const BUILD_META = {
+    commit: readGitValue(['rev-parse', '--short=8', 'HEAD']),
+    buildTime: readGitValue(['show', '-s', '--format=%cI', 'HEAD']),
+};
 
 // ---------------------------------------------------------------------- config
 
@@ -3250,6 +3268,8 @@ app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
         version: pkg.version,
+        commit: BUILD_META.commit,
+        buildTime: BUILD_META.buildTime,
         uptime: process.uptime(),
         db_ok: dbOk,
         adapters: Object.keys(registry.getStatus()).length,

@@ -11,6 +11,7 @@
 
 const masterToggle = document.getElementById('master-toggle');
 const gearBtn = document.getElementById('gear-btn');
+const headerSettingsBtn = document.getElementById('header-settings-btn');
 const disabledOverlay = document.getElementById('disabled-overlay');
 const loginPrompt = document.getElementById('login-prompt');
 const mainContent = document.getElementById('main-content');
@@ -27,6 +28,12 @@ const siteSectionEl = document.getElementById('site-section');
 const siteInfoEl = document.getElementById('site-info');
 const siteBtnEl = document.getElementById('site-btn');
 const messageEl = document.getElementById('message');
+const extVersionLineEl = document.getElementById('ext-version-line');
+const extCommitLineEl = document.getElementById('ext-commit-line');
+const extBuildLineEl = document.getElementById('ext-build-line');
+const serverVersionLineEl = document.getElementById('server-version-line');
+const serverCommitLineEl = document.getElementById('server-commit-line');
+const serverBuildLineEl = document.getElementById('server-build-line');
 
 let currentUrl = '';
 let currentHostname = '';
@@ -79,9 +86,15 @@ function openDashboard(hash) {
     window.close();
 }
 
-gearBtn.addEventListener('click', () => openDashboard());
+function openExtensionSettings() {
+    chrome.runtime.openOptionsPage();
+    window.close();
+}
 
-settingsLink.addEventListener('click', () => openDashboard('account'));
+gearBtn.addEventListener('click', () => openDashboard());
+headerSettingsBtn.addEventListener('click', () => openExtensionSettings());
+
+settingsLink.addEventListener('click', () => openExtensionSettings());
 
 // ------------------------------------------------------------------ auth
 
@@ -225,6 +238,40 @@ function formatTargetName(type, config) {
 }
 
 document.getElementById('btn-more-targets').addEventListener('click', () => openDashboard('delivery'));
+
+function formatBuildTime(value) {
+    if (!value) return '\u2014';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+}
+
+function setVersionLine(el, prefix, value, fallback = '\u2014') {
+    el.textContent = `${prefix} ${value || fallback}`;
+}
+
+function loadExtensionVersionInfo() {
+    const manifest = chrome.runtime.getManifest();
+    setVersionLine(extVersionLineEl, 'v', manifest.version);
+    setVersionLine(extCommitLineEl, 'commit', (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.GIT_COMMIT) || '');
+    setVersionLine(extBuildLineEl, 'built', formatBuildTime(
+        (typeof ClawMarkConfig !== 'undefined' && ClawMarkConfig.BUILD_TIME) || ''
+    ));
+}
+
+async function loadServerVersionInfo() {
+    try {
+        const health = await chrome.runtime.sendMessage({ type: 'CHECK_HEALTH' });
+        if (health?.error) throw new Error(health.error);
+        setVersionLine(serverVersionLineEl, 'v', health.version);
+        setVersionLine(serverCommitLineEl, 'commit', health.commit);
+        setVersionLine(serverBuildLineEl, 'built', formatBuildTime(health.buildTime));
+    } catch {
+        setVersionLine(serverVersionLineEl, 'v', 'offline');
+        setVersionLine(serverCommitLineEl, 'commit', '');
+        setVersionLine(serverBuildLineEl, 'built', '');
+    }
+}
 
 // ------------------------------------------------------------------ quick add rule (#202)
 
@@ -758,6 +805,7 @@ async function init() {
     // Phase 1: render UI immediately from local storage (no network)
     await loadAuth();
     await loadMasterToggle();
+    loadExtensionVersionInfo();
     if (isLoggedIn && masterToggle.checked) {
         await loadCdpMode();
     }
@@ -765,6 +813,7 @@ async function init() {
     // Phase 2: start network calls after the popup has painted
     // Use setTimeout(0) to yield to the renderer first
     setTimeout(async () => {
+        loadServerVersionInfo();
         if (isLoggedIn && masterToggle.checked) {
             const serverOk = await checkServerConnection();
             if (serverOk) loadPageData();

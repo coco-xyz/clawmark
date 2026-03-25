@@ -13,7 +13,7 @@ import {
     getAnalyticsSummary, getItems,
     getRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule,
     getAuths, createAuth, updateAuth, deleteAuth,
-    checkLatestVersion,
+    checkLatestVersion, CLIENT_BUILD_INFO, getExtensionInfo,
     getUserSettings, updateUserSettings,
     syncLoginToExtension, syncLogoutToExtension, getAuthFromExtension,
     previewIssues, batchFileIssues,
@@ -1240,32 +1240,55 @@ document.getElementById('btn-file-issues')?.addEventListener('click', async () =
 // ------------------------------------------------------------------ about
 
 async function loadAbout() {
-    // Server version
+    const setText = (id, value) => {
+        document.getElementById(id).textContent = value || '\u2014';
+    };
+    const formatTime = (value) => {
+        if (!value) return '';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString();
+    };
+
+    setText('about-client-version', CLIENT_BUILD_INFO.version);
+    setText('about-client-commit', CLIENT_BUILD_INFO.commit);
+    setText('about-client-build-time', formatTime(CLIENT_BUILD_INFO.buildTime));
+
     try {
         const health = await checkHealth();
-        document.getElementById('about-server-version').textContent = health.version || '\u2014';
+        setText('about-server-version', health.version);
+        setText('about-server-commit', health.commit);
+        setText('about-server-build-time', formatTime(health.buildTime));
     } catch {
-        document.getElementById('about-server-version').textContent = '\u2014';
+        setText('about-server-version', '');
+        setText('about-server-commit', '');
+        setText('about-server-build-time', '');
     }
 
-    // Latest GitHub release
+    const extensionInfo = await getExtensionInfo();
+    setText('about-extension-version', extensionInfo?.version);
+    setText('about-extension-commit', extensionInfo?.commit);
+    setText('about-extension-build-time', formatTime(extensionInfo?.buildTime));
+
     const release = await checkLatestVersion();
     const latestEl = document.getElementById('about-latest-version');
+    const latestTimeEl = document.getElementById('about-latest-published-at');
     if (release && release.latestVersion) {
         latestEl.textContent = release.latestVersion;
         latestEl.style.color = '#22c55e';
+        latestTimeEl.textContent = formatTime(release.publishedAt) || '\u2014';
 
-        // Show update guide with download link
         const card = document.getElementById('update-guide-card');
         const text = document.getElementById('update-guide-text');
         const link = document.getElementById('update-guide-link');
         text.textContent = `The latest extension version is ${release.latestVersion}. `
             + 'To update your Chrome extension: download the zip, go to chrome://extensions, '
             + 'enable Developer Mode, click "Load unpacked" and select the extracted folder.';
-        link.href = release.downloadUrl || 'https://github.com/coco-xyz/clawmark/releases/latest';
+        link.href = release.downloadUrl || release.releaseUrl || 'https://github.com/coco-xyz/clawmark/releases/latest';
         card.style.display = 'block';
     } else {
         latestEl.textContent = '\u2014';
+        latestTimeEl.textContent = '\u2014';
     }
 }
 

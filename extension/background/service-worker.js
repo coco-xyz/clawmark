@@ -458,7 +458,12 @@ async function handleExternalMessage(message, sender) {
             return { success: true };
         }
         case 'PING':
-            return { pong: true, version: chrome.runtime.getManifest().version };
+            return {
+                pong: true,
+                version: chrome.runtime.getManifest().version,
+                commit: ClawMarkConfig.GIT_COMMIT || '',
+                buildTime: ClawMarkConfig.BUILD_TIME || '',
+            };
         default:
             return { error: `Unknown external message: ${message.type}` };
     }
