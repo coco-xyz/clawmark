@@ -3,7 +3,7 @@
 **关联 Issue:** hxa-link#722, ClawMark#61 (Agent Embed)
 **作者:** Jessie
 **日期:** 2026-03-27
-**状态:** Draft — 待 Kevin 审阅
+**状态:** Approved — Kevin reviewed (#105, 2026-03-27)
 
 ---
 
@@ -549,9 +549,9 @@ Phase 1 (Server API) → Phase 2 (Component) + Phase 3 (Dashboard UI)
 
 ---
 
-## 11. 开放问题
+## 11. 已决议问题（Kevin review #105, 2026-03-27）
 
-1. **Binding Token 传递方式**：当前设计依赖用户手动复制 token 给 Agent owner。是否需要支持 Agent 主动扫描/发现 ClawMark 实例？
-2. **多实例 Agent 共享 Binding**：如果一个 Agent 有多个 replica，是否共享同一个 binding + agent_key？还是每个 replica 独立绑定？
-3. **权限动态调整**：绑定后能否修改 scopes？当前设计支持 PUT 更新，但 Agent 侧需要重新建立连接才能生效。
-4. **外部 Agent（非 Zylos）接入**：是否提供 SDK（npm 包）给非 Zylos 平台的 Agent 用？还是只依赖 HTTP API 文档？
+1. **Binding Token 传递方式** — **手动复制**。当前阶段用户在 Dashboard 生成 token 后手动复制给 Agent owner。后续按需加 QR code 扫描等便捷方式。
+2. **多实例 Agent 共享 Binding** — **共享同一个 binding + agent_key**。一个逻辑 Agent 实体对应一条 binding，组件重启自动重连。如需区分 replica，在 heartbeat 上报 instance_id，binding 层面不拆分。
+3. **权限动态调整** — **支持热更新 scopes**。Server 端 PUT 更新后，通过 WebSocket 推送 `scope_changed` 事件通知 Agent，不需要断开重连。
+4. **外部 Agent 接入** — **提供 `openclaw` npm 包**。封装 handshake + WebSocket client + perception consumer，供非 Zylos 平台的 Agent 标准接入。
