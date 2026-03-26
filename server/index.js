@@ -145,6 +145,7 @@ const { initCdpWs } = require('./ws-cdp');
 const { dispatchPerceptionWebhooks, retryFailedDeliveries } = require('./webhook-dispatcher');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
+const { createBindingRouter } = require('./binding');
 
 const registry = new AdapterRegistry();
 registry.setDb(itemsDb);
@@ -889,6 +890,18 @@ function v2AuthOrAgent(req, res, next) {
     }
     v2Auth(req, res, next);
 }
+
+// -- Binding routes (#106 Agent Binding)
+const bindingRouter = createBindingRouter({
+    db: itemsDb,
+    jwtSecret: JWT_SECRET,
+    v2Auth,
+    v2AuthOrAgent,
+    apiReadLimiter,
+    apiWriteLimiter,
+    agentRegisterLimiter,
+});
+app.use('/api/v2/bindings', bindingRouter);
 
 // -- GET /api/v2/user/settings — get current user's settings
 app.get('/api/v2/user/settings', apiReadLimiter, v2Auth, (req, res) => {
