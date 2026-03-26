@@ -46,7 +46,7 @@ require_cmd() { command -v "$1" &>/dev/null || err "Required command not found: 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 PUBLISH_DIR="${PUBLISH_DIR:-$HOME/zylos/http/public}"
-DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://boot.coco.site}"
+DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://jessie.coco.site}"
 GITLAB_REMOTE="gitlab"
 GITLAB_API="https://git.coco.xyz/api/v4"
 GITLAB_PROJECT_ID="2"  # hxanet/clawmark
@@ -298,9 +298,17 @@ fi
 
 log "Step 8/9: Restart + verify..."
 if command -v pm2 &>/dev/null; then
-  pm2 restart clawmark-server 2>/dev/null && ok "Restarted clawmark-server" || warn "clawmark-server restart failed"
-  pm2 restart clawmark-staging 2>/dev/null && ok "Restarted clawmark-staging" || warn "clawmark-staging restart failed"
+  pm2 restart clawmark 2>/dev/null && ok "Restarted clawmark" || warn "clawmark restart failed"
+  pm2 restart clawmark-test 2>/dev/null && ok "Restarted clawmark-test" || warn "clawmark-test restart failed"
   sleep 2
+fi
+
+# Deploy dashboard to Caddy serving directory
+DASHBOARD_DEPLOY_DIR="$HOME/zylos/http/clawmark-dashboard"
+if [ -d "$DASHBOARD_DEPLOY_DIR" ] && [ -d "dashboard/dist" ]; then
+  rm -rf "$DASHBOARD_DEPLOY_DIR"/*
+  cp -r dashboard/dist/* "$DASHBOARD_DEPLOY_DIR/"
+  ok "Dashboard deployed to $DASHBOARD_DEPLOY_DIR"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
