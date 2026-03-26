@@ -160,7 +160,7 @@ async function loadThread(itemId) {
         renderThread(response);
         showThreadView();
     } catch (err) {
-        threadMessages.innerHTML = `<div class="error-msg">${err.message}</div>`;
+        threadMessages.innerHTML = `<div class="error-msg">${escapeHtml(err.message)}</div>`;
     }
 }
 
@@ -228,16 +228,16 @@ function renderItems() {
         return `
             <div class="item-card" data-id="${item.id}">
                 <div class="item-header">
-                    <span class="item-type ${item.type}">${item.type}</span>
-                    ${item.priority !== 'normal' ? `<span class="item-priority ${priorityClass}">${item.priority}</span>` : ''}
-                    <span class="item-priority">${item.status}</span>
+                    <span class="item-type ${escapeHtml(item.type)}">${escapeHtml(item.type)}</span>
+                    ${item.priority !== 'normal' ? `<span class="item-priority ${priorityClass}">${escapeHtml(item.priority)}</span>` : ''}
+                    <span class="item-priority">${escapeHtml(item.status)}</span>
                 </div>
                 ${item.title ? `<div class="item-title">${escapeHtml(item.title)}</div>` : ''}
                 ${item.quote ? `<div class="item-quote">${escapeHtml(item.quote)}</div>` : ''}
                 ${sourceHost ? `<div class="item-source" title="${escapeHtml(item.source_url)}"><span class="source-icon">\ud83d\udcc4</span> ${escapeHtml(item.source_title || sourceHost)}</div>` : ''}
                 ${renderDispatchBadges(item.dispatches)}
                 <div class="item-meta">
-                    <span>${item.created_by}</span>
+                    <span>${escapeHtml(item.created_by)}</span>
                     <span>${time}</span>
                 </div>
                 ${tags.length > 0 ? `<div class="item-tags">${tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
