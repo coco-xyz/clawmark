@@ -649,12 +649,52 @@ app.get('/pending', v2Auth, (req, res) => {
 // Upload an image (screenshots, attachments, etc.)
 app.post('/upload', uploadLimiter, v2Auth, upload.single('image'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
-    const url = '/images/' + req.file.filename;
+    const url = signImageUrl(req.file.filename);
     res.json({ success: true, url });
 });
 
-// Serve uploaded images
-app.use('/images', express.static(UPLOAD_DIR));
+// Serve uploaded images with signed URL verification (#113)
+const crypto = require('crypto');
+const IMAGE_SIGN_KEY = ENCRYPTION_KEY || JWT_SECRET || 'clawmark-dev-image-key';
+const IMAGE_URL_TTL = 24 * 60 * 60; // 24 hours in seconds
+
+function signImageUrl(filename) {
+    const expires = Math.floor(Date.now() / 1000) + IMAGE_URL_TTL;
+    const sig = crypto.createHmac('sha256', IMAGE_SIGN_KEY)
+        .update(`${filename}:${expires}`)
+        .digest('hex')
+        .slice(0, 16);
+    return `/images/${filename}?e=${expires}&s=${sig}`;
+}
+
+app.use('/images', (req, res, next) => {
+    const filename = req.path.replace(/^\//, '');
+    const { e: expires, s: sig } = req.query;
+
+    // If no signature params, fall back to full v2Auth validation
+    if (!expires || !sig) {
+        return v2Auth(req, res, next);
+    }
+
+    // Verify signature and expiry
+    const now = Math.floor(Date.now() / 1000);
+    if (Number(expires) < now) {
+        return res.status(403).json({ error: 'Image URL has expired.' });
+    }
+
+    const expected = crypto.createHmac('sha256', IMAGE_SIGN_KEY)
+        .update(`${filename}:${expires}`)
+        .digest('hex')
+        .slice(0, 16);
+    // Timing-safe comparison to prevent timing attacks
+    const sigBuf = Buffer.from(sig, 'utf8');
+    const expectedBuf = Buffer.from(expected, 'utf8');
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+        return res.status(403).json({ error: 'Invalid image signature.' });
+    }
+
+    next();
+}, express.static(UPLOAD_DIR));
 
 // Validate that a screenshot URL matches the server-generated upload pattern.
 // Multer filenames: <timestamp>-<6char_random>.<ext> (e.g. "1709300000000-a1b2c3.png")
