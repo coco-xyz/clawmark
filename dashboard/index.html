@@ -376,9 +376,88 @@
                 </div>
             </section>
 
-            <!-- Settings Tab (Auth + Delivery Rules) -->
+            <!-- Settings Tab (Auth + Delivery Rules + Bound Agents + Site Permissions) -->
             <section class="tab-panel" id="tab-settings">
                 <h1>Settings</h1>
+
+                <!-- Bound Agents (#103) -->
+                <div class="card" id="bound-agents-card">
+                    <h3>Bound Agents</h3>
+                    <p class="help-text">Connect AI agents by entering their API key (<code>cmak_</code> prefix). Each agent can monitor errors, execute actions, and record sessions based on site permissions.</p>
+                    <div class="bound-agents-list" id="bound-agents-list">
+                        <div class="empty-state" id="bound-agents-empty">No agents bound yet</div>
+                    </div>
+                    <div style="margin-top:12px;">
+                        <button class="btn btn-primary btn-small" id="btn-add-bound-agent">+ Add Agent</button>
+                    </div>
+                    <div class="bound-agent-form" id="bound-agent-form" style="display:none;">
+                        <div class="form-row">
+                            <label class="form-label" for="ba-name">Agent Name</label>
+                            <input type="text" class="input" id="ba-name" placeholder="e.g. QA Bot" maxlength="64">
+                        </div>
+                        <div class="form-row">
+                            <label class="form-label" for="ba-key">API Key</label>
+                            <input type="password" class="input" id="ba-key" placeholder="cmak_xxxxxxxxxxxx" autocomplete="off" style="font-family:monospace;">
+                        </div>
+                        <div class="form-row">
+                            <label class="form-label" for="ba-server">Server URL <span style="color:var(--text-muted);font-weight:normal;">(optional, uses default if empty)</span></label>
+                            <input type="text" class="input" id="ba-server" placeholder="https://api.coco.xyz/clawmark">
+                        </div>
+                        <div class="form-actions" style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+                            <button class="btn btn-primary btn-small" id="btn-save-bound-agent">Test &amp; Save</button>
+                            <button class="btn btn-secondary btn-small" id="btn-cancel-bound-agent">Cancel</button>
+                            <span class="help-text" id="ba-status" style="margin-left:8px;"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Site Permissions (#103) -->
+                <div class="card" id="site-permissions-card">
+                    <h3>Site Permissions</h3>
+                    <p class="help-text">Control which sites are monitored by the extension.</p>
+                    <div class="site-perm-mode" style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:10px 12px;background:var(--bg-hover);border:1px solid var(--border);border-radius:var(--radius);">
+                        <div style="flex:1;">
+                            <strong id="sp-mode-label">Blacklist</strong> &mdash;
+                            <span id="sp-mode-desc" style="color:var(--text-muted);font-size:13px;">monitor all sites except those listed below</span>
+                        </div>
+                        <div style="display:flex;background:var(--bg);border-radius:4px;overflow:hidden;border:1px solid var(--border);">
+                            <button class="btn btn-ghost btn-small sp-mode-btn active" data-mode="blacklist" style="border:none;border-radius:0;">Blacklist</button>
+                            <button class="btn btn-ghost btn-small sp-mode-btn" data-mode="whitelist" style="border:none;border-radius:0;">Whitelist</button>
+                        </div>
+                    </div>
+                    <h4 id="sp-list-title" style="font-size:13px;margin-bottom:4px;">Blocked Sites</h4>
+                    <p class="help-text" id="sp-list-desc">Sites listed here will NOT be monitored. All other sites are monitored by default.</p>
+                    <div id="sp-site-list" class="bound-agents-list">
+                        <div class="empty-state" id="sp-site-empty">No sites configured</div>
+                    </div>
+                    <div style="margin-top:12px;">
+                        <button class="btn btn-primary btn-small" id="btn-add-sp-site">+ Add Site</button>
+                    </div>
+                    <div id="sp-site-form" style="display:none;margin-top:12px;padding:14px;background:rgba(88,101,242,0.05);border:1px solid rgba(88,101,242,0.2);border-radius:var(--radius);">
+                        <div class="form-row">
+                            <label class="form-label" for="sp-pattern">Domain Pattern</label>
+                            <input type="text" class="input" id="sp-pattern" placeholder="e.g. *.example.com or github.com" style="font-family:monospace;">
+                        </div>
+                        <div class="form-row" style="margin-top:8px;">
+                            <label class="form-label">Monitoring Controls</label>
+                            <div style="display:flex;gap:16px;margin-top:4px;">
+                                <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);cursor:pointer;">
+                                    <input type="checkbox" id="sp-error-check" checked style="accent-color:var(--accent);"> Errors
+                                </label>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);cursor:pointer;">
+                                    <input type="checkbox" id="sp-network-check" checked style="accent-color:var(--accent);"> Network
+                                </label>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);cursor:pointer;">
+                                    <input type="checkbox" id="sp-console-check" checked style="accent-color:var(--accent);"> Console
+                                </label>
+                            </div>
+                        </div>
+                        <div style="margin-top:8px;display:flex;gap:8px;">
+                            <button class="btn btn-primary btn-small" id="btn-save-sp-site">Add Site</button>
+                            <button class="btn btn-secondary btn-small" id="btn-cancel-sp-site">Cancel</button>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Passive Monitoring (#57) -->
                 <div class="card" id="passive-monitor-card">

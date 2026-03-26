@@ -4,6 +4,38 @@
 
 ## [0.8.0] — 2026-03-06
 
+## [1.0.2] — 2026-03-27
+
+### ✨ 新增
+
+- migrate extension settings to Dashboard
+- expose build info and extension settings entry
+- #2 version info display in popup + /health metadata
+- extension settings page — agent binding UI + per-site permissions
+
+### 🐛 修复
+
+- P3 follow-ups — agent_id leak, duration_ms falsy-zero, rateLimits cleanup
+- #47 make dispatch target labels clickable links to created issue
+- update API key tests for security audit changes
+
+### 📋 文档
+
+- README i18n — English + Chinese (GL#37)
+
+### 🔧 其他
+
+- chore: release v1.0.1
+- ci: allow_failure e2e-staging while infra is fixed
+- ci: pin e2e-staging to jessie-shell runner tag
+- chore: bump version to 0.8.1
+- chore: bump extension version to 0.8.0
+- chore: bump v0.7.0
+
+
+---
+
+
 ## [1.0.1] — 2026-03-26
 
 ### ✨ 新增

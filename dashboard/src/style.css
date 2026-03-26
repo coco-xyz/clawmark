@@ -1225,3 +1225,121 @@ label {
         gap: 8px;
     }
 }
+
+/* ---- Bound Agents & Site Permissions (#103) ---- */
+
+.bound-agents-list { margin-bottom: 4px; }
+
+.bound-agent-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+}
+
+.bound-agent-item:last-child { margin-bottom: 0; }
+
+.ba-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-muted);
+}
+
+.ba-status-dot.connected { background: var(--success); }
+.ba-status-dot.disconnected { background: var(--danger); }
+
+.ba-info { flex: 1; min-width: 0; }
+
+.ba-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ba-meta {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: monospace;
+    margin-top: 2px;
+}
+
+.ba-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.bound-agent-form {
+    margin-top: 12px;
+    padding: 14px;
+    background: rgba(88,101,242,0.05);
+    border: 1px solid rgba(88,101,242,0.2);
+    border-radius: var(--radius);
+}
+
+.sp-site-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+}
+
+.sp-site-item:last-child { margin-bottom: 0; }
+
+.sp-site-pattern {
+    flex: 1;
+    min-width: 0;
+    font-family: monospace;
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sp-site-controls {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.sp-chip {
+    padding: 2px 8px;
+    font-size: 10px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+}
+
+.sp-chip.on {
+    background: rgba(88,101,242,0.2);
+    border-color: rgba(88,101,242,0.4);
+    color: var(--accent);
+}
+
+.sp-mode-btn.active {
+    background: var(--accent) !important;
+    color: #fff !important;
+}
+
+@media (max-width: 480px) {
+    .bound-agent-item { flex-wrap: wrap; }
+    .ba-actions { width: 100%; justify-content: flex-end; }
+    .sp-site-item { flex-wrap: wrap; }
+    .sp-site-controls { width: 100%; justify-content: flex-start; margin-top: 6px; }
+}

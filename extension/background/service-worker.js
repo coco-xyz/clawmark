@@ -62,6 +62,54 @@ async function clearAuthState() {
     await chrome.storage.local.remove(['authToken', 'authUser']);
 }
 
+// ------------------------------------------------------------------ Settings sync from server (#103)
+
+/**
+ * Fetch boundAgents and sitePermissions from server and write to chrome.storage.sync
+ * so the extension uses server-stored settings.
+ */
+async function syncSettingsFromServer() {
+    try {
+        const { authToken } = await getAuthState();
+        if (!authToken) return; // Not logged in, skip
+
+        const config = await getConfig();
+        const serverUrl = (config.serverUrl || DEFAULT_SERVER).replace(/\/+$/, '');
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 10000);
+        const res = await fetch(`${serverUrl}/api/v2/user/settings`, {
+            headers: { 'Authorization': `Bearer ${authToken}` },
+            signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) return;
+
+        const { settings } = await res.json();
+        if (!settings) return;
+
+        const updates = {};
+        if (Array.isArray(settings.boundAgents)) {
+            updates.boundAgents = settings.boundAgents;
+        }
+        if (settings.sitePermissions && typeof settings.sitePermissions === 'object') {
+            updates.sitePermissions = settings.sitePermissions;
+        }
+        if (Object.keys(updates).length > 0) {
+            await chrome.storage.sync.set(updates);
+        }
+    } catch {
+        // Settings sync is non-critical — fail silently
+    }
+}
+
+// Sync on startup and periodically via alarms
+chrome.alarms.create('sync-settings', { periodInMinutes: 30 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'sync-settings') {
+        syncSettingsFromServer();
+    }
+});
+
 // ------------------------------------------------------------------ Google OAuth
 
 async function loginWithGoogle() {
@@ -314,6 +362,9 @@ chrome.runtime.onInstalled.addListener((details) => {
         title: 'ClawMark: Create Issue',
         contexts: ['selection', 'page'],
     });
+
+    // #103: Sync settings from server on install/update
+    syncSettingsFromServer();
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -362,6 +413,8 @@ async function handleExternalMessage(message, sender) {
             if (!message.token || !message.user) return { error: 'Missing token or user' };
             await setAuthState(message.token, message.user);
             chrome.runtime.sendMessage({ type: 'AUTH_STATE_CHANGED' }).catch(() => {});
+            // #103: Sync settings from server after login
+            syncSettingsFromServer();
             return { success: true };
         }
         case 'DASHBOARD_LOGOUT': {
