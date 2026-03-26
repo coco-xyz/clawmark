@@ -186,6 +186,31 @@ export async function deleteAuth(id) {
     });
 }
 
+// ---- Agent Channel
+
+export async function registerAgent(data) {
+    return apiFetch('/api/v2/agent-channel/register', {
+        method: 'POST',
+        body: data,
+    });
+}
+
+export async function listAgents() {
+    return apiFetch('/api/v2/agent-channel/agents');
+}
+
+export async function deactivateAgent(id) {
+    return apiFetch(`/api/v2/agent-channel/agents/${id}`, {
+        method: 'DELETE',
+    });
+}
+
+export async function rotateAgentKey(id) {
+    return apiFetch(`/api/v2/agent-channel/agents/${id}/rotate-key`, {
+        method: 'POST',
+    });
+}
+
 // ---- Extension Bridge (auth sync)
 
 let _extensionId = null;
