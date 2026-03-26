@@ -45,7 +45,9 @@
         "content/privacy-filter.js",
         "content/session-recorder.js",
         "content/element-finder.js",
-        "content/action-executor.js"
+        "content/action-executor.js",
+        "content/dom-inspector.js",
+        "content/perf-monitor.js"
       ],
       "css": [
         "content/inject.css",
