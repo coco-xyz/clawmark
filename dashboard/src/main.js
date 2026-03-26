@@ -103,6 +103,8 @@ function showApp(user) {
 
     loadOverview();
     loadConnection();
+    loadBoundAgents();
+    loadSitePermissions();
     loadPassiveMonitor();
     loadAuthsList();
     loadRules();
@@ -920,6 +922,321 @@ document.getElementById('btn-save-passive').addEventListener('click', async () =
         showToast('Failed to save settings', 'error');
     }
     setTimeout(() => { statusEl.textContent = ''; }, 3000);
+});
+
+// ------------------------------------------------------------------ Bound Agents (#103)
+
+let boundAgents = [];
+
+async function loadBoundAgents() {
+    try {
+        const { settings } = await getUserSettings();
+        boundAgents = Array.isArray(settings?.boundAgents) ? settings.boundAgents : [];
+    } catch {
+        boundAgents = [];
+    }
+    renderBoundAgents();
+}
+
+function renderBoundAgents() {
+    const listEl = document.getElementById('bound-agents-list');
+    const emptyEl = document.getElementById('bound-agents-empty');
+
+    // Remove existing items
+    listEl.querySelectorAll('.bound-agent-item').forEach(el => el.remove());
+
+    if (boundAgents.length === 0) {
+        emptyEl.style.display = '';
+        return;
+    }
+    emptyEl.style.display = 'none';
+
+    boundAgents.forEach((agent, index) => {
+        const el = document.createElement('div');
+        el.className = 'bound-agent-item';
+        const statusClass = agent.status === 'connected' ? 'connected'
+            : agent.status === 'disconnected' ? 'disconnected' : '';
+        const keyPreview = agent.keyPrefix || (agent.key || '').slice(0, 12) + '...';
+        const serverInfo = agent.serverUrl ? ` | ${agent.serverUrl}` : '';
+        el.innerHTML = `
+            <span class="ba-status-dot ${statusClass}" title="${escHtml(agent.status || 'unknown')}"></span>
+            <div class="ba-info">
+                <div class="ba-name">${escHtml(agent.name)}</div>
+                <div class="ba-meta">${escHtml(keyPreview)}${escHtml(serverInfo)}</div>
+            </div>
+            <div class="ba-actions">
+                <button class="btn btn-secondary btn-small" data-ba-action="test" data-ba-index="${index}">Test</button>
+                <button class="btn btn-danger btn-small" data-ba-action="remove" data-ba-index="${index}">Remove</button>
+            </div>
+        `;
+        listEl.appendChild(el);
+    });
+}
+
+async function saveBoundAgents() {
+    await updateUserSettings({ boundAgents });
+}
+
+document.getElementById('btn-add-bound-agent').addEventListener('click', () => {
+    const form = document.getElementById('bound-agent-form');
+    form.style.display = 'block';
+    document.getElementById('ba-name').value = '';
+    document.getElementById('ba-key').value = '';
+    document.getElementById('ba-server').value = '';
+    document.getElementById('ba-status').textContent = '';
+    document.getElementById('ba-name').focus();
+});
+
+document.getElementById('btn-cancel-bound-agent').addEventListener('click', () => {
+    document.getElementById('bound-agent-form').style.display = 'none';
+});
+
+document.getElementById('btn-save-bound-agent').addEventListener('click', async () => {
+    const name = document.getElementById('ba-name').value.trim();
+    const key = document.getElementById('ba-key').value.trim();
+    const serverUrl = document.getElementById('ba-server').value.trim();
+    const statusEl = document.getElementById('ba-status');
+
+    if (!name) {
+        statusEl.textContent = 'Please enter an agent name';
+        statusEl.style.color = 'var(--danger)';
+        return;
+    }
+    if (!key.startsWith('cmak_') || key.length < 10) {
+        statusEl.textContent = 'Invalid API key — must start with cmak_ and be at least 10 characters';
+        statusEl.style.color = 'var(--danger)';
+        return;
+    }
+    if (boundAgents.some(a => a.key === key)) {
+        statusEl.textContent = 'This API key is already bound';
+        statusEl.style.color = 'var(--danger)';
+        return;
+    }
+
+    statusEl.textContent = 'Testing connection...';
+    statusEl.style.color = 'var(--text-muted)';
+    document.getElementById('btn-save-bound-agent').disabled = true;
+
+    try {
+        const testUrl = (serverUrl || getServerUrl()) + '/health';
+        const ctrl = new AbortController();
+        setTimeout(() => ctrl.abort(), 5000);
+        const res = await fetch(testUrl, {
+            signal: ctrl.signal,
+            headers: { 'Authorization': `Bearer ${key}` },
+        });
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+
+        const agent = {
+            id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+            name,
+            key,
+            keyPrefix: key.slice(0, 12) + '...',
+            serverUrl: serverUrl || '',
+            status: 'connected',
+            lastTested: Date.now(),
+        };
+
+        boundAgents.push(agent);
+        await saveBoundAgents();
+        renderBoundAgents();
+
+        document.getElementById('bound-agent-form').style.display = 'none';
+        showToast(`Agent "${name}" connected successfully`);
+    } catch (err) {
+        statusEl.textContent = 'Connection failed: ' + (err.message || 'Unknown error');
+        statusEl.style.color = 'var(--danger)';
+    } finally {
+        document.getElementById('btn-save-bound-agent').disabled = false;
+    }
+});
+
+document.getElementById('bound-agents-list').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-ba-action]');
+    if (!btn) return;
+    const action = btn.dataset.baAction;
+    const index = parseInt(btn.dataset.baIndex, 10);
+    if (index < 0 || index >= boundAgents.length) return;
+
+    if (action === 'test') {
+        btn.textContent = 'Testing...';
+        btn.disabled = true;
+        try {
+            const agent = boundAgents[index];
+            const testUrl = (agent.serverUrl || getServerUrl()) + '/health';
+            const ctrl = new AbortController();
+            setTimeout(() => ctrl.abort(), 5000);
+            const res = await fetch(testUrl, {
+                signal: ctrl.signal,
+                headers: { 'Authorization': `Bearer ${agent.key}` },
+            });
+            agent.status = res.ok ? 'connected' : 'disconnected';
+            agent.lastTested = Date.now();
+            await saveBoundAgents();
+            renderBoundAgents();
+            showToast(res.ok ? `Agent "${agent.name}" is connected` : `Connection failed for "${agent.name}"`, res.ok ? 'success' : 'error');
+        } catch (err) {
+            boundAgents[index].status = 'disconnected';
+            await saveBoundAgents();
+            renderBoundAgents();
+            showToast('Test failed: ' + err.message, 'error');
+        }
+    }
+
+    if (action === 'remove') {
+        const agent = boundAgents[index];
+        boundAgents.splice(index, 1);
+        await saveBoundAgents();
+        renderBoundAgents();
+        showToast(`Agent "${agent.name}" removed`);
+    }
+});
+
+// ------------------------------------------------------------------ Site Permissions (#103)
+
+let sitePermissions = { mode: 'blacklist', sites: [] };
+
+async function loadSitePermissions() {
+    try {
+        const { settings } = await getUserSettings();
+        sitePermissions = settings?.sitePermissions || { mode: 'blacklist', sites: [] };
+        if (!Array.isArray(sitePermissions.sites)) sitePermissions.sites = [];
+    } catch {
+        sitePermissions = { mode: 'blacklist', sites: [] };
+    }
+    renderSitePermissions();
+}
+
+function renderSitePermissions() {
+    const mode = sitePermissions.mode || 'blacklist';
+
+    // Update mode toggle
+    document.querySelectorAll('.sp-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    const modeLabel = document.getElementById('sp-mode-label');
+    const modeDesc = document.getElementById('sp-mode-desc');
+    const listTitle = document.getElementById('sp-list-title');
+    const listDesc = document.getElementById('sp-list-desc');
+
+    if (mode === 'blacklist') {
+        modeLabel.textContent = 'Blacklist';
+        modeDesc.textContent = 'monitor all sites except those listed below';
+        listTitle.textContent = 'Blocked Sites';
+        listDesc.textContent = 'Sites listed here will NOT be monitored. All other sites are monitored by default.';
+    } else {
+        modeLabel.textContent = 'Whitelist';
+        modeDesc.textContent = 'only monitor sites listed below';
+        listTitle.textContent = 'Allowed Sites';
+        listDesc.textContent = 'Only sites listed here will be monitored. All other sites are ignored.';
+    }
+
+    // Render site list
+    const listEl = document.getElementById('sp-site-list');
+    const emptyEl = document.getElementById('sp-site-empty');
+    listEl.querySelectorAll('.sp-site-item').forEach(el => el.remove());
+
+    const sites = sitePermissions.sites;
+    if (sites.length === 0) {
+        emptyEl.style.display = '';
+        return;
+    }
+    emptyEl.style.display = 'none';
+
+    sites.forEach((site, index) => {
+        const el = document.createElement('div');
+        el.className = 'sp-site-item';
+        el.innerHTML = `
+            <div class="sp-site-pattern">${escHtml(site.pattern)}</div>
+            <div class="sp-site-controls">
+                <span class="sp-chip ${site.error ? 'on' : ''}" data-sp-index="${index}" data-sp-field="error" title="Error monitoring" style="cursor:pointer;">Errors</span>
+                <span class="sp-chip ${site.network ? 'on' : ''}" data-sp-index="${index}" data-sp-field="network" title="Network monitoring" style="cursor:pointer;">Network</span>
+                <span class="sp-chip ${site.console ? 'on' : ''}" data-sp-index="${index}" data-sp-field="console" title="Console monitoring" style="cursor:pointer;">Console</span>
+                <button class="btn btn-ghost btn-small" data-sp-action="remove" data-sp-index="${index}" style="color:var(--danger);padding:2px 6px;">&times;</button>
+            </div>
+        `;
+        listEl.appendChild(el);
+    });
+}
+
+async function saveSitePermissions() {
+    await updateUserSettings({ sitePermissions });
+}
+
+document.querySelectorAll('.sp-mode-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        sitePermissions.mode = btn.dataset.mode;
+        await saveSitePermissions();
+        renderSitePermissions();
+        showToast('Switched to ' + btn.dataset.mode + ' mode');
+    });
+});
+
+document.getElementById('btn-add-sp-site').addEventListener('click', () => {
+    const form = document.getElementById('sp-site-form');
+    form.style.display = 'block';
+    document.getElementById('sp-pattern').value = '';
+    document.getElementById('sp-error-check').checked = true;
+    document.getElementById('sp-network-check').checked = true;
+    document.getElementById('sp-console-check').checked = true;
+    document.getElementById('sp-pattern').focus();
+});
+
+document.getElementById('btn-cancel-sp-site').addEventListener('click', () => {
+    document.getElementById('sp-site-form').style.display = 'none';
+});
+
+document.getElementById('btn-save-sp-site').addEventListener('click', async () => {
+    const pattern = document.getElementById('sp-pattern').value.trim().toLowerCase();
+    if (!pattern) {
+        showToast('Please enter a domain pattern', 'error');
+        return;
+    }
+    if (!/^[a-z0-9*._-]+(\.[a-z0-9*._-]+)*$/.test(pattern)) {
+        showToast('Invalid domain pattern', 'error');
+        return;
+    }
+    if (sitePermissions.sites.some(s => s.pattern === pattern)) {
+        showToast('This pattern already exists', 'error');
+        return;
+    }
+
+    sitePermissions.sites.push({
+        pattern,
+        error: document.getElementById('sp-error-check').checked,
+        network: document.getElementById('sp-network-check').checked,
+        console: document.getElementById('sp-console-check').checked,
+    });
+
+    await saveSitePermissions();
+    renderSitePermissions();
+    document.getElementById('sp-site-form').style.display = 'none';
+    showToast(`Site "${pattern}" added`);
+});
+
+document.getElementById('sp-site-list').addEventListener('click', async (e) => {
+    // Toggle chip
+    const chip = e.target.closest('[data-sp-field]');
+    if (chip) {
+        const index = parseInt(chip.dataset.spIndex, 10);
+        const field = chip.dataset.spField;
+        if (index >= 0 && index < sitePermissions.sites.length) {
+            sitePermissions.sites[index][field] = !sitePermissions.sites[index][field];
+            await saveSitePermissions();
+            renderSitePermissions();
+        }
+        return;
+    }
+    // Remove site
+    const removeBtn = e.target.closest('[data-sp-action="remove"]');
+    if (removeBtn) {
+        const index = parseInt(removeBtn.dataset.spIndex, 10);
+        const site = sitePermissions.sites[index];
+        sitePermissions.sites.splice(index, 1);
+        await saveSitePermissions();
+        renderSitePermissions();
+        showToast(`Site "${site.pattern}" removed`);
+    }
 });
 
 // ------------------------------------------------------------------ Auth Management
