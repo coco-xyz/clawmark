@@ -97,12 +97,21 @@ function initPerceptionWs(server, db) {
             return;
         }
 
+        let scopes;
+        try {
+            scopes = Array.isArray(binding.scopes) ? binding.scopes : JSON.parse(binding.scopes || '[]');
+        } catch {
+            socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+            socket.destroy();
+            return;
+        }
+
         wss.handleUpgrade(req, socket, head, (ws) => {
             ws.authContext = {
                 agent_id: agent.id,
                 app_id: binding.app_id,
                 binding_id: binding.id,
-                scopes: Array.isArray(binding.scopes) ? binding.scopes : JSON.parse(binding.scopes || '[]'),
+                scopes,
             };
             wss.emit('connection', ws, req);
         });
@@ -274,7 +283,7 @@ function initPerceptionWs(server, db) {
         if (!sockets) return;
 
         for (const ws of sockets) {
-            ws.authContext.scopes = newScopes; // update in-memory
+            ws.authContext.scopes = [...newScopes]; // defensive copy
             wsSend(ws, {
                 type: 'scope_changed',
                 binding_id,
