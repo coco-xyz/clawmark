@@ -596,6 +596,39 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_retry ON webhook_deliveries(status, next_retry_at);
     `);
 
+    // ---------------------------------------------------- schema: bindings (#106 Agent Binding)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS bindings (
+            id              TEXT PRIMARY KEY,
+            app_id          TEXT NOT NULL,
+            agent_id        TEXT,
+
+            agent_name      TEXT,
+            agent_type      TEXT DEFAULT 'zylos',
+            agent_node_url  TEXT,
+
+            scopes          TEXT NOT NULL DEFAULT '[]',
+            status          TEXT NOT NULL DEFAULT 'pending',
+            label           TEXT,
+
+            connected       INTEGER NOT NULL DEFAULT 0,
+            last_heartbeat  TEXT,
+
+            token_hash      TEXT,
+            token_used      INTEGER NOT NULL DEFAULT 0,
+            token_expires   TEXT,
+
+            created_by      TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            activated_at    TEXT,
+            updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_bindings_app ON bindings(app_id);
+        CREATE INDEX IF NOT EXISTS idx_bindings_agent ON bindings(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_bindings_status ON bindings(status);
+        CREATE INDEX IF NOT EXISTS idx_bindings_token ON bindings(token_hash);
+    `);
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -899,6 +932,29 @@ function initDb(dataDir) {
         deactivateAgent: db.prepare("UPDATE agents SET status = 'inactive', updated_at = ? WHERE id = ?"),
         updateAgentLastSeen: db.prepare('UPDATE agents SET last_seen = ? WHERE id = ?'),
         updateAgentKey: db.prepare('UPDATE agents SET key_hash = @key_hash, key_prefix = @key_prefix, updated_at = @updated_at WHERE id = @id'),
+    };
+
+    // ------------------------------------------------- binding statements (#106)
+    const bindingStmts = {
+        insert: db.prepare(`
+            INSERT INTO bindings (id, app_id, scopes, status, label, token_hash, token_expires, created_by, created_at, updated_at)
+            VALUES (@id, @app_id, @scopes, @status, @label, @token_hash, @token_expires, @created_by, @created_at, @updated_at)
+        `),
+        getById: db.prepare('SELECT * FROM bindings WHERE id = ?'),
+        getByTokenHash: db.prepare('SELECT * FROM bindings WHERE token_hash = ?'),
+        getByApp: db.prepare("SELECT * FROM bindings WHERE app_id = ? AND status != 'revoked' ORDER BY created_at DESC"),
+        getByAgent: db.prepare("SELECT * FROM bindings WHERE agent_id = ? AND status != 'revoked' ORDER BY created_at DESC"),
+        getActiveByAppAndAgent: db.prepare("SELECT * FROM bindings WHERE app_id = ? AND agent_id = ? AND status = 'active'"),
+        activate: db.prepare(`
+            UPDATE bindings SET agent_id = @agent_id, agent_name = @agent_name, agent_type = @agent_type,
+                agent_node_url = @agent_node_url, status = 'active', token_used = 1,
+                activated_at = @activated_at, updated_at = @updated_at
+            WHERE id = @id
+        `),
+        updateScopes: db.prepare('UPDATE bindings SET scopes = @scopes, updated_at = @updated_at WHERE id = @id'),
+        updateStatus: db.prepare('UPDATE bindings SET status = @status, updated_at = @updated_at WHERE id = @id'),
+        updateHeartbeat: db.prepare('UPDATE bindings SET connected = @connected, last_heartbeat = @last_heartbeat, updated_at = @updated_at WHERE id = @id'),
+        setConnected: db.prepare('UPDATE bindings SET connected = ?, updated_at = ? WHERE id = ?'),
     };
 
     // ------------------------------------------------- cdp_audit_log statements (#83)
@@ -2713,6 +2769,88 @@ function initDb(dataDir) {
         agentStmts.updateAgentKey.run({ id, key_hash, key_prefix, updated_at: now });
     }
 
+    // ------------------------------------------------- Binding methods (#106)
+
+    function createBinding({ app_id, scopes, label, token_hash, token_expires, created_by }) {
+        const id = genId('bind');
+        const now = new Date().toISOString();
+        bindingStmts.insert.run({
+            id, app_id,
+            scopes: JSON.stringify(scopes || []),
+            status: 'pending',
+            label: label || null,
+            token_hash,
+            token_expires,
+            created_by,
+            created_at: now,
+            updated_at: now,
+        });
+        return { id, app_id, scopes, status: 'pending', label, token_expires, created_by, created_at: now };
+    }
+
+    function getBindingById(id) {
+        const row = bindingStmts.getById.get(id);
+        if (!row) return null;
+        row.scopes = JSON.parse(row.scopes || '[]');
+        return row;
+    }
+
+    function getBindingByTokenHash(tokenHash) {
+        const row = bindingStmts.getByTokenHash.get(tokenHash);
+        if (!row) return null;
+        row.scopes = JSON.parse(row.scopes || '[]');
+        return row;
+    }
+
+    function getBindingsByApp(app_id) {
+        return bindingStmts.getByApp.all(app_id).map(r => {
+            r.scopes = JSON.parse(r.scopes || '[]');
+            return r;
+        });
+    }
+
+    function getBindingsByAgent(agent_id) {
+        return bindingStmts.getByAgent.all(agent_id).map(r => {
+            r.scopes = JSON.parse(r.scopes || '[]');
+            return r;
+        });
+    }
+
+    function activateBinding(id, { agent_id, agent_name, agent_type, agent_node_url }) {
+        const now = new Date().toISOString();
+        bindingStmts.activate.run({
+            id, agent_id,
+            agent_name: agent_name || null,
+            agent_type: agent_type || 'zylos',
+            agent_node_url: agent_node_url || null,
+            activated_at: now,
+            updated_at: now,
+        });
+        return getBindingById(id);
+    }
+
+    function updateBindingScopes(id, scopes) {
+        const now = new Date().toISOString();
+        bindingStmts.updateScopes.run({ id, scopes: JSON.stringify(scopes), updated_at: now });
+        return getBindingById(id);
+    }
+
+    function updateBindingStatus(id, status) {
+        const now = new Date().toISOString();
+        bindingStmts.updateStatus.run({ id, status, updated_at: now });
+        return getBindingById(id);
+    }
+
+    function updateBindingHeartbeat(id, connected) {
+        const now = new Date().toISOString();
+        bindingStmts.updateHeartbeat.run({ id, connected: connected ? 1 : 0, last_heartbeat: now, updated_at: now });
+    }
+
+    function setBindingConnected(id, connected) {
+        const now = new Date().toISOString();
+        bindingStmts.setConnected.run(connected ? 1 : 0, now, id);
+    }
+
     // ------------------------------------------------- CDP audit log methods (#83)
 
     function createCdpAuditLog({ app_id, agent_id, session_key, tab_id, method, params_hash }) {
@@ -3001,6 +3139,17 @@ function initDb(dataDir) {
         getCdpAuditByAgent,
         getCdpAuditByApp,
         cleanupOldCdpAuditLogs,
+        // Bindings (#106)
+        createBinding,
+        getBindingById,
+        getBindingByTokenHash,
+        getBindingsByApp,
+        getBindingsByAgent,
+        activateBinding,
+        updateBindingScopes,
+        updateBindingStatus,
+        updateBindingHeartbeat,
+        setBindingConnected,
         // Webhooks (#88)
         createWebhook,
         getWebhook,
