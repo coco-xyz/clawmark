@@ -87,8 +87,8 @@ function openDashboard(hash) {
 }
 
 function openExtensionSettings() {
-    chrome.runtime.openOptionsPage();
-    window.close();
+    // #103: Redirect to Dashboard settings tab instead of extension options page
+    openDashboard('settings');
 }
 
 gearBtn.addEventListener('click', () => openDashboard());

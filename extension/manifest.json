@@ -11,7 +11,8 @@
     "contextMenus",
     "sidePanel",
     "tabs",
-    "debugger"
+    "debugger",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -65,7 +66,6 @@
       "128": "icons/icon-128.png"
     }
   },
-  "options_page": "settings/settings.html",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
