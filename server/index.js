@@ -671,14 +671,9 @@ app.use('/images', (req, res, next) => {
     const filename = req.path.replace(/^\//, '');
     const { e: expires, s: sig } = req.query;
 
-    // If no signature params, check for valid auth token as fallback
+    // If no signature params, fall back to full v2Auth validation
     if (!expires || !sig) {
-        // Allow authenticated users (dashboard, extension) to access directly
-        const authHeader = req.headers.authorization;
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            return next(); // Let v2Auth-style callers through
-        }
-        return res.status(403).json({ error: 'Image access requires a signed URL or authentication.' });
+        return v2Auth(req, res, next);
     }
 
     // Verify signature and expiry
@@ -691,7 +686,10 @@ app.use('/images', (req, res, next) => {
         .update(`${filename}:${expires}`)
         .digest('hex')
         .slice(0, 16);
-    if (sig !== expected) {
+    // Timing-safe comparison to prevent timing attacks
+    const sigBuf = Buffer.from(sig, 'utf8');
+    const expectedBuf = Buffer.from(expected, 'utf8');
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
         return res.status(403).json({ error: 'Invalid image signature.' });
     }
 
