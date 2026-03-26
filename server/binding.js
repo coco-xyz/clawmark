@@ -52,7 +52,9 @@ function verifyBindingToken(token, secret) {
     const signature = withoutPrefix.slice(dotIdx + 1);
 
     const expected = crypto.createHmac('sha256', secret).update(payloadStr).digest('base64url');
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
 
     try {
         const payload = JSON.parse(Buffer.from(payloadStr, 'base64url').toString('utf8'));
@@ -154,7 +156,6 @@ function createBindingRouter(opts) {
             // Register a new agent (or reuse if agent_info provides an existing key)
             const { raw: agentKey, hash: agentKeyHash, prefix: agentKeyPrefix } = generateAgentKey();
 
-            const agentId = crypto.randomUUID();
             db.registerAgent({
                 app_id: binding.app_id,
                 name: agent_info.name,
@@ -190,6 +191,45 @@ function createBindingRouter(opts) {
             console.error('[binding] handshake error:', err.message);
             res.status(500).json({ error: 'Handshake failed' });
         }
+    });
+
+    // ------ GET /me — agent checks own binding info (authenticated via agent key)
+    // MUST be before /:id to avoid Express treating "me" as an :id param
+    router.get('/me', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+        const agent = req.v2Auth?.agent || req.agent;
+        if (!agent) return res.status(401).json({ error: 'Agent auth required' });
+
+        try {
+            const bindings = db.getBindingsByAgent(agent.id);
+            res.json({
+                agent_id: agent.id,
+                agent_name: agent.name,
+                bindings: bindings.map(b => {
+                    const { token_hash, ...safe } = b;
+                    return safe;
+                }),
+            });
+        } catch (err) {
+            console.error('[binding] me error:', err.message);
+            res.status(500).json({ error: 'Failed to get binding info' });
+        }
+    });
+
+    // ------ POST /heartbeat — agent heartbeat
+    router.post('/heartbeat', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
+        const agent = req.v2Auth?.agent || req.agent;
+        if (!agent) return res.status(401).json({ error: 'Agent auth required' });
+
+        const { binding_id, status, version } = req.body || {};
+        if (!binding_id) return res.status(400).json({ error: 'binding_id required' });
+
+        const binding = db.getBindingById(binding_id);
+        if (!binding || binding.agent_id !== agent.id) {
+            return res.status(404).json({ error: 'Binding not found' });
+        }
+
+        db.updateBindingHeartbeat(binding_id, true);
+        res.json({ ok: true });
     });
 
     // ------ GET / — list bindings for current app
@@ -288,44 +328,6 @@ function createBindingRouter(opts) {
         }
 
         res.json({ id: req.params.id, status: 'revoked' });
-    });
-
-    // ------ GET /me — agent checks own binding info (authenticated via agent key)
-    router.get('/me', apiReadLimiter, v2AuthOrAgent, (req, res) => {
-        const agent = req.v2Auth?.agent || req.agent;
-        if (!agent) return res.status(401).json({ error: 'Agent auth required' });
-
-        try {
-            const bindings = db.getBindingsByAgent(agent.id);
-            res.json({
-                agent_id: agent.id,
-                agent_name: agent.name,
-                bindings: bindings.map(b => {
-                    const { token_hash, ...safe } = b;
-                    return safe;
-                }),
-            });
-        } catch (err) {
-            console.error('[binding] me error:', err.message);
-            res.status(500).json({ error: 'Failed to get binding info' });
-        }
-    });
-
-    // ------ POST /heartbeat — agent heartbeat
-    router.post('/heartbeat', apiWriteLimiter, v2AuthOrAgent, (req, res) => {
-        const agent = req.v2Auth?.agent || req.agent;
-        if (!agent) return res.status(401).json({ error: 'Agent auth required' });
-
-        const { binding_id, status, version } = req.body || {};
-        if (!binding_id) return res.status(400).json({ error: 'binding_id required' });
-
-        const binding = db.getBindingById(binding_id);
-        if (!binding || binding.agent_id !== agent.id) {
-            return res.status(404).json({ error: 'Binding not found' });
-        }
-
-        db.updateBindingHeartbeat(binding_id, true);
-        res.json({ ok: true });
     });
 
     return router;
