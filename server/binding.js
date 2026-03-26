@@ -71,7 +71,7 @@ function verifyBindingToken(token, secret) {
 function createBindingRouter(opts) {
     const express = require('express');
     const router = express.Router();
-    const { db, jwtSecret, v2Auth, v2AuthOrAgent, apiReadLimiter, apiWriteLimiter, agentRegisterLimiter } = opts;
+    const { db, jwtSecret, v2Auth, v2AuthOrAgent, apiReadLimiter, apiWriteLimiter, agentRegisterLimiter, getPerceptionWs } = opts;
 
     // ------ POST /create-token — generate a binding token
     router.post('/create-token', apiWriteLimiter, v2Auth, (req, res) => {
@@ -182,7 +182,11 @@ function createBindingRouter(opts) {
                 agent_id: agent.id,
                 agent_key: agentKey, // only returned once
                 scopes: activated.scopes,
-                ws_endpoint: null, // Phase 4
+                ws_endpoint: (() => {
+                    const proto = req.get('x-forwarded-proto') === 'https' ? 'wss' : 'ws';
+                    const host = process.env.CLAWMARK_PUBLIC_URL || `${proto}://${req.get('host')}`;
+                    return host.replace(/^http/, 'ws') + '/ws/agent';
+                })(),
                 app_info: {
                     app_id: binding.app_id,
                 },
@@ -277,6 +281,9 @@ function createBindingRouter(opts) {
             if (invalid.length > 0) return res.status(400).json({ error: `Invalid scopes: ${invalid.join(', ')}` });
 
             const updated = db.updateBindingScopes(req.params.id, scopes);
+            // Notify connected agent of scope change (#109)
+            const pws = getPerceptionWs && getPerceptionWs();
+            if (pws) pws.pushScopeChanged(req.params.id, scopes);
             const { token_hash, ...safe } = updated;
             return res.json(safe);
         }
@@ -294,6 +301,9 @@ function createBindingRouter(opts) {
         if (binding.status !== 'active') return res.status(400).json({ error: 'Can only suspend active bindings' });
 
         const updated = db.updateBindingStatus(req.params.id, 'suspended');
+        // Close WebSocket connections for suspended binding (#109)
+        const pws2 = getPerceptionWs && getPerceptionWs();
+        if (pws2) pws2.closeBinding(req.params.id);
         const { token_hash, ...safe } = updated;
         res.json(safe);
     });
@@ -321,6 +331,10 @@ function createBindingRouter(opts) {
         if (!binding || binding.app_id !== app_id) return res.status(404).json({ error: 'Binding not found' });
 
         db.updateBindingStatus(req.params.id, 'revoked');
+
+        // Close WebSocket connections for revoked binding (#109)
+        const pws3 = getPerceptionWs && getPerceptionWs();
+        if (pws3) pws3.closeBinding(req.params.id);
 
         // Also deactivate the associated agent if exists
         if (binding.agent_id) {

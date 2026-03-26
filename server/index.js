@@ -142,6 +142,7 @@ const { autoSeverity } = require('./severity');
 const { hashKey, generateAgentKey, createAgentAuth } = require('./agent-auth');
 const { initActionWs } = require('./ws-actions');
 const { initCdpWs } = require('./ws-cdp');
+const { initPerceptionWs } = require('./ws-perception');
 const { dispatchPerceptionWebhooks, retryFailedDeliveries } = require('./webhook-dispatcher');
 const { resolveDeclaration } = require('./target-declaration');
 const { recommendRoute, classifyAnnotation, VALID_CLASSIFICATIONS, generateTags, clusterAnnotations, analyzeScreenshot } = require('./ai');
@@ -900,6 +901,7 @@ const bindingRouter = createBindingRouter({
     apiReadLimiter,
     apiWriteLimiter,
     agentRegisterLimiter,
+    getPerceptionWs: () => app.locals.perceptionWs,
 });
 app.use('/api/v2/bindings', bindingRouter);
 
@@ -2555,6 +2557,14 @@ app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (re
             });
         } catch { /* non-critical */ }
 
+        // Push to bound agents via WebSocket (#109)
+        if (app.locals.perceptionWs) {
+            setImmediate(() => {
+                try { app.locals.perceptionWs.pushPerceptionEvents(app_id, valid); }
+                catch (e) { console.debug('[ws-perception] push error:', e.message); }
+            });
+        }
+
         // Trigger webhooks for P0/P1 events (#88)
         const highSeverity = valid.filter(e => e.severity === 'P0' || e.severity === 'P1');
         if (highSeverity.length > 0) {
@@ -3309,12 +3319,17 @@ const server = app.listen(PORT, () => {
     console.log(`    api v2    : /api/v2/*`);
     console.log(`    ws        : /ws/agent-channel/actions`);
     console.log(`    ws        : /ws/agent-channel/cdp`);
+    console.log(`    ws        : /ws/agent (perception push)`);
 
     // Action WebSocket (#78)
     const actionWs = initActionWs(server, itemsDb);
 
     // CDP Channel WebSocket (#83)
     const cdpWs = initCdpWs(server, itemsDb);
+
+    // Perception Push WebSocket (#109 — Phase 4: Agent binding)
+    const perceptionWs = initPerceptionWs(server, itemsDb);
+    app.locals.perceptionWs = perceptionWs;
 
     // Action timeout checker: every 5s
     setInterval(() => {
