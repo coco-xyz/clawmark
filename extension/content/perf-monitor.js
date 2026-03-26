@@ -13,8 +13,9 @@
  *
  * Design:
  *   - Uses PerformanceObserver API (standard, no library dependency)
- *   - Reports once per page load (not continuous) to avoid noise
- *   - CLS is accumulated across layout-shift entries until page hide
+ *   - LCP deferred to visibilitychange (last candidate wins)
+ *   - CLS uses session-window algorithm (worst 5s window with 1s gap)
+ *   - INP reports worst interaction delay on page hide
  */
 
 'use strict';
@@ -35,14 +36,34 @@
         ttfb: { warn: 800,  crit: 1800 },
     };
 
+    // Sensitive query param names to strip from URLs
+    const SENSITIVE_PARAMS = /^(token|key|secret|password|passwd|auth|code|session|access_token|refresh_token|api_key|apikey|credential|sig|signature)$/i;
+
     // ── State ──────────────────────────────────────────────────────────
 
-    const reported = new Set(); // track which metrics we've already reported
-    let clsValue = 0;
+    const reported = new Set();
+    let inpMax = 0;
+    let lcpValue = 0;
+    let lcpDetail = null;
+    let clsSessionWindows = [];   // { value, startTime, lastTime }
     let clsEntries = [];
     const observers = [];
 
     // ── Helpers ────────────────────────────────────────────────────────
+
+    function sanitizeUrl(rawUrl) {
+        try {
+            const u = new URL(rawUrl, location.origin);
+            for (const key of [...u.searchParams.keys()]) {
+                if (SENSITIVE_PARAMS.test(key)) {
+                    u.searchParams.set(key, '[REDACTED]');
+                }
+            }
+            return u.toString();
+        } catch {
+            return rawUrl;
+        }
+    }
 
     function emit(event) {
         if (!enabled) return;
@@ -66,11 +87,13 @@
 
     function reportMetric(metric, value, detail) {
         if (reported.has(metric)) return;
-        reported.add(metric);
 
         const sev = severity(metric, value);
         // Only report warnings and critical — info-level vitals are noise
         if (sev === 'info') return;
+
+        // Mark as reported AFTER severity check so good→bad transitions aren't blocked
+        reported.add(metric);
 
         const unit = metric === 'cls' ? '' : 'ms';
         const formatted = metric === 'cls' ? value.toFixed(3) : Math.round(value);
@@ -79,12 +102,12 @@
             channel: 'perf',
             severity: sev,
             timestamp: Date.now(),
-            url: location.href,
+            url: sanitizeUrl(location.href),
             summary: `${metric.toUpperCase()} = ${formatted}${unit} (${sev})`,
             detail: {
                 type: 'web-vital',
                 metric,
-                value: Number(formatted),
+                value,
                 rating: sev,
                 ...detail,
             },
@@ -100,10 +123,12 @@
                 const entries = list.getEntries();
                 const last = entries[entries.length - 1];
                 if (last) {
-                    reportMetric('lcp', last.startTime, {
+                    // Accumulate — report final value on visibilitychange
+                    lcpValue = last.startTime;
+                    lcpDetail = {
                         element: last.element ? last.element.tagName?.toLowerCase() : undefined,
                         size: last.size,
-                    });
+                    };
                 }
             });
             obs.observe({ type: 'largest-contentful-paint', buffered: true });
@@ -115,14 +140,23 @@
         try {
             const obs = new PerformanceObserver((list) => {
                 for (const entry of list.getEntries()) {
-                    if (!entry.hadRecentInput) {
-                        clsValue += entry.value;
-                        clsEntries.push({
-                            value: entry.value,
-                            sources: (entry.sources || []).slice(0, 2).map(s => ({
-                                node: s.node ? s.node.tagName?.toLowerCase() : undefined,
-                            })),
-                        });
+                    if (entry.hadRecentInput) continue;
+
+                    clsEntries.push({
+                        value: entry.value,
+                        sources: (entry.sources || []).slice(0, 2).map(s => ({
+                            node: s.node ? s.node.tagName?.toLowerCase() : undefined,
+                        })),
+                    });
+
+                    // Session window algorithm: group shifts within 5s windows with <1s gaps
+                    const last = clsSessionWindows[clsSessionWindows.length - 1];
+                    const entryTime = entry.startTime;
+                    if (last && entryTime - last.lastTime < 1000 && entryTime - last.startTime < 5000) {
+                        last.value += entry.value;
+                        last.lastTime = entryTime;
+                    } else {
+                        clsSessionWindows.push({ value: entry.value, startTime: entryTime, lastTime: entryTime });
                     }
                 }
             });
@@ -135,9 +169,8 @@
         try {
             const obs = new PerformanceObserver((list) => {
                 for (const entry of list.getEntries()) {
-                    // INP is the worst interaction delay — report the highest
-                    if (entry.duration > (reported._inpMax || 0)) {
-                        reported._inpMax = entry.duration;
+                    if (entry.duration > inpMax) {
+                        inpMax = entry.duration;
                     }
                 }
             });
@@ -162,27 +195,55 @@
 
     function observeTTFB() {
         try {
-            const nav = performance.getEntriesByType('navigation')[0];
-            if (nav && nav.responseStart) {
-                reportMetric('ttfb', nav.responseStart);
-            }
-        } catch { /* navigation timing not available */ }
+            const obs = new PerformanceObserver((list) => {
+                const entries = list.getEntries();
+                if (entries.length > 0 && entries[0].responseStart) {
+                    reportMetric('ttfb', entries[0].responseStart);
+                }
+            });
+            obs.observe({ type: 'navigation', buffered: true });
+            observers.push(obs);
+        } catch {
+            // Fallback for browsers without navigation observer
+            try {
+                const nav = performance.getEntriesByType('navigation')[0];
+                if (nav && nav.responseStart) {
+                    reportMetric('ttfb', nav.responseStart);
+                }
+            } catch { /* navigation timing not available */ }
+        }
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────
 
-    // Report CLS and INP on page hide (final values)
+    function reportFinalMetrics() {
+        // LCP — report last candidate
+        if (lcpValue > 0) {
+            reportMetric('lcp', lcpValue, lcpDetail);
+        }
+
+        // CLS — worst session window (not sum of all shifts)
+        if (clsSessionWindows.length > 0) {
+            const worstWindow = clsSessionWindows.reduce((a, b) => a.value > b.value ? a : b);
+            reportMetric('cls', worstWindow.value, {
+                entries: clsEntries.slice(-5),
+            });
+        }
+
+        // INP — worst interaction
+        if (inpMax > 0) {
+            reportMetric('inp', inpMax);
+        }
+    }
+
     function onVisibilityChange() {
         if (document.visibilityState === 'hidden') {
-            if (clsValue > 0) {
-                reportMetric('cls', clsValue, {
-                    entries: clsEntries.slice(-5),
-                });
-            }
-            if (reported._inpMax > 0) {
-                reportMetric('inp', reported._inpMax);
-            }
+            reportFinalMetrics();
         }
+    }
+
+    function onPageHide() {
+        reportFinalMetrics();
     }
 
     function startObserving() {
@@ -192,6 +253,7 @@
         observeFCP();
         observeTTFB();
         document.addEventListener('visibilitychange', onVisibilityChange);
+        window.addEventListener('pagehide', onPageHide);
     }
 
     function stopObserving() {
@@ -200,6 +262,14 @@
         }
         observers.length = 0;
         document.removeEventListener('visibilitychange', onVisibilityChange);
+        window.removeEventListener('pagehide', onPageHide);
+        // Reset state so re-enable works correctly
+        reported.clear();
+        inpMax = 0;
+        lcpValue = 0;
+        lcpDetail = null;
+        clsSessionWindows = [];
+        clsEntries = [];
     }
 
     // ── Settings & Startup ─────────────────────────────────────────────
@@ -225,7 +295,8 @@
         }
     }
 
-    chrome.storage.onChanged.addListener((changes) => {
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'sync') return;
         if (changes.agentPerceptionEnabled || changes.agentPerceptionDisabledSites) {
             loadSettings();
         }

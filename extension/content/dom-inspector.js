@@ -29,6 +29,10 @@
     const RATE_LIMIT_PER_MIN = 20;
     const BATCH_INTERVAL_MS = 500;
     const FINGERPRINT_MAP_MAX = 100;
+    const MAX_PENDING_MUTATIONS = 500;
+
+    // Sensitive query param names to strip from URLs
+    const SENSITIVE_PARAMS = /^(token|key|secret|password|passwd|auth|code|session|access_token|refresh_token|api_key|apikey|credential|sig|signature)$/i;
 
     // Selectors that indicate error/alert content worth reporting
     const ALERT_SELECTORS = [
@@ -56,6 +60,20 @@
     let observer = null;
 
     // ── Helpers ────────────────────────────────────────────────────────
+
+    function sanitizeUrl(rawUrl) {
+        try {
+            const u = new URL(rawUrl, location.origin);
+            for (const key of [...u.searchParams.keys()]) {
+                if (SENSITIVE_PARAMS.test(key)) {
+                    u.searchParams.set(key, '[REDACTED]');
+                }
+            }
+            return u.toString();
+        } catch {
+            return rawUrl;
+        }
+    }
 
     function isDuplicate(fingerprint) {
         const now = Date.now();
@@ -103,7 +121,7 @@
             channel: 'dom',
             severity,
             timestamp: Date.now(),
-            url: location.href,
+            url: sanitizeUrl(location.href),
             summary,
             detail,
             context: {},
@@ -138,9 +156,16 @@
      */
     function isVisible(el) {
         if (!el || el.nodeType !== 1) return false;
-        // Quick check — don't use getComputedStyle for perf
         if (el.hidden || el.getAttribute('aria-hidden') === 'true') return false;
-        if (el.offsetParent === null && el.tagName !== 'BODY' && el.tagName !== 'HTML') return false;
+        // offsetParent is null for fixed/sticky elements — check computed position
+        if (el.offsetParent === null && el.tagName !== 'BODY' && el.tagName !== 'HTML') {
+            try {
+                const pos = getComputedStyle(el).position;
+                if (pos !== 'fixed' && pos !== 'sticky') return false;
+            } catch {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -258,7 +283,9 @@
 
     function onMutation(mutations) {
         if (!enabled) return;
-        pendingMutations.push(...mutations);
+        if (pendingMutations.length < MAX_PENDING_MUTATIONS) {
+            pendingMutations.push(...mutations);
+        }
         if (!batchTimer) {
             batchTimer = setTimeout(processBatch, BATCH_INTERVAL_MS);
         }
@@ -313,7 +340,8 @@
         }
     }
 
-    chrome.storage.onChanged.addListener((changes) => {
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'sync') return;
         if (changes.agentPerceptionEnabled || changes.agentPerceptionDisabledSites) {
             loadSettings();
         }
