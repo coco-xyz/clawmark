@@ -407,9 +407,23 @@ async function sendWebhook(event, payload) {
         // Store routing decision on the item for debugging/auditing
         payload._routing = filteredTargets.map(t => ({ method: t.method, target_type: t.target_type, repo: t.target_config.repo }));
 
+        // Attach recent perception context log to dispatch context (#723)
+        let perceptionLog = [];
+        try {
+            const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+            perceptionLog = itemsDb.getPerceptionEvents({
+                app_id: payload.app_id,
+                url: payload.source_url || undefined,
+                since: fiveMinAgo,
+                limit: 20,
+            });
+        } catch (err) {
+            console.error(`[dispatch] Failed to fetch perception context:`, err.message);
+        }
+
         // Multi-target dispatch with tracking — await results (#200)
         try {
-            const results = await registry.dispatchToTargets(event, payload, filteredTargets, {});
+            const results = await registry.dispatchToTargets(event, payload, filteredTargets, { perceptionLog });
             return results;
         } catch (err) {
             console.error(`[dispatch] Multi-target dispatch failed for ${event}:`, err.message);

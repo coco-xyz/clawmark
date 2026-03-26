@@ -317,6 +317,23 @@ class GitLabIssueAdapter {
             lines.push('');
         }
 
+        // Perception context log (#723) — recent errors/warnings from the page
+        const perceptionLog = (context && context.perceptionLog) || [];
+        if (perceptionLog.length > 0) {
+            lines.push('### Context Log');
+            lines.push('');
+            lines.push('Recent events captured on this page:');
+            lines.push('');
+            lines.push('| Time | Type | Severity | Summary |');
+            lines.push('|------|------|----------|---------|');
+            for (const evt of perceptionLog) {
+                const time = evt.created_at ? evt.created_at.replace(/T/, ' ').replace(/\.\d+Z$/, '') : '?';
+                const msg = (evt.message || '').slice(0, 120).replace(/\|/g, '\\|').replace(/\n/g, ' ');
+                lines.push(`| ${time} | \`${evt.type || '?'}\` | ${evt.severity || '?'} | ${msg} |`);
+            }
+            lines.push('');
+        }
+
         lines.push('---');
         lines.push('*Created by [ClawMark](https://github.com/coco-xyz/clawmark) — Annotate any web page · [Website](https://labs.coco.xyz/clawmark/)*');
         return lines.join('\n');
