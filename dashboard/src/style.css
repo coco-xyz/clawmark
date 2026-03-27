@@ -291,7 +291,7 @@ label {
 .btn-danger { background: rgba(239,68,68,0.15); color: var(--danger); }
 .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,0.25); }
 
-.btn-small { font-size: 12px; padding: 6px 0; width: 100%; margin-top: 8px; }
+.btn-small { font-size: 12px; padding: 6px 12px; margin-top: 8px; }
 
 .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); font-size: 12px; padding: 4px 10px; }
 .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.06); color: var(--text); border-color: var(--text-muted); }
@@ -1356,6 +1356,7 @@ label {
     gap: 8px;
     margin-top: 4px;
 }
+.ba-token-box .btn { flex-shrink: 0; }
 
 .ba-token-code {
     flex: 1;
