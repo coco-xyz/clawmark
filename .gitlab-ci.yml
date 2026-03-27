@@ -66,9 +66,11 @@ e2e-api:
 
 e2e-browser:
   stage: e2e
+  tags:
+    - jessie-shell
   script:
-    - npm install --include=dev
-    - npx playwright install chromium --with-deps 2>/dev/null || true
+    - cd $CI_PROJECT_DIR
+    - NODE_ENV=development npm install
     - npx playwright test --project=e2e
   artifacts:
     when: always
