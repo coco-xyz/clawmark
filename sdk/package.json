@@ -1,0 +1,50 @@
+{
+  "name": "openclaw",
+  "version": "0.1.0",
+  "description": "Node.js SDK for ClawMark Agent Channel — perception events, action dispatch, and real-time WebSocket communication",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh.md"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/build-esm.js",
+    "test": "node --test test/*.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "clawmark",
+    "openclaw",
+    "agent",
+    "perception",
+    "browser-automation",
+    "error-monitoring"
+  ],
+  "author": "Kevin He",
+  "license": "MIT",
+  "peerDependencies": {
+    "ws": ">=8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "ws": "^8.20.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
