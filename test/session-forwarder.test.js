@@ -401,7 +401,7 @@ describe('Session Forwarder', () => {
         });
 
         it('should cap event data size', async () => {
-            const bigData = { value: 'x'.repeat(20000) };
+            const bigData = { value: 'x'.repeat(20000), small: 'ok' };
             fwd.enqueueSessionForServer({
                 sessionId: 'sess-big',
                 startTime: Date.now(),
@@ -412,8 +412,10 @@ describe('Session Forwarder', () => {
             await fwd.flushTimers();
 
             const body = JSON.parse(fetchCalls[0].opts.body);
-            const dataStr = JSON.stringify(body.events[0].data);
-            assert.ok(dataStr.length <= 8200, 'event data should be capped');
+            const eventData = body.events[0].data;
+            assert.ok(eventData.value.length < 20000, 'large string value should be truncated');
+            assert.ok(eventData.value.includes('[truncated]'), 'should have truncation marker');
+            assert.equal(eventData.small, 'ok', 'small values should be preserved');
         });
 
         it('should handle 404 on append (session gone)', async () => {

@@ -174,7 +174,13 @@ function _capEventData(data) {
     if (!data || typeof data !== 'object') return {};
     const str = JSON.stringify(data);
     if (str.length <= 8192) return data;
-    try { return JSON.parse(str.slice(0, 8192)); } catch { return {}; }
+    // Truncate large values within the object rather than slicing JSON
+    const capped = {};
+    for (const [k, v] of Object.entries(data)) {
+        const vs = typeof v === 'string' ? v : JSON.stringify(v);
+        capped[k] = typeof v === 'string' && vs.length > 1024 ? vs.slice(0, 1024) + '…[truncated]' : v;
+    }
+    return capped;
 }
 
 // ── Flush ───────────────────────────────────────────────────────────
@@ -304,7 +310,7 @@ async function _flushSessions() {
                     const fCtrl = new AbortController();
                     const fTimer = setTimeout(() => fCtrl.abort(), 10000);
                     try {
-                        await fetch(`${serverUrl}/api/v2/agent-channel/sessions/${sid}/finalize`, {
+                        await fetch(`${serverUrl}/api/v2/agent-channel/sessions/${encodeURIComponent(sid)}/finalize`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -363,11 +369,14 @@ function _scheduleSessionRetry() {
     _sessionRetryDelay = Math.min(_sessionRetryDelay * 2, SESSION_FWD_MAX_RETRY_DELAY_MS);
 }
 
-// Clean up finalized-sessions set periodically (prevent unbounded growth)
+// Clean up state periodically (prevent unbounded growth)
 setInterval(() => {
     if (_finalizedSessions.size > 500) {
         _finalizedSessions.clear();
     }
-    // Clean up server session map for sessions idle >2h
-    // (MV3 workers restart frequently, so this is mostly defensive)
+    // Clean up server session map — MV3 workers restart frequently,
+    // but guard against long-running sessions accumulating entries
+    if (_serverSessionMap.size > 200) {
+        _serverSessionMap.clear();
+    }
 }, 3600000);
