@@ -11,7 +11,8 @@ Defines the data format for user session recordings captured by the ClawMark ext
 | **Producer** | `SessionRecorder` content script | `extension/content/session-recorder.js` |
 | **Filter** | `PrivacyFilter` content script | `extension/content/privacy-filter.js` |
 | **Local store** | `SessionStorage` background script | `extension/background/session-storage.js` |
-| **Consumer** | Agent Channel server API | `server/` (planned, #73) |
+| **Forwarder** | `SessionForwarder` background script | `extension/background/session-forwarder.js` |
+| **Consumer** | Agent Channel server API | `server/index.js` (POST/GET `/api/v2/agent-channel/sessions`) |
 
 ## Session Event Types
 
@@ -121,6 +122,18 @@ Internal message envelope (content → background):
 ```jsonc
 { "type": "session:batch", "payload": <batch> }
 ```
+
+## Server Upload Flow (#61 Phase 2)
+
+The `SessionForwarder` background script bridges local session data to the server:
+
+1. **First batch** → `POST /api/v2/agent-channel/sessions` (creates server session, returns `id`)
+2. **Subsequent batches** → `POST /api/v2/agent-channel/sessions` with `session_id` (appends events)
+3. **Session end** → `POST /api/v2/agent-channel/sessions/:id/finalize`
+
+The forwarder only uploads when: (a) user is authenticated, (b) at least one agent is bound, and (c) the server URL matches the trusted origin.
+
+Server-side, session updates are pushed to bound agents via WebSocket (`type: "session"`) with the `session` scope.
 
 ## Privacy Rules
 

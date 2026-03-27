@@ -15,6 +15,7 @@ importScripts('./error-storage.js');
 importScripts('./perception-storage.js');
 importScripts('./perception-forwarder.js');
 importScripts('./session-storage.js');
+importScripts('./session-forwarder.js');
 importScripts('./action-queue.js');
 importScripts('./cdp-session-manager.js');
 importScripts('./cdp-tab-targeter.js');
@@ -671,6 +672,8 @@ async function handleMessage(message, sender) {
         // ── Session recording (#72) ───────────────────────────────────
         case 'session:batch':
             await handleSessionBatch(message.payload, sender.tab?.id);
+            // Forward to server for agent consumption (#61 Phase 2)
+            enqueueSessionForServer(message.payload, sender.tab?.id);
             return { success: true };
 
         case 'GET_SESSION_INDEX':

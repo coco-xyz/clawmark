@@ -2393,6 +2393,7 @@ function initDb(dataDir) {
     // P2-4: Allowed event types per contract
     const VALID_EVENT_TYPES = new Set([
         'dom-mutation', 'console-log', 'console-error', 'network-error', 'click', 'scroll',
+        'input', 'navigation', 'error', 'snapshot', 'unknown',
     ]);
 
     // P2-5: ISO 8601 date format validation
