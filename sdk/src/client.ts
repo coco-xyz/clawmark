@@ -128,7 +128,7 @@ class ActionAPI {
   }
 
   /** Connect to the Action WebSocket */
-  async connect(options?: WsOptions): Promise<void> {
+  async connect(): Promise<void> {
     return this.ws.connect();
   }
 

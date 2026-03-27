@@ -158,8 +158,8 @@ export class WsClient extends EventEmitter {
 
     // Wait for action_queued → then wait for result
     return new Promise<ActionResult>((resolve, reject) => {
-      // We'll get an action_queued message first, then a result message
-      // The action_id comes from the queued response
+      let settled = false;
+
       const onQueued = (msg: WsIncomingMessage) => {
         if (msg.type !== 'action_queued') return;
 
@@ -167,32 +167,43 @@ export class WsClient extends EventEmitter {
 
         const timer = setTimeout(() => {
           this.pendingActions.delete(actionId);
+          settle();
           reject(new ActionTimeoutError(actionId, timeoutMs));
         }, timeoutMs + 5000); // slightly over server timeout
 
-        this.pendingActions.set(actionId, { resolve, reject, timer });
+        this.pendingActions.set(actionId, {
+          resolve: (val) => { settle(); resolve(val); },
+          reject: (err) => { settle(); reject(err); },
+          timer,
+        });
         this.emit('action:queued', msg);
       };
 
       const onError = (msg: WsIncomingMessage) => {
         if (msg.type !== 'error') return;
-        cleanup();
+        settle();
         reject(new Error(msg.error));
       };
 
-      const cleanup = () => {
+      // If the connection drops before action_queued arrives, reject immediately
+      const onDisconnect = () => {
+        if (!settled) {
+          settle();
+          reject(new Error('WebSocket disconnected before action could be queued'));
+        }
+      };
+
+      const settle = () => {
+        if (settled) return;
+        settled = true;
         this.removeListener('_ws_message', onQueued);
         this.removeListener('_ws_message', onError);
+        this.removeListener('disconnected', onDisconnect);
       };
 
       this.on('_ws_message', onQueued);
       this.on('_ws_message', onError);
-
-      // Auto-cleanup after first match
-      const origResolve = resolve;
-      resolve = (val) => { cleanup(); origResolve(val); };
-      const origReject = reject;
-      reject = (err) => { cleanup(); origReject(err); };
+      this.on('disconnected', onDisconnect);
     });
   }
 
