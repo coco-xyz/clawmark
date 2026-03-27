@@ -13,11 +13,30 @@
 
 'use strict';
 
+// #36: Load .env file if present (zero-dependency alternative to dotenv)
+const _fs = require('fs');
+const _path = require('path');
+const _envPath = _path.resolve(__dirname, '..', '.env');
+try {
+    const _envContent = _fs.readFileSync(_envPath, 'utf8');
+    for (const line of _envContent.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx < 1) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        const val = trimmed.slice(eqIdx + 1).trim();
+        if (!(key in process.env)) {
+            process.env[key] = val;
+        }
+    }
+} catch { /* .env file is optional */ }
+
 const pkg = require('../package.json');
 
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
+const fs = _fs;
+const path = _path;
 const http = require('http');
 const https = require('https');
 const multer = require('multer');
@@ -79,9 +98,24 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // ---------------------------------------------------------------- credential encryption
 const credCrypto = require('./crypto');
-const ENCRYPTION_KEY = process.env.CLAWMARK_ENCRYPTION_KEY
-    || (config.auth && config.auth.encryptionKey)
-    || null;
+
+// #36: Deprecation helper — warn when secrets are loaded from config.json instead of env vars
+function resolveSecret(envVar, configPath, label) {
+    const envVal = process.env[envVar];
+    if (envVal) return envVal;
+    const cfgVal = configPath();
+    if (cfgVal) {
+        console.warn(`[DEPRECATION] ${label} loaded from config.json. Move to env var ${envVar} instead.`);
+        return cfgVal;
+    }
+    return null;
+}
+
+const ENCRYPTION_KEY = resolveSecret(
+    'CLAWMARK_ENCRYPTION_KEY',
+    () => config.auth && config.auth.encryptionKey,
+    'Encryption key',
+);
 credCrypto.init(ENCRYPTION_KEY);
 
 const { initDb } = require('./db');
@@ -91,31 +125,37 @@ const itemsDb = initDb(DATA_DIR);
 if (!credCrypto.isEnabled()) {
     console.error('[FATAL] CLAWMARK_ENCRYPTION_KEY is not set. Credentials must be encrypted at rest.');
     console.error('Generate one with: openssl rand -hex 32');
-    console.error('Set via environment variable CLAWMARK_ENCRYPTION_KEY or auth.encryptionKey in config.json.');
+    console.error('Set env var CLAWMARK_ENCRYPTION_KEY (config.json fallback is deprecated).');
     process.exit(1);
 }
 
 // ------------------------------------------------------------------ auth module
 const { initAuth } = require('./auth');
-const JWT_SECRET = process.env.CLAWMARK_JWT_SECRET
-    || (config.auth && config.auth.jwtSecret)
-    || null;
+const JWT_SECRET = resolveSecret(
+    'CLAWMARK_JWT_SECRET',
+    () => config.auth && config.auth.jwtSecret,
+    'JWT secret',
+);
 
 if (!JWT_SECRET && process.env.NODE_ENV === 'production') {
     console.error('[FATAL] CLAWMARK_JWT_SECRET is not set. Refusing to start in production without a JWT secret.');
-    console.error('Set CLAWMARK_JWT_SECRET environment variable or auth.jwtSecret in config.json.');
+    console.error('Set env var CLAWMARK_JWT_SECRET (config.json fallback is deprecated).');
     process.exit(1);
 }
 if (!JWT_SECRET) {
     console.warn('[SECURITY WARNING] JWT_SECRET not configured — authentication is effectively disabled. Do NOT run this in production.');
 }
 
-const GOOGLE_CLIENT_ID = process.env.CLAWMARK_GOOGLE_CLIENT_ID
-    || (config.auth && config.auth.googleClientId)
-    || null;
-const GOOGLE_CLIENT_SECRET = process.env.CLAWMARK_GOOGLE_CLIENT_SECRET
-    || (config.auth && config.auth.googleClientSecret)
-    || null;
+const GOOGLE_CLIENT_ID = resolveSecret(
+    'CLAWMARK_GOOGLE_CLIENT_ID',
+    () => config.auth && config.auth.googleClientId,
+    'Google Client ID',
+);
+const GOOGLE_CLIENT_SECRET = resolveSecret(
+    'CLAWMARK_GOOGLE_CLIENT_SECRET',
+    () => config.auth && config.auth.googleClientSecret,
+    'Google Client Secret',
+);
 
 const { router: authRouter, verifyJwt } = initAuth({
     db: itemsDb,
