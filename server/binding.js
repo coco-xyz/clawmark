@@ -177,6 +177,22 @@ function createBindingRouter(opts) {
                 agent_node_url: agent_info.node_url || null,
             });
 
+            // Auto-update owning user's boundAgents so extension picks up new agent
+            try {
+                const app = db.getApp(binding.app_id);
+                if (app && app.user_id) {
+                    const settings = db.getUserSettings(app.user_id);
+                    const agents = Array.isArray(settings.boundAgents) ? settings.boundAgents : [];
+                    const entry = { id: agent.id, name: agent_info.name, binding_id: binding.id };
+                    if (!agents.some(a => a.binding_id === binding.id)) {
+                        agents.push(entry);
+                        db.updateUserSettings(app.user_id, { boundAgents: agents });
+                    }
+                }
+            } catch (e) {
+                console.error('[binding] Failed to auto-update boundAgents:', e.message);
+            }
+
             res.json({
                 binding_id: binding.id,
                 agent_id: agent.id,
