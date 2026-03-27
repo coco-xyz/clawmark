@@ -13,6 +13,7 @@
 importScripts('../config.js');
 importScripts('./error-storage.js');
 importScripts('./perception-storage.js');
+importScripts('./perception-forwarder.js');
 importScripts('./session-storage.js');
 importScripts('./action-queue.js');
 importScripts('./cdp-session-manager.js');
@@ -626,6 +627,7 @@ async function handleMessage(message, sender) {
         // ── Error monitoring (#55) ──────────────────────────────────
         case 'error:captured':
             await handleCapturedError(message.payload, sender.tab?.id);
+            enqueueForServer(message.payload, sender.tab?.id);
             return { success: true };
 
         case 'GET_ERRORS':
@@ -649,6 +651,7 @@ async function handleMessage(message, sender) {
         // ── Agent perception (#66) ────────────────────────────────────
         case 'perception:event':
             await handlePerceptionEvent(message.payload, sender.tab?.id);
+            enqueueForServer(message.payload, sender.tab?.id);
             return { success: true };
 
         case 'GET_PERCEPTION_EVENTS':
