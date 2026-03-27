@@ -3546,15 +3546,24 @@ const server = app.listen(PORT, () => {
     console.log(`    ws        : /ws/agent-channel/cdp`);
     console.log(`    ws        : /ws/agent (perception push)`);
 
+    // Deferred reference: perceptionWs calls actionWs.dispatchAction, actionWs calls perceptionWs.pushActionResult.
+    // Use closures to break the circular init dependency.
+    let actionWsRef = null;
+
+    // Perception Push WebSocket (#109 — Phase 4: Agent binding)
+    const perceptionWs = initPerceptionWs(server, itemsDb, {
+        onActionCreated: (actionId, appId) => actionWsRef?.dispatchAction(actionId, appId),
+    });
+    app.locals.perceptionWs = perceptionWs;
+
     // Action WebSocket (#78)
-    const actionWs = initActionWs(server, itemsDb);
+    const actionWs = initActionWs(server, itemsDb, {
+        onResult: (agentId, appId, data) => perceptionWs.pushActionResult(agentId, appId, data),
+    });
+    actionWsRef = actionWs;
 
     // CDP Channel WebSocket (#83)
     const cdpWs = initCdpWs(server, itemsDb);
-
-    // Perception Push WebSocket (#109 — Phase 4: Agent binding)
-    const perceptionWs = initPerceptionWs(server, itemsDb);
-    app.locals.perceptionWs = perceptionWs;
 
     // Action timeout checker: every 5s
     setInterval(() => {

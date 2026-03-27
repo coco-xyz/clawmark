@@ -20,7 +20,7 @@ const { hashKey } = require('./agent-auth');
 const HEARTBEAT_INTERVAL = 30000;
 const MAX_PAYLOAD = 1 * 1024 * 1024; // 1 MB
 
-function initActionWs(server, db) {
+function initActionWs(server, db, opts = {}) {
     const VALID_ACTION_TYPES = new Set(db.getValidActionTypes());
     const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 
@@ -171,22 +171,26 @@ function initActionWs(server, db) {
         } catch { return; } // Invalid transition
         if (!updated) return;
 
-        // Push result only to the agent that created this action
+        // Push result to the agent on action WS
+        const resultData = {
+            action_id,
+            action_type: action.type,
+            status,
+            result: result || null,
+            error: error || null,
+        };
+
         const agentSockets = agentConnections.get(ctx.app_id);
         if (agentSockets) {
             for (const agentWs of agentSockets) {
                 if (agentWs.authContext.agent_id === action.agent_id) {
-                    wsSend(agentWs, {
-                        type: 'result',
-                        action_id,
-                        action_type: action.type,
-                        status,
-                        result: result || null,
-                        error: error || null,
-                    });
+                    wsSend(agentWs, { type: 'result', ...resultData });
                 }
             }
         }
+
+        // Also push to agents on perception WS
+        if (opts.onResult) opts.onResult(action.agent_id, action.app_id, resultData);
     }
 
     // ------------------------------------------------- dispatch helpers
@@ -235,21 +239,25 @@ function initActionWs(server, db) {
             } catch { continue; } // Race: status already changed
             if (!updated) continue;
 
-            // Notify only the agent that created this action
+            const timeoutResult = {
+                action_id: action.id,
+                action_type: action.type,
+                status: 'failed',
+                error: 'Action timed out',
+            };
+
+            // Notify on action WS
             const agentSockets = agentConnections.get(action.app_id);
             if (agentSockets) {
                 for (const agentWs of agentSockets) {
                     if (agentWs.authContext.agent_id === action.agent_id) {
-                        wsSend(agentWs, {
-                            type: 'result',
-                            action_id: action.id,
-                            action_type: action.type,
-                            status: 'failed',
-                            error: 'Action timed out',
-                        });
+                        wsSend(agentWs, { type: 'result', ...timeoutResult });
                     }
                 }
             }
+
+            // Notify on perception WS
+            if (opts.onResult) opts.onResult(action.agent_id, action.app_id, timeoutResult);
         }
         return timedOut.length;
     }
