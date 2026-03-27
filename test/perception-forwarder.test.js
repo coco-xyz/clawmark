@@ -175,8 +175,8 @@ describe('Perception Forwarder', () => {
             assert.ok(Array.isArray(body.events));
             assert.equal(body.events.length, 1);
             assert.ok(body.events[0].fingerprint);
-            assert.equal(body.events[0]._tabId, undefined, 'internal fields should be stripped');
-            assert.equal(body.events[0]._ts, undefined, 'internal fields should be stripped');
+            assert.ok(body.events[0].timestamp, 'timestamp should be included');
+            assert.equal(typeof body.events[0].timestamp, 'number');
         });
 
         it('should batch multiple events into one request', async () => {
@@ -353,6 +353,67 @@ describe('Perception Forwarder', () => {
 
             await fwd.flushTimers();
             assert.equal(callCount, 2);
+        });
+    });
+
+    describe('origin validation', () => {
+        it('should block upload to untrusted origin', async () => {
+            const fetchCalls = [];
+            const chrome = createChromeMock({
+                sync: { boundAgents: [{ id: 'a1' }], serverUrl: 'https://evil.example.com' },
+                local: { authToken: 'jwt' },
+            });
+            const fwd = loadForwarder(chrome, async (url, opts) => {
+                fetchCalls.push({ url, opts });
+                return { ok: true };
+            });
+            await tick();
+
+            fwd.enqueueForServer({ channel: 'console', message: 'test', url: 'http://x.com', severity: 'error' }, 1);
+            await fwd.flushTimers();
+
+            assert.equal(fetchCalls.length, 0, 'should not fetch to untrusted origin');
+        });
+
+        it('should allow upload to matching default server origin', async () => {
+            const fetchCalls = [];
+            const chrome = createChromeMock({
+                sync: { boundAgents: [{ id: 'a1' }], serverUrl: 'http://localhost:9999/custom-path' },
+                local: { authToken: 'jwt' },
+            });
+            const fwd = loadForwarder(chrome, async (url, opts) => {
+                fetchCalls.push({ url, opts });
+                return { ok: true };
+            });
+            await tick();
+
+            fwd.enqueueForServer({ channel: 'console', message: 'origin-test', url: 'http://x.com', severity: 'error' }, 1);
+            await fwd.flushTimers();
+
+            assert.equal(fetchCalls.length, 1, 'should allow matching origin');
+        });
+    });
+
+    describe('context cap', () => {
+        it('should cap oversized context objects', async () => {
+            const fetchCalls = [];
+            const chrome = createChromeMock({
+                sync: { boundAgents: [{ id: 'a1' }] },
+                local: { authToken: 'jwt' },
+            });
+            const fwd = loadForwarder(chrome, async (url, opts) => {
+                fetchCalls.push({ url, opts });
+                return { ok: true };
+            });
+            await tick();
+
+            const bigContext = { data: 'x'.repeat(20000) };
+            fwd.enqueueForServer({ channel: 'console', message: 'ctx-test', url: 'http://x.com', severity: 'error', context: bigContext }, 1);
+            await fwd.flushTimers();
+
+            const body = JSON.parse(fetchCalls[0].opts.body);
+            const ctxStr = JSON.stringify(body.events[0].context);
+            assert.ok(ctxStr.length <= 8192 + 100, 'context should be capped'); // small margin for JSON overhead
         });
     });
 
