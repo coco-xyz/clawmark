@@ -2,6 +2,7 @@ stages:
   - check
   - test
   - e2e
+  - e2e-browser
   - e2e-staging
 
 version-check:
@@ -65,7 +66,7 @@ e2e-api:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
 e2e-browser:
-  stage: e2e
+  stage: e2e-browser
   tags:
     - jessie-shell
   script:
