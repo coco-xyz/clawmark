@@ -26,6 +26,8 @@ let _flushTimer = null;
 let _retryDelay = 1000;
 let _flushing = false;
 let _hasBoundAgents = false;
+const _recentFingerprints = new Map(); // fingerprint → timestamp for dedup
+const FORWARDER_DEDUP_WINDOW_MS = 10000;
 
 // Check bound agents on startup and when storage changes
 async function _checkBoundAgents() {
@@ -58,8 +60,20 @@ function enqueueForServer(event, tabId) {
     if (!_hasBoundAgents) return;
     if (!event || (!event.type && !event.channel)) return;
 
-    // Build server-compatible payload
+    // Build fingerprint and dedup
     const fp = `${event.channel || event.type}:${(event.summary || event.message || '').slice(0, 150)}`;
+    const now = Date.now();
+    const lastSeen = _recentFingerprints.get(fp);
+    if (lastSeen && now - lastSeen < FORWARDER_DEDUP_WINDOW_MS) return;
+    _recentFingerprints.set(fp, now);
+
+    // Prune old fingerprints periodically
+    if (_recentFingerprints.size > 1000) {
+        for (const [k, ts] of _recentFingerprints) {
+            if (now - ts > FORWARDER_DEDUP_WINDOW_MS) _recentFingerprints.delete(k);
+        }
+    }
+
     const entry = {
         type: event.channel || event.type || 'unknown',
         message: (event.summary || event.message || '').slice(0, 4096),
@@ -102,7 +116,7 @@ function _mapSeverity(sev) {
     if (s === 'error' || s === 'p1') return 'P1';
     if (s === 'warning' || s === 'p2') return 'P2';
     if (s === 'info' || s === 'p3') return 'info';
-    return sev;
+    return 'info'; // unknown severities default to info
 }
 
 /**
@@ -123,6 +137,7 @@ async function _flush() {
         if (!authToken) {
             // Not authenticated — put events back
             _queue.unshift(...batch);
+            if (_queue.length > MAX_QUEUE) _queue.length = MAX_QUEUE;
             _flushing = false;
             return;
         }
@@ -131,6 +146,7 @@ async function _flush() {
         const serverUrl = (config.serverUrl || (typeof ClawMarkConfig !== 'undefined' ? ClawMarkConfig.DEFAULT_SERVER : '')).replace(/\/+$/, '');
         if (!serverUrl) {
             _queue.unshift(...batch);
+            if (_queue.length > MAX_QUEUE) _queue.length = MAX_QUEUE;
             _flushing = false;
             return;
         }
@@ -156,13 +172,15 @@ async function _flush() {
             // Auth expired — drop batch, don't retry
             console.debug('[perception-forwarder] Auth expired, dropping batch');
         } else {
-            // Server error — put events back for retry
+            // Server error — put events back for retry, cap queue
             _queue.unshift(...batch);
+            if (_queue.length > MAX_QUEUE) _queue.length = MAX_QUEUE;
             _scheduleRetry();
         }
     } catch (err) {
-        // Network error — put events back
+        // Network error — put events back, cap queue
         _queue.unshift(...batch);
+        if (_queue.length > MAX_QUEUE) _queue.length = MAX_QUEUE;
         _scheduleRetry();
         console.debug('[perception-forwarder] Flush failed:', err.message);
     } finally {

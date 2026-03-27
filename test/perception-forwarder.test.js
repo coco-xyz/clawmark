@@ -183,7 +183,7 @@ describe('Perception Forwarder', () => {
             for (let i = 0; i < 5; i++) {
                 fwd.enqueueForServer({
                     channel: 'network',
-                    message: `Error ${i}`,
+                    message: `Unique error ${i} at ${Date.now()}`,
                     url: 'https://example.com',
                     severity: 'error',
                 }, 1);
@@ -199,7 +199,7 @@ describe('Perception Forwarder', () => {
         it('should map severity correctly', async () => {
             fwd.enqueueForServer({ channel: 'console', message: 'crit', url: 'http://x.com', severity: 'critical' }, 1);
             fwd.enqueueForServer({ channel: 'console', message: 'warn', url: 'http://x.com', severity: 'warning' }, 1);
-            fwd.enqueueForServer({ channel: 'console', message: 'info', url: 'http://x.com', severity: 'info' }, 1);
+            fwd.enqueueForServer({ channel: 'console', message: 'info-msg', url: 'http://x.com', severity: 'info' }, 1);
 
             await fwd.flushTimers();
 
@@ -207,6 +207,32 @@ describe('Perception Forwarder', () => {
             assert.equal(body.events[0].severity, 'P0');
             assert.equal(body.events[1].severity, 'P2');
             assert.equal(body.events[2].severity, 'info');
+        });
+
+        it('should default unknown severity to info', async () => {
+            fwd.enqueueForServer({ channel: 'console', message: 'debug-msg', url: 'http://x.com', severity: 'debug' }, 1);
+            fwd.enqueueForServer({ channel: 'console', message: 'verbose-msg', url: 'http://x.com', severity: 'verbose' }, 1);
+
+            await fwd.flushTimers();
+
+            const body = JSON.parse(fetchCalls[0].opts.body);
+            assert.equal(body.events[0].severity, 'info');
+            assert.equal(body.events[1].severity, 'info');
+        });
+
+        it('should deduplicate identical events within window', () => {
+            fwd.enqueueForServer({ channel: 'console', message: 'same error', url: 'http://x.com', severity: 'error' }, 1);
+            fwd.enqueueForServer({ channel: 'console', message: 'same error', url: 'http://x.com', severity: 'error' }, 1);
+            fwd.enqueueForServer({ channel: 'console', message: 'same error', url: 'http://x.com', severity: 'error' }, 1);
+
+            assert.equal(fwd._queueLength(), 1, 'duplicates should be suppressed');
+        });
+
+        it('should allow different messages through', () => {
+            fwd.enqueueForServer({ channel: 'console', message: 'error A', url: 'http://x.com', severity: 'error' }, 1);
+            fwd.enqueueForServer({ channel: 'console', message: 'error B', url: 'http://x.com', severity: 'error' }, 1);
+
+            assert.equal(fwd._queueLength(), 2);
         });
 
         it('should include auth header', async () => {
