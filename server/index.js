@@ -142,7 +142,7 @@ const { autoSeverity } = require('./severity');
 const { hashKey, generateAgentKey, createAgentAuth } = require('./agent-auth');
 const { initActionWs } = require('./ws-actions');
 const { initCdpWs } = require('./ws-cdp');
-const { correlate, findOverlappingSessions } = require('./agent/session-analyzer');
+const { correlate } = require('./agent/session-analyzer');
 const { generateReport } = require('./agent/reproduction-generator');
 const { initPerceptionWs } = require('./ws-perception');
 const { dispatchPerceptionWebhooks, retryFailedDeliveries } = require('./webhook-dispatcher');
@@ -3284,7 +3284,10 @@ app.get('/api/v2/agent-channel/sessions/:id/analysis', apiReadLimiter, v2AuthOrA
                     beforeMs: Number(req.query.before_ms) || undefined,
                     afterMs: Number(req.query.after_ms) || undefined,
                 });
-                if (!correlation) return { error, reproduction: null };
+                if (!correlation) return {
+                    error: { id: error.id, type: error.type, severity: error.severity, message: error.message, fingerprint: error.fingerprint, created_at: error.created_at },
+                    reproduction: null,
+                };
 
                 const report = generateReport(correlation, error);
                 return {
