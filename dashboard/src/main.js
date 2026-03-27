@@ -1128,8 +1128,7 @@ document.getElementById('bound-agents-list').addEventListener('click', async (e)
     btn.disabled = true;
 
     try {
-        if (action === 'copy-token') {
-            if (action === 'suspend') {
+        if (action === 'suspend') {
             await suspendBinding(id);
             showToast('Binding suspended');
         } else if (action === 'resume') {
