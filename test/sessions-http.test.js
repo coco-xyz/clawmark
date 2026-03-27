@@ -145,6 +145,80 @@ function createTestApp(db) {
         }
     });
 
+    // GET /api/v2/agent-channel/sessions/:id/analysis (#61)
+    const { correlate } = require('../server/agent/session-analyzer');
+    const { generateReport } = require('../server/agent/reproduction-generator');
+
+    app.get('/api/v2/agent-channel/sessions/:id/analysis', fakeAuth, (req, res) => {
+        const app_id = req.v2Auth?.app_id;
+        if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+        try {
+            const session = db.getSession(req.params.id);
+            if (!session) return res.status(404).json({ error: 'Session not found' });
+            if (session.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+            const errors = db.getPerceptionEvents({
+                app_id,
+                since: session.start_time,
+                until: session.end_time || new Date().toISOString(),
+                severity: 'error',
+                limit: 50,
+            });
+
+            let sessionOrigin;
+            try { sessionOrigin = new URL(session.url).origin; } catch {}
+
+            const sessionErrors = sessionOrigin
+                ? errors.filter(e => { try { return new URL(e.url).origin === sessionOrigin; } catch { return false; } })
+                : errors;
+
+            const analyses = sessionErrors.map(error => {
+                try {
+                    const correlation = correlate(db, error);
+                    if (!correlation) return { error: { id: error.id, message: error.message }, reproduction: null };
+                    const report = generateReport(correlation, error);
+                    return {
+                        error: { id: error.id, type: error.type, severity: error.severity, message: error.message, fingerprint: error.fingerprint, created_at: error.created_at },
+                        reproduction: { steps: report.steps, trigger: report.trigger, timeline: report.timeline, snapshot_id: correlation.closestSnapshot?.id || null },
+                    };
+                } catch { return { error: { id: error.id, message: error.message }, reproduction: null }; }
+            });
+
+            res.json({ session: { id: session.id, url: session.url, status: session.status, event_count: session.event_count }, error_count: sessionErrors.length, analyses });
+        } catch (err) {
+            res.status(500).json({ error: 'Failed to analyze session' });
+        }
+    });
+
+    // GET /api/v2/agent-channel/perception/issues/:fingerprint/context (#61)
+    app.get('/api/v2/agent-channel/perception/issues/:fingerprint/context', fakeAuth, (req, res) => {
+        const app_id = req.v2Auth?.app_id;
+        if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+        try {
+            const issue = db.getPerceptionIssue({ app_id, fingerprint: req.params.fingerprint });
+            if (!issue) return res.status(404).json({ error: 'Issue not found' });
+
+            const events = db.getPerceptionEventsByFingerprint({ app_id, fingerprint: req.params.fingerprint, limit: 5 });
+            if (events.length === 0) return res.json({ issue, context: null });
+
+            const representative = events[0];
+            let context = null;
+            try {
+                const correlation = correlate(db, representative);
+                if (correlation) {
+                    const report = generateReport(correlation, representative);
+                    context = { session_id: correlation.session?.id, steps: report.steps, trigger: report.trigger };
+                }
+            } catch {}
+
+            res.json({ issue, context, recent_events: events.length });
+        } catch (err) {
+            res.status(500).json({ error: 'Failed to get issue context' });
+        }
+    });
+
     return app;
 }
 
@@ -354,5 +428,129 @@ describe('Session HTTP — list and detail', () => {
         assert.equal(res.status, 200);
         assert.equal(res.body.events.length, 1);
         assert.equal(res.body.session.id, create.body.id);
+    });
+});
+
+// ================================================================= session analysis (#61)
+
+describe('Session HTTP — analysis endpoint', () => {
+    beforeEach(async () => { setup(); await startServer(); });
+    afterEach(teardown);
+
+    it('should return 404 for non-existent session', async () => {
+        const res = await req('GET', `${BASE}/sess_nonexistent/analysis`, { headers: AUTH });
+        assert.equal(res.status, 404);
+    });
+
+    it('should return 401 without auth', async () => {
+        const res = await req('GET', `${BASE}/sess_test/analysis`);
+        assert.equal(res.status, 401);
+    });
+
+    it('should return analysis with zero errors when no perception events', async () => {
+        const create = await req('POST', BASE, {
+            headers: AUTH,
+            body: {
+                url: 'https://example.com/page',
+                start_time: '2026-03-21T10:00:00.000Z',
+                events: [{ type: 'click', timestamp: '2026-03-21T10:00:01.000Z', data: { x: 100, y: 200 } }],
+            },
+        });
+        assert.equal(create.status, 201);
+
+        const res = await req('GET', `${BASE}/${create.body.id}/analysis`, { headers: AUTH });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.error_count, 0);
+        assert.deepEqual(res.body.analyses, []);
+        assert.ok(res.body.session.id);
+    });
+
+    it('should include perception errors in analysis', async () => {
+        // Create a session with start_time in past and no end_time (still active)
+        const create = await req('POST', BASE, {
+            headers: AUTH,
+            body: {
+                url: 'https://example.com/app',
+                start_time: '2020-01-01T00:00:00.000Z',
+                events: [
+                    { type: 'click', timestamp: '2020-01-01T00:00:02.000Z', data: { x: 50, y: 100 } },
+                ],
+            },
+        });
+        assert.equal(create.status, 201);
+
+        // Insert a perception error — created_at will be "now" (within the active session)
+        dbApi.createPerceptionEvent({
+            app_id: 'app-test',
+            type: 'js-error',
+            severity: 'error',
+            message: 'TypeError: Cannot read property of undefined',
+            url: 'https://example.com/app',
+            source: 'app.js',
+            line: 42,
+            fingerprint: 'fp_test_correlation',
+        });
+
+        const res = await req('GET', `${BASE}/${create.body.id}/analysis`, { headers: AUTH });
+        assert.equal(res.status, 200);
+        assert.ok(res.body.error_count >= 1, 'should find at least 1 error');
+        assert.ok(res.body.analyses.length >= 1, 'should have at least 1 analysis');
+        // Each analysis has error and reproduction fields
+        const analysis = res.body.analyses[0];
+        assert.ok(analysis.error, 'should have error object');
+        assert.ok(analysis.error.id, 'error should have id');
+    });
+
+    it('should not leak sessions from other apps', async () => {
+        const create = await req('POST', BASE, {
+            headers: AUTH,
+            body: { start_time: '2026-03-21T10:00:00.000Z' },
+        });
+        assert.equal(create.status, 201);
+
+        const res = await req('GET', `${BASE}/${create.body.id}/analysis`, { headers: { 'x-app-id': 'other-app' } });
+        assert.equal(res.status, 404);
+    });
+});
+
+describe('Session HTTP — perception issue context endpoint', () => {
+    beforeEach(async () => { setup(); await startServer(); });
+    afterEach(teardown);
+
+    it('should return 404 for unknown fingerprint', async () => {
+        const res = await req('GET', '/api/v2/agent-channel/perception/issues/fp_unknown/context', { headers: AUTH });
+        assert.equal(res.status, 404);
+    });
+
+    it('should return issue context with null context when no sessions', async () => {
+        // Insert a perception event + tracked issue
+        dbApi.createPerceptionEvent({
+            app_id: 'app-test',
+            type: 'js-error',
+            severity: 'error',
+            message: 'ReferenceError: x is not defined',
+            url: 'https://example.com/page',
+            fingerprint: 'fp_ctx_test',
+            created_at: '2026-03-21T10:00:00.000Z',
+        });
+        dbApi.upsertPerceptionIssue({
+            app_id: 'app-test',
+            fingerprint: 'fp_ctx_test',
+            count: 1,
+            first_seen: '2026-03-21T10:00:00.000Z',
+            last_seen: '2026-03-21T10:00:00.000Z',
+        });
+
+        const res = await req('GET', '/api/v2/agent-channel/perception/issues/fp_ctx_test/context', { headers: AUTH });
+        assert.equal(res.status, 200);
+        assert.ok(res.body.issue);
+        assert.equal(res.body.recent_events, 1);
+        // No sessions exist so context should be null
+        assert.equal(res.body.context, null);
+    });
+
+    it('should return 401 without auth', async () => {
+        const res = await req('GET', '/api/v2/agent-channel/perception/issues/fp_test/context');
+        assert.equal(res.status, 401);
     });
 });

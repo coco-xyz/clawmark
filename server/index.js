@@ -142,6 +142,8 @@ const { autoSeverity } = require('./severity');
 const { hashKey, generateAgentKey, createAgentAuth } = require('./agent-auth');
 const { initActionWs } = require('./ws-actions');
 const { initCdpWs } = require('./ws-cdp');
+const { correlate } = require('./agent/session-analyzer');
+const { generateReport } = require('./agent/reproduction-generator');
 const { initPerceptionWs } = require('./ws-perception');
 const { dispatchPerceptionWebhooks, retryFailedDeliveries } = require('./webhook-dispatcher');
 const { resolveDeclaration } = require('./target-declaration');
@@ -3245,6 +3247,135 @@ app.get('/api/v2/agent-channel/sessions/:id/snapshots/:snapshotId', apiReadLimit
     } catch (err) {
         console.error('[agent-channel] snapshot detail error:', err.message);
         res.status(500).json({ error: 'Failed to get snapshot' });
+    }
+});
+
+// GET /api/v2/agent-channel/sessions/:id/analysis — session analysis with correlated errors + reproduction steps (#61)
+app.get('/api/v2/agent-channel/sessions/:id/analysis', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const session = itemsDb.getSession(req.params.id);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+        if (session.app_id !== app_id) return res.status(404).json({ error: 'Session not found' });
+
+        // Find perception errors that occurred during this session
+        const errors = itemsDb.getPerceptionEvents({
+            app_id,
+            since: session.start_time,
+            until: session.end_time || new Date().toISOString(),
+            severity: 'error',
+            limit: 50,
+        });
+
+        // Filter errors to those matching this session's URL (same origin)
+        let sessionOrigin;
+        try { sessionOrigin = new URL(session.url).origin; } catch {}
+
+        const sessionErrors = sessionOrigin
+            ? errors.filter(e => { try { return new URL(e.url).origin === sessionOrigin; } catch { return false; } })
+            : errors;
+
+        // For each error, generate correlation + reproduction steps
+        const analyses = sessionErrors.map(error => {
+            try {
+                const correlation = correlate(itemsDb, error, {
+                    beforeMs: Number(req.query.before_ms) || undefined,
+                    afterMs: Number(req.query.after_ms) || undefined,
+                });
+                if (!correlation) return {
+                    error: { id: error.id, type: error.type, severity: error.severity, message: error.message, fingerprint: error.fingerprint, created_at: error.created_at },
+                    reproduction: null,
+                };
+
+                const report = generateReport(correlation, error);
+                return {
+                    error: {
+                        id: error.id,
+                        type: error.type,
+                        severity: error.severity,
+                        message: error.message,
+                        source: error.source,
+                        line: error.line,
+                        url: error.url,
+                        fingerprint: error.fingerprint,
+                        created_at: error.created_at,
+                    },
+                    reproduction: {
+                        steps: report.steps,
+                        trigger: report.trigger,
+                        timeline: report.timeline,
+                        snapshot_id: correlation.closestSnapshot?.id || null,
+                    },
+                };
+            } catch (err) {
+                return { error: { id: error.id, message: error.message }, reproduction: null };
+            }
+        });
+
+        res.json({
+            session: {
+                id: session.id,
+                url: session.url,
+                title: session.title,
+                start_time: session.start_time,
+                end_time: session.end_time,
+                event_count: session.event_count,
+                snapshot_count: session.snapshot_count,
+                status: session.status,
+            },
+            error_count: sessionErrors.length,
+            analyses,
+        });
+    } catch (err) {
+        console.error('[agent-channel] session analysis error:', err.message);
+        res.status(500).json({ error: 'Failed to analyze session' });
+    }
+});
+
+// GET /api/v2/agent-channel/perception/issues/:fingerprint/context — full error context with session correlation (#61)
+app.get('/api/v2/agent-channel/perception/issues/:fingerprint/context', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const app_id = req.v2Auth?.app_id;
+    if (!app_id) return res.status(400).json({ error: 'No app context' });
+
+    try {
+        const issue = itemsDb.getPerceptionIssue({ app_id, fingerprint: req.params.fingerprint });
+        if (!issue) return res.status(404).json({ error: 'Issue not found' });
+
+        // Get recent events for this fingerprint
+        const events = itemsDb.getPerceptionEventsByFingerprint({
+            app_id,
+            fingerprint: req.params.fingerprint,
+            limit: 5,
+        });
+
+        if (events.length === 0) {
+            return res.json({ issue, context: null });
+        }
+
+        // Use the most recent event for correlation
+        const representative = events[0];
+        let context = null;
+        try {
+            const correlation = correlate(itemsDb, representative);
+            if (correlation) {
+                const report = generateReport(correlation, representative);
+                context = {
+                    session_id: correlation.session?.id,
+                    session_url: correlation.session?.url,
+                    steps: report.steps,
+                    trigger: report.trigger,
+                    timeline: report.timeline,
+                    snapshot_id: correlation.closestSnapshot?.id || null,
+                };
+            }
+        } catch {}
+
+        res.json({ issue, context, recent_events: events.length });
+    } catch (err) {
+        console.error('[agent-channel] perception issue context error:', err.message);
+        res.status(500).json({ error: 'Failed to get issue context' });
     }
 });
 
