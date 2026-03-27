@@ -21,6 +21,7 @@ import {
     getErrorTrends,
     getAgentActions,
     getQualityReport,
+    createBindingToken, listBindings, suspendBinding, resumeBinding, revokeBinding,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -924,171 +925,238 @@ document.getElementById('btn-save-passive').addEventListener('click', async () =
     setTimeout(() => { statusEl.textContent = ''; }, 3000);
 });
 
-// ------------------------------------------------------------------ Bound Agents (#103)
+// ------------------------------------------------------------------ Bound Agents (#108 Agent Binding)
 
-let boundAgents = [];
+let bindings = [];
+let bindingPollTimer = null;
 
 async function loadBoundAgents() {
     try {
-        const { settings } = await getUserSettings();
-        boundAgents = Array.isArray(settings?.boundAgents) ? settings.boundAgents : [];
+        const data = await listBindings();
+        bindings = Array.isArray(data?.bindings) ? data.bindings : [];
     } catch {
-        boundAgents = [];
+        bindings = [];
     }
     renderBoundAgents();
+}
+
+function getBindingStatusInfo(binding) {
+    if (binding.status === 'pending') {
+        const expires = binding.token_expires ? new Date(binding.token_expires) : null;
+        const now = new Date();
+        if (expires && expires <= now) return { cls: 'expired', icon: '⊘', label: 'Expired' };
+        if (expires) {
+            const hours = Math.max(0, Math.floor((expires - now) / 3600000));
+            const mins = Math.max(0, Math.floor(((expires - now) % 3600000) / 60000));
+            return { cls: 'pending', icon: '⏳', label: `Pending (${hours}h ${mins}m)` };
+        }
+        return { cls: 'pending', icon: '⏳', label: 'Pending' };
+    }
+    if (binding.status === 'suspended') return { cls: 'suspended', icon: '⏸', label: 'Suspended' };
+    if (binding.status === 'revoked') return { cls: 'revoked', icon: '⊘', label: 'Revoked' };
+    // active
+    if (binding.connected) return { cls: 'connected', icon: '🟢', label: 'Connected' };
+    const lastHb = binding.last_heartbeat ? new Date(binding.last_heartbeat) : null;
+    if (lastHb) {
+        const ago = Math.floor((Date.now() - lastHb.getTime()) / 60000);
+        if (ago < 60) return { cls: 'disconnected', icon: '🔴', label: `Last seen ${ago}m ago` };
+        return { cls: 'disconnected', icon: '🔴', label: `Last seen ${Math.floor(ago / 60)}h ago` };
+    }
+    return { cls: 'disconnected', icon: '🔴', label: 'Offline' };
+}
+
+function formatScopes(scopes) {
+    if (!Array.isArray(scopes) || scopes.length === 0) return '';
+    return scopes.map(s => `<span class="ba-scope-tag">${escHtml(s)}</span>`).join(' ');
 }
 
 function renderBoundAgents() {
     const listEl = document.getElementById('bound-agents-list');
     const emptyEl = document.getElementById('bound-agents-empty');
 
-    // Remove existing items
     listEl.querySelectorAll('.bound-agent-item').forEach(el => el.remove());
 
-    if (boundAgents.length === 0) {
+    if (bindings.length === 0) {
         emptyEl.style.display = '';
         return;
     }
     emptyEl.style.display = 'none';
 
-    boundAgents.forEach((agent, index) => {
+    // Sort: pending first, then active, then suspended
+    const order = { pending: 0, active: 1, suspended: 2, revoked: 3 };
+    const sorted = [...bindings].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+
+    sorted.forEach(binding => {
         const el = document.createElement('div');
         el.className = 'bound-agent-item';
-        const statusClass = agent.status === 'connected' ? 'connected'
-            : agent.status === 'disconnected' ? 'disconnected' : '';
-        const keyPreview = agent.keyPrefix || (agent.key || '').slice(0, 12) + '...';
-        const serverInfo = agent.serverUrl ? ` | ${agent.serverUrl}` : '';
-        el.innerHTML = `
-            <span class="ba-status-dot ${statusClass}" title="${escHtml(agent.status || 'unknown')}"></span>
-            <div class="ba-info">
-                <div class="ba-name">${escHtml(agent.name)}</div>
-                <div class="ba-meta">${escHtml(keyPreview)}${escHtml(serverInfo)}</div>
-            </div>
-            <div class="ba-actions">
-                <button class="btn btn-secondary btn-small" data-ba-action="test" data-ba-index="${index}">Test</button>
-                <button class="btn btn-danger btn-small" data-ba-action="remove" data-ba-index="${index}">Remove</button>
-            </div>
-        `;
+        const info = getBindingStatusInfo(binding);
+        const scopes = typeof binding.scopes === 'string' ? JSON.parse(binding.scopes) : (binding.scopes || []);
+
+        if (binding.status === 'pending') {
+            el.innerHTML = `
+                <span class="ba-status-dot ${info.cls}" title="${escHtml(info.label)}"></span>
+                <div class="ba-info">
+                    <div class="ba-name">${info.icon} Pending Invitation${binding.label ? ' — ' + escHtml(binding.label) : ''}</div>
+                    <div class="ba-meta">${escHtml(info.label)} · ${formatScopes(scopes)}</div>
+                </div>
+                <div class="ba-actions">
+                    <button class="btn btn-secondary btn-small" data-ba-action="copy-token" data-ba-id="${escHtml(binding.id)}">Copy Token</button>
+                    <button class="btn btn-danger btn-small" data-ba-action="revoke" data-ba-id="${escHtml(binding.id)}">Revoke</button>
+                </div>
+            `;
+        } else {
+            const name = binding.agent_name || 'Unknown Agent';
+            const typeBadge = binding.agent_type ? `<span class="ba-type-tag">${escHtml(binding.agent_type)}</span>` : '';
+            const nodeUrl = binding.agent_node_url || '';
+            const activatedDate = binding.activated_at ? new Date(binding.activated_at).toLocaleDateString() : '';
+
+            let actions = '';
+            if (binding.status === 'active') {
+                actions = `
+                    <button class="btn btn-secondary btn-small" data-ba-action="suspend" data-ba-id="${escHtml(binding.id)}">Suspend</button>
+                    <button class="btn btn-danger btn-small" data-ba-action="unbind" data-ba-id="${escHtml(binding.id)}">Unbind</button>
+                `;
+            } else if (binding.status === 'suspended') {
+                actions = `
+                    <button class="btn btn-primary btn-small" data-ba-action="resume" data-ba-id="${escHtml(binding.id)}">Resume</button>
+                    <button class="btn btn-danger btn-small" data-ba-action="unbind" data-ba-id="${escHtml(binding.id)}">Unbind</button>
+                `;
+            }
+
+            el.innerHTML = `
+                <span class="ba-status-dot ${info.cls}" title="${escHtml(info.label)}"></span>
+                <div class="ba-info">
+                    <div class="ba-name">${escHtml(name)} ${typeBadge}</div>
+                    <div class="ba-meta">${escHtml(nodeUrl)}${nodeUrl && activatedDate ? ' · ' : ''}${activatedDate ? 'Bound ' + escHtml(activatedDate) : ''} · ${escHtml(info.label)}</div>
+                    <div class="ba-scopes">${formatScopes(scopes)}</div>
+                </div>
+                <div class="ba-actions">${actions}</div>
+            `;
+        }
         listEl.appendChild(el);
     });
+
+    // Start polling if any pending bindings exist
+    const hasPending = bindings.some(b => b.status === 'pending');
+    if (hasPending && !bindingPollTimer) {
+        bindingPollTimer = setInterval(() => loadBoundAgents(), 10000);
+    } else if (!hasPending && bindingPollTimer) {
+        clearInterval(bindingPollTimer);
+        bindingPollTimer = null;
+    }
 }
 
-async function saveBoundAgents() {
-    await updateUserSettings({ boundAgents });
-}
-
+// Bind Agent button — show scopes form
 document.getElementById('btn-add-bound-agent').addEventListener('click', () => {
     const form = document.getElementById('bound-agent-form');
     form.style.display = 'block';
-    document.getElementById('ba-name').value = '';
-    document.getElementById('ba-key').value = '';
-    document.getElementById('ba-server').value = '';
+    document.getElementById('ba-label').value = '';
     document.getElementById('ba-status').textContent = '';
-    document.getElementById('ba-name').focus();
+    // Reset scope checkboxes to defaults
+    document.querySelectorAll('.ba-scope-cb').forEach(cb => {
+        cb.checked = ['perception', 'action', 'session'].includes(cb.value);
+    });
+    document.getElementById('ba-label').focus();
 });
 
 document.getElementById('btn-cancel-bound-agent').addEventListener('click', () => {
     document.getElementById('bound-agent-form').style.display = 'none';
+    document.getElementById('ba-token-result').style.display = 'none';
 });
 
+// Generate binding token
 document.getElementById('btn-save-bound-agent').addEventListener('click', async () => {
-    const name = document.getElementById('ba-name').value.trim();
-    const key = document.getElementById('ba-key').value.trim();
-    const serverUrl = document.getElementById('ba-server').value.trim();
+    const label = document.getElementById('ba-label').value.trim();
     const statusEl = document.getElementById('ba-status');
+    const scopes = [];
+    document.querySelectorAll('.ba-scope-cb:checked').forEach(cb => scopes.push(cb.value));
 
-    if (!name) {
-        statusEl.textContent = 'Please enter an agent name';
-        statusEl.style.color = 'var(--danger)';
-        return;
-    }
-    if (!key.startsWith('cmak_') || key.length < 10) {
-        statusEl.textContent = 'Invalid API key — must start with cmak_ and be at least 10 characters';
-        statusEl.style.color = 'var(--danger)';
-        return;
-    }
-    if (boundAgents.some(a => a.key === key)) {
-        statusEl.textContent = 'This API key is already bound';
+    if (scopes.length === 0) {
+        statusEl.textContent = 'Select at least one scope';
         statusEl.style.color = 'var(--danger)';
         return;
     }
 
-    statusEl.textContent = 'Testing connection...';
+    statusEl.textContent = 'Generating token...';
     statusEl.style.color = 'var(--text-muted)';
     document.getElementById('btn-save-bound-agent').disabled = true;
 
     try {
-        const testUrl = (serverUrl || getServerUrl()) + '/health';
-        const ctrl = new AbortController();
-        setTimeout(() => ctrl.abort(), 5000);
-        const res = await fetch(testUrl, {
-            signal: ctrl.signal,
-            headers: { 'Authorization': `Bearer ${key}` },
-        });
-        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        const result = await createBindingToken({ scopes, label: label || undefined });
 
-        const agent = {
-            id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-            name,
-            key,
-            keyPrefix: key.slice(0, 12) + '...',
-            serverUrl: serverUrl || '',
-            status: 'connected',
-            lastTested: Date.now(),
-        };
+        // Show token result
+        const tokenResultEl = document.getElementById('ba-token-result');
+        document.getElementById('ba-token-value').textContent = result.token;
+        document.getElementById('ba-install-cmd').textContent = result.install_command || '';
+        tokenResultEl.style.display = 'block';
 
-        boundAgents.push(agent);
-        await saveBoundAgents();
-        renderBoundAgents();
+        // Hide the form inputs, keep the token result visible
+        document.getElementById('btn-save-bound-agent').style.display = 'none';
+        statusEl.textContent = '';
 
-        document.getElementById('bound-agent-form').style.display = 'none';
-        showToast(`Agent "${name}" connected successfully`);
+        // Reload the list
+        await loadBoundAgents();
+        showToast('Binding token generated — copy and send to the Agent owner');
     } catch (err) {
-        statusEl.textContent = 'Connection failed: ' + (err.message || 'Unknown error');
+        statusEl.textContent = 'Failed: ' + (err.message || 'Unknown error');
         statusEl.style.color = 'var(--danger)';
     } finally {
         document.getElementById('btn-save-bound-agent').disabled = false;
     }
 });
 
+// Copy token button
+document.getElementById('btn-copy-token')?.addEventListener('click', () => {
+    const token = document.getElementById('ba-token-value').textContent;
+    navigator.clipboard.writeText(token).then(() => showToast('Token copied to clipboard'));
+});
+
+// Copy install command button
+document.getElementById('btn-copy-install')?.addEventListener('click', () => {
+    const cmd = document.getElementById('ba-install-cmd').textContent;
+    navigator.clipboard.writeText(cmd).then(() => showToast('Install command copied'));
+});
+
+// Binding list actions (delegated)
 document.getElementById('bound-agents-list').addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-ba-action]');
     if (!btn) return;
     const action = btn.dataset.baAction;
-    const index = parseInt(btn.dataset.baIndex, 10);
-    if (index < 0 || index >= boundAgents.length) return;
+    const id = btn.dataset.baId;
+    if (!id) return;
 
-    if (action === 'test') {
-        btn.textContent = 'Testing...';
-        btn.disabled = true;
-        try {
-            const agent = boundAgents[index];
-            const testUrl = (agent.serverUrl || getServerUrl()) + '/health';
-            const ctrl = new AbortController();
-            setTimeout(() => ctrl.abort(), 5000);
-            const res = await fetch(testUrl, {
-                signal: ctrl.signal,
-                headers: { 'Authorization': `Bearer ${agent.key}` },
-            });
-            agent.status = res.ok ? 'connected' : 'disconnected';
-            agent.lastTested = Date.now();
-            await saveBoundAgents();
-            renderBoundAgents();
-            showToast(res.ok ? `Agent "${agent.name}" is connected` : `Connection failed for "${agent.name}"`, res.ok ? 'success' : 'error');
-        } catch (err) {
-            boundAgents[index].status = 'disconnected';
-            await saveBoundAgents();
-            renderBoundAgents();
-            showToast('Test failed: ' + err.message, 'error');
+    btn.disabled = true;
+
+    try {
+        if (action === 'copy-token') {
+            // For pending bindings, the token was shown at creation time only.
+            // We can't retrieve it — inform user.
+            showToast('Token was shown only at creation time. Generate a new one if needed.', 'error');
+            btn.disabled = false;
+            return;
         }
-    }
 
-    if (action === 'remove') {
-        const agent = boundAgents[index];
-        boundAgents.splice(index, 1);
-        await saveBoundAgents();
-        renderBoundAgents();
-        showToast(`Agent "${agent.name}" removed`);
+        if (action === 'suspend') {
+            await suspendBinding(id);
+            showToast('Binding suspended');
+        } else if (action === 'resume') {
+            await resumeBinding(id);
+            showToast('Binding resumed');
+        } else if (action === 'unbind' || action === 'revoke') {
+            const binding = bindings.find(b => b.id === id);
+            const name = binding?.agent_name || binding?.label || id.slice(0, 8);
+            if (!confirm(`Unbind "${name}"? This will revoke the binding and disconnect the Agent.`)) {
+                btn.disabled = false;
+                return;
+            }
+            await revokeBinding(id);
+            showToast('Binding revoked');
+        }
+
+        await loadBoundAgents();
+    } catch (err) {
+        showToast('Action failed: ' + err.message, 'error');
+        btn.disabled = false;
     }
 });
 
