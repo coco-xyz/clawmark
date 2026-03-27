@@ -293,6 +293,33 @@ function initPerceptionWs(server, db) {
     }
 
     /**
+     * Push session update to all bound agents for an app.
+     * Requires 'session' scope. Sends session metadata + event summary
+     * (not full events, to avoid flooding the WebSocket).
+     */
+    function pushSessionUpdate(app_id, sessionUpdate) {
+        const bindingIds = appBindings.get(app_id);
+        if (!bindingIds || bindingIds.size === 0) return 0;
+
+        let pushed = 0;
+        for (const bindingId of bindingIds) {
+            const sockets = bindingConnections.get(bindingId);
+            if (!sockets) continue;
+
+            for (const ws of sockets) {
+                if (!ws.authContext.scopes.includes('session')) continue;
+                wsSend(ws, {
+                    type: 'session',
+                    binding_id: bindingId,
+                    payload: sessionUpdate,
+                });
+                pushed++;
+            }
+        }
+        return pushed;
+    }
+
+    /**
      * Force-close all connections for a binding (on suspend/revoke).
      */
     function closeBinding(binding_id) {
@@ -326,6 +353,7 @@ function initPerceptionWs(server, db) {
         wss,
         pushPerceptionEvents,
         pushAnnotation,
+        pushSessionUpdate,
         pushScopeChanged,
         closeBinding,
         getStats,

@@ -3053,6 +3053,18 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
 
             const result = itemsDb.appendSessionEvents(session_id, { events, snapshots, agent_id });
             if (!result) return res.status(403).json({ error: 'Agent ownership mismatch' });
+            // Push session update to bound agents via WebSocket (#61 Phase 2)
+            if (app.locals.perceptionWs) {
+                try {
+                    app.locals.perceptionWs.pushSessionUpdate(app_id, {
+                        action: 'append',
+                        session_id,
+                        event_count: result.event_count,
+                        snapshot_count: result.snapshot_count,
+                        url: existing.url,
+                    });
+                } catch { /* non-critical */ }
+            }
             return res.json(result);
         }
 
@@ -3080,6 +3092,19 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
                 metadata: { url, title },
             });
         } catch { /* non-critical */ }
+        // Push session creation to bound agents via WebSocket (#61 Phase 2)
+        if (app.locals.perceptionWs) {
+            try {
+                app.locals.perceptionWs.pushSessionUpdate(app_id, {
+                    action: 'start',
+                    session_id: result.id,
+                    url,
+                    title,
+                    start_time,
+                    event_count: result.event_count || (events || []).length,
+                });
+            } catch { /* non-critical */ }
+        }
         res.status(201).json(result);
     } catch (err) {
         if (err.message === 'SESSION_TOO_LARGE') {
@@ -3093,7 +3118,7 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
         }
         if (err.message.startsWith('INVALID_EVENT_TYPE:')) {
             const type = err.message.split(':')[1];
-            return res.status(400).json({ error: `Invalid event type: ${type}. Allowed: dom-mutation, console-log, console-error, network-error, click, scroll` });
+            return res.status(400).json({ error: `Invalid event type: ${type}. Allowed: dom-mutation, console-log, console-error, network-error, click, scroll, input, navigation, error, snapshot` });
         }
         console.error('[agent-channel] session POST error:', err.message);
         res.status(500).json({ error: 'Failed to store session' });
@@ -3123,6 +3148,21 @@ app.post('/api/v2/agent-channel/sessions/:id/finalize', sessionLimiter, v2AuthOr
                 metadata: { event_count: result.event_count, snapshot_count: result.snapshot_count },
             });
         } catch { /* non-critical */ }
+        // Push finalization to bound agents via WebSocket (#61 Phase 2)
+        if (app.locals.perceptionWs) {
+            try {
+                app.locals.perceptionWs.pushSessionUpdate(app_id, {
+                    action: 'finalize',
+                    session_id: req.params.id,
+                    event_count: result.event_count,
+                    snapshot_count: result.snapshot_count,
+                    url: session.url,
+                    duration_ms: result.end_time && session.start_time
+                        ? new Date(result.end_time).getTime() - new Date(session.start_time).getTime()
+                        : null,
+                });
+            } catch { /* non-critical */ }
+        }
         res.json(result);
     } catch (err) {
         console.error('[agent-channel] session finalize error:', err.message);

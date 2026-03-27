@@ -353,6 +353,58 @@ describe('Perception WebSocket (#109)', () => {
         assert.equal(stats2.connections, 0);
     });
 
+    it('pushes session updates to agents with session scope', async () => {
+        // Add session scope to binding
+        db.updateBindingScopes(BINDING_ID, ['perception', 'session']);
+
+        const ws = connectAgent();
+        await waitForMessage(ws, m => m.type === 'connected');
+        // Reconnect to pick up new scopes
+        ws.close();
+        await waitForClose(ws);
+        await new Promise(r => setTimeout(r, 100));
+
+        const ws2 = connectAgent();
+        await waitForMessage(ws2, m => m.type === 'connected');
+
+        const msgPromise = waitForMessage(ws2, m => m.type === 'session');
+        const pushed = perceptionWs.pushSessionUpdate(APP_ID, {
+            action: 'start',
+            session_id: 'sess-test-123',
+            url: 'https://example.com',
+            event_count: 5,
+        });
+
+        const msg = await msgPromise;
+        assert.equal(msg.type, 'session');
+        assert.equal(msg.binding_id, BINDING_ID);
+        assert.equal(msg.payload.action, 'start');
+        assert.equal(msg.payload.session_id, 'sess-test-123');
+        assert.ok(pushed > 0, 'should push to at least one agent');
+        ws2.close();
+    });
+
+    it('does not push session updates to agents without session scope', async () => {
+        // Ensure only perception scope
+        db.updateBindingScopes(BINDING_ID, ['perception']);
+
+        const ws = connectAgent();
+        await waitForMessage(ws, m => m.type === 'connected');
+        ws.close();
+        await waitForClose(ws);
+        await new Promise(r => setTimeout(r, 100));
+
+        const ws2 = connectAgent();
+        await waitForMessage(ws2, m => m.type === 'connected');
+
+        const pushed = perceptionWs.pushSessionUpdate(APP_ID, {
+            action: 'start',
+            session_id: 'sess-no-scope',
+        });
+        assert.equal(pushed, 0, 'should not push to agents without session scope');
+        ws2.close();
+    });
+
     it('rejects action without action scope', async () => {
         // Modify binding to have only perception scope
         db.updateBindingScopes(BINDING_ID, ['perception']);
