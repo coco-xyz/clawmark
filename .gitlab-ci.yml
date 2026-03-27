@@ -72,7 +72,8 @@ e2e-browser:
   script:
     - cd $CI_PROJECT_DIR
     - NODE_ENV=development npm install
-    - npx playwright test --project=e2e
+    # Use op user's Playwright browser cache (gitlab-runner doesn't have its own)
+    - PLAYWRIGHT_BROWSERS_PATH=/home/op/.cache/ms-playwright npx playwright test --project=e2e
   artifacts:
     when: always
     paths:
