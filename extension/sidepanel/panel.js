@@ -160,7 +160,7 @@ async function loadThread(itemId) {
         renderThread(response);
         showThreadView();
     } catch (err) {
-        threadMessages.innerHTML = `<div class="error-msg">${err.message}</div>`;
+        threadMessages.innerHTML = `<div class="error-msg">${escapeHtml(err.message)}</div>`;
     }
 }
 
@@ -228,16 +228,16 @@ function renderItems() {
         return `
             <div class="item-card" data-id="${item.id}">
                 <div class="item-header">
-                    <span class="item-type ${item.type}">${item.type}</span>
-                    ${item.priority !== 'normal' ? `<span class="item-priority ${priorityClass}">${item.priority}</span>` : ''}
-                    <span class="item-priority">${item.status}</span>
+                    <span class="item-type ${escapeHtml(item.type)}">${escapeHtml(item.type)}</span>
+                    ${item.priority !== 'normal' ? `<span class="item-priority ${priorityClass}">${escapeHtml(item.priority)}</span>` : ''}
+                    <span class="item-priority">${escapeHtml(item.status)}</span>
                 </div>
                 ${item.title ? `<div class="item-title">${escapeHtml(item.title)}</div>` : ''}
                 ${item.quote ? `<div class="item-quote">${escapeHtml(item.quote)}</div>` : ''}
                 ${sourceHost ? `<div class="item-source" title="${escapeHtml(item.source_url)}"><span class="source-icon">\ud83d\udcc4</span> ${escapeHtml(item.source_title || sourceHost)}</div>` : ''}
                 ${renderDispatchBadges(item.dispatches)}
                 <div class="item-meta">
-                    <span>${item.created_by}</span>
+                    <span>${escapeHtml(item.created_by)}</span>
                     <span>${time}</span>
                 </div>
                 ${tags.length > 0 ? `<div class="item-tags">${tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
@@ -259,8 +259,8 @@ function renderThread(item) {
     threadHeader.innerHTML = `
         <div class="item-card" style="cursor:default;margin-bottom:0;">
             <div class="item-header">
-                <span class="item-type ${item.type}">${item.type}</span>
-                <span class="item-priority">${item.status}</span>
+                <span class="item-type ${escapeHtml(item.type)}">${escapeHtml(item.type)}</span>
+                <span class="item-priority">${escapeHtml(item.status)}</span>
             </div>
             ${item.title ? `<div class="item-title">${escapeHtml(item.title)}</div>` : ''}
             ${item.quote ? `<div class="item-quote">${escapeHtml(item.quote)}</div>` : ''}
@@ -272,7 +272,7 @@ function renderThread(item) {
 
     const messages = item.messages || [];
     threadMessages.innerHTML = messages.map(msg => `
-        <div class="message ${msg.role}">
+        <div class="message ${escapeHtml(msg.role)}">
             <div class="msg-header">
                 <span>${escapeHtml(msg.user_name || msg.role)}</span>
                 <span>${formatTime(msg.created_at)}</span>
@@ -484,9 +484,9 @@ function renderErrors() {
     </div>`;
 
     const cards = sorted.map(err => {
-        const typeLabel = ERROR_TYPE_LABELS[err.type] || err.type;
+        const typeLabel = escapeHtml(ERROR_TYPE_LABELS[err.type] || err.type);
         const isWarning = err.severity === 'warning';
-        const time = formatTime(new Date(err.timestamp).toISOString());
+        const time = escapeHtml(formatTime(new Date(err.timestamp).toISOString()));
         const message = escapeHtml(err.message || '(no message)');
         const stack = err.stack ? escapeHtml(err.stack.split('\n').slice(0, 2).join('\n')) : '';
 
@@ -544,8 +544,8 @@ async function fileIssueFromError(errorId) {
     const err = capturedErrors.find(e => e.id === errorId);
     if (!err) return;
 
-    const typeLabel = ERROR_TYPE_LABELS[err.type] || err.type;
-    const title = `[${typeLabel}] ${(err.message || '').slice(0, 120)}`;
+    const typeLabel = escapeHtml(ERROR_TYPE_LABELS[err.type] || err.type);
+    const title = `[${typeLabel}] ${escapeHtml((err.message || '').slice(0, 120))}`;
     const content = [
         `**Error Type:** ${typeLabel}`,
         `**Severity:** ${err.severity}`,
