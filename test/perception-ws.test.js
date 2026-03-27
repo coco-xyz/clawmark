@@ -22,7 +22,7 @@ const { hashKey, generateAgentKey } = require('../server/agent-auth');
 
 // ------------------------------------------------------------------ helpers
 
-let server, port, perceptionWs, db, tmpDir;
+let server, port, perceptionWs, db, tmpDir, lastOnActionCreated;
 
 const APP_ID = 'app-pw-test';
 let AGENT_KEY, AGENT_ID, BINDING_ID;
@@ -69,8 +69,11 @@ function setup() {
     });
     BINDING_ID = binding.id;
 
+    lastOnActionCreated = null;
     server = http.createServer();
-    perceptionWs = initPerceptionWs(server, db);
+    perceptionWs = initPerceptionWs(server, db, {
+        onActionCreated: (actionId, appId) => { lastOnActionCreated = { actionId, appId }; },
+    });
 }
 
 async function startServer() {
@@ -427,6 +430,63 @@ describe('Perception WebSocket (#109)', () => {
 
         const msg = await waitForMessage(ws2, m => m.type === 'error');
         assert.ok(msg.error.includes('scope'));
+        ws2.close();
+    });
+
+    it('calls onActionCreated when agent submits action via perception WS', async () => {
+        const ws = connectAgent();
+        await waitForMessage(ws, m => m.type === 'connected');
+
+        ws.send(JSON.stringify({
+            type: 'action',
+            payload: { action_type: 'click', target: '#btn' },
+        }));
+
+        const msg = await waitForMessage(ws, m => m.type === 'action_queued');
+        assert.ok(msg.action_id);
+
+        assert.ok(lastOnActionCreated, 'onActionCreated should have been called');
+        assert.equal(lastOnActionCreated.actionId, msg.action_id);
+        assert.equal(lastOnActionCreated.appId, APP_ID);
+        ws.close();
+    });
+
+    it('pushes action result to connected agent', async () => {
+        const ws = connectAgent();
+        await waitForMessage(ws, m => m.type === 'connected');
+
+        perceptionWs.pushActionResult(AGENT_ID, APP_ID, {
+            action_id: 'act-test-123',
+            action_type: 'click',
+            status: 'completed',
+            result: { clicked: true },
+        });
+
+        const msg = await waitForMessage(ws, m => m.type === 'action_result');
+        assert.equal(msg.action_id, 'act-test-123');
+        assert.equal(msg.status, 'completed');
+        assert.deepEqual(msg.result, { clicked: true });
+        ws.close();
+    });
+
+    it('does not push action result to agent without action scope', async () => {
+        db.updateBindingScopes(BINDING_ID, ['perception']);
+
+        const ws = connectAgent();
+        ws.close();
+        await waitForClose(ws);
+        await new Promise(r => setTimeout(r, 100));
+
+        const ws2 = connectAgent();
+        await waitForMessage(ws2, m => m.type === 'connected');
+
+        const pushed = perceptionWs.pushActionResult(AGENT_ID, APP_ID, {
+            action_id: 'act-no-scope',
+            action_type: 'click',
+            status: 'completed',
+            result: {},
+        });
+        assert.equal(pushed, 0, 'should not push to agents without action scope');
         ws2.close();
     });
 });

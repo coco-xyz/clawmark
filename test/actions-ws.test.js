@@ -26,6 +26,9 @@ const APP_ID = 'app-ws-test';
 const APP_ID_OTHER = 'app-ws-other';
 let AGENT_KEY, AGENT_KEY_2, EXT_KEY, EXT_KEY_OTHER;
 
+// Track onResult callbacks for cross-WS integration tests
+let lastOnResult = null;
+
 function setup() {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawmark-ws-test-'));
     db = initDb(tmpDir);
@@ -59,8 +62,11 @@ function setup() {
         capabilities: ['actions'], created_by: 'user-1',
     });
 
+    lastOnResult = null;
     server = http.createServer();
-    actionWs = initActionWs(server, db);
+    actionWs = initActionWs(server, db, {
+        onResult: (agentId, appId, data) => { lastOnResult = { agentId, appId, data }; },
+    });
 }
 
 async function startServer() {
@@ -399,5 +405,85 @@ describe('Action WS — queued dispatch on connect', () => {
 
         agentWs.close();
         extWs.close();
+    });
+});
+
+// ================================================================= cross-WS result callback
+
+describe('Action WS — cross-WS result callback (perception bridge)', () => {
+    beforeEach(async () => { setup(); await startServer(); });
+    afterEach(teardown);
+
+    it('should call onResult when extension submits success result', async () => {
+        const extWs = await connect(EXT_KEY);
+        await waitMsg(extWs, m => m.type === 'connected');
+
+        const agentWs = await connect(AGENT_KEY);
+        await waitMsg(agentWs, m => m.type === 'connected');
+
+        send(agentWs, { type: 'action', action_type: 'click', payload: { selector: '#x' } });
+        const queued = await waitMsg(agentWs, m => m.type === 'action_queued');
+        await waitMsg(extWs, m => m.type === 'action');
+
+        send(extWs, { type: 'result', action_id: queued.action_id, result: { clicked: true } });
+        await waitMsg(agentWs, m => m.type === 'result');
+
+        assert.ok(lastOnResult, 'onResult callback should have been called');
+        assert.equal(lastOnResult.appId, APP_ID);
+        assert.equal(lastOnResult.data.action_id, queued.action_id);
+        assert.equal(lastOnResult.data.status, 'completed');
+        assert.deepEqual(lastOnResult.data.result, { clicked: true });
+
+        agentWs.close();
+        extWs.close();
+    });
+
+    it('should call onResult when extension submits error result', async () => {
+        const extWs = await connect(EXT_KEY);
+        await waitMsg(extWs, m => m.type === 'connected');
+
+        const agentWs = await connect(AGENT_KEY);
+        await waitMsg(agentWs, m => m.type === 'connected');
+
+        send(agentWs, { type: 'action', action_type: 'click', payload: { selector: '#missing' } });
+        const queued = await waitMsg(agentWs, m => m.type === 'action_queued');
+        await waitMsg(extWs, m => m.type === 'action');
+
+        send(extWs, { type: 'result', action_id: queued.action_id, error: 'Element not found' });
+        await waitMsg(agentWs, m => m.type === 'result');
+
+        assert.ok(lastOnResult, 'onResult callback should have been called');
+        assert.equal(lastOnResult.data.status, 'failed');
+        assert.equal(lastOnResult.data.error, 'Element not found');
+
+        agentWs.close();
+        extWs.close();
+    });
+
+    it('should call onResult on action timeout', async () => {
+        const agentWs = await connect(AGENT_KEY);
+        await waitMsg(agentWs, m => m.type === 'connected');
+
+        // Create action with very short timeout via DB directly
+        const agent = db.getAgentByKeyHash(hashKey(AGENT_KEY));
+        const action = db.createAction({
+            agent_id: agent.id,
+            app_id: APP_ID,
+            type: 'click',
+            payload: { selector: '#x' },
+            timeout_ms: 1, // 1ms — will time out immediately
+        });
+        db.updateActionStatus(action.id, { status: 'dispatched' });
+
+        // Wait for the action to be older than timeout
+        await new Promise(r => setTimeout(r, 50));
+        actionWs.checkTimeouts();
+
+        assert.ok(lastOnResult, 'onResult callback should have been called on timeout');
+        assert.equal(lastOnResult.data.action_id, action.id);
+        assert.equal(lastOnResult.data.status, 'failed');
+        assert.equal(lastOnResult.data.error, 'Action timed out');
+
+        agentWs.close();
     });
 });

@@ -28,7 +28,7 @@ const { hashKey } = require('./agent-auth');
 const HEARTBEAT_INTERVAL = 30000;
 const MAX_PAYLOAD = 1 * 1024 * 1024; // 1 MB
 
-function initPerceptionWs(server, db) {
+function initPerceptionWs(server, db, opts = {}) {
     const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 
     // Connection registries
@@ -214,6 +214,8 @@ function initPerceptionWs(server, db) {
                 timeout_ms: msg.timeout_ms || 30000,
             });
             wsSend(ws, { type: 'action_queued', action_id: action.id, status: 'queued' });
+            // Trigger dispatch to extension via action WS
+            if (opts.onActionCreated) opts.onActionCreated(action.id, ctx.app_id);
         } catch (err) {
             wsSend(ws, { type: 'error', error: err.message === 'QUEUE_FULL' ? 'Action queue full' : 'Failed to queue action' });
         }
@@ -320,6 +322,34 @@ function initPerceptionWs(server, db) {
     }
 
     /**
+     * Push an action result to agents connected via this WS.
+     * Called by the action WS when an extension submits a result,
+     * so agents on the perception WS also receive action outcomes.
+     */
+    function pushActionResult(agent_id, app_id, resultData) {
+        const bindingIds = appBindings.get(app_id);
+        if (!bindingIds || bindingIds.size === 0) return 0;
+
+        let pushed = 0;
+        for (const bindingId of bindingIds) {
+            const sockets = bindingConnections.get(bindingId);
+            if (!sockets) continue;
+
+            for (const ws of sockets) {
+                if (ws.authContext.agent_id !== agent_id) continue;
+                if (!ws.authContext.scopes.includes('action')) continue;
+                wsSend(ws, {
+                    type: 'action_result',
+                    binding_id: bindingId,
+                    ...resultData,
+                });
+                pushed++;
+            }
+        }
+        return pushed;
+    }
+
+    /**
      * Force-close all connections for a binding (on suspend/revoke).
      */
     function closeBinding(binding_id) {
@@ -355,6 +385,7 @@ function initPerceptionWs(server, db) {
         pushAnnotation,
         pushSessionUpdate,
         pushScopeChanged,
+        pushActionResult,
         closeBinding,
         getStats,
     };
