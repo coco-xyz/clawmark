@@ -70,10 +70,11 @@ test.describe('Dashboard — authenticated', () => {
         await expect(page.locator('#btn-test-server')).toBeVisible();
     });
 
-    test('displays stats grid with 4 stat cards', async ({ page }) => {
+    test('displays stats grid with overview stat cards', async ({ page }) => {
         await page.goto('/');
-        const statCards = page.locator('.stats-grid .stat-card');
-        await expect(statCards).toHaveCount(4);
+        // Overview tab has 4 clickable stat cards
+        const overviewStats = page.locator('#tab-overview .stats-grid .stat-card');
+        await expect(overviewStats).toHaveCount(4);
 
         await expect(page.locator('#stat-total')).toBeVisible();
         await expect(page.locator('#stat-comments')).toBeVisible();

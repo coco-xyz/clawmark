@@ -2,6 +2,7 @@ stages:
   - check
   - test
   - e2e
+  - e2e-browser
   - e2e-staging
 
 version-check:
@@ -58,6 +59,26 @@ e2e-api:
     when: always
     paths:
       - e2e-results.json
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+e2e-browser:
+  stage: e2e-browser
+  tags:
+    - jessie-shell
+  script:
+    - cd $CI_PROJECT_DIR
+    - NODE_ENV=development npm install
+    # Use shared Playwright browser cache (accessible by gitlab-runner)
+    - PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers npx playwright test --project=e2e
+  artifacts:
+    when: always
+    paths:
+      - e2e-results.json
+      - test-results/
     expire_in: 7 days
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
