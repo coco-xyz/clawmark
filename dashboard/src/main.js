@@ -1000,7 +1000,6 @@ function renderBoundAgents() {
                     <div class="ba-meta">${escHtml(info.label)} · ${formatScopes(scopes)}</div>
                 </div>
                 <div class="ba-actions">
-                    <button class="btn btn-secondary btn-small" data-ba-action="copy-token" data-ba-id="${escHtml(binding.id)}">Copy Token</button>
                     <button class="btn btn-danger btn-small" data-ba-action="revoke" data-ba-id="${escHtml(binding.id)}">Revoke</button>
                 </div>
             `;
@@ -1062,6 +1061,7 @@ document.getElementById('btn-add-bound-agent').addEventListener('click', () => {
 document.getElementById('btn-cancel-bound-agent').addEventListener('click', () => {
     document.getElementById('bound-agent-form').style.display = 'none';
     document.getElementById('ba-token-result').style.display = 'none';
+    document.getElementById('btn-save-bound-agent').style.display = '';
 });
 
 // Generate binding token
@@ -1129,14 +1129,7 @@ document.getElementById('bound-agents-list').addEventListener('click', async (e)
 
     try {
         if (action === 'copy-token') {
-            // For pending bindings, the token was shown at creation time only.
-            // We can't retrieve it — inform user.
-            showToast('Token was shown only at creation time. Generate a new one if needed.', 'error');
-            btn.disabled = false;
-            return;
-        }
-
-        if (action === 'suspend') {
+            if (action === 'suspend') {
             await suspendBinding(id);
             showToast('Binding suspended');
         } else if (action === 'resume') {
