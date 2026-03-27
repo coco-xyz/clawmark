@@ -380,33 +380,47 @@
             <section class="tab-panel" id="tab-settings">
                 <h1>Settings</h1>
 
-                <!-- Bound Agents (#103) -->
+                <!-- Bound Agents (#108 Agent Binding) -->
                 <div class="card" id="bound-agents-card">
                     <h3>Bound Agents</h3>
-                    <p class="help-text">Connect AI agents by entering their API key (<code>cmak_</code> prefix). Each agent can monitor errors, execute actions, and record sessions based on site permissions.</p>
+                    <p class="help-text">Manage Agent bindings. Generate a token, send it to the Agent owner, and the Agent connects automatically via the <code>zylos-clawmark</code> component.</p>
                     <div class="bound-agents-list" id="bound-agents-list">
-                        <div class="empty-state" id="bound-agents-empty">No agents bound yet</div>
+                        <div class="empty-state" id="bound-agents-empty">No agents bound yet. Click "+ Bind Agent" to get started.</div>
                     </div>
                     <div style="margin-top:12px;">
-                        <button class="btn btn-primary btn-small" id="btn-add-bound-agent">+ Add Agent</button>
+                        <button class="btn btn-primary btn-small" id="btn-add-bound-agent">+ Bind Agent</button>
                     </div>
                     <div class="bound-agent-form" id="bound-agent-form" style="display:none;">
                         <div class="form-row">
-                            <label class="form-label" for="ba-name">Agent Name</label>
-                            <input type="text" class="input" id="ba-name" placeholder="e.g. QA Bot" maxlength="64">
+                            <label class="form-label" for="ba-label">Label <span style="color:var(--text-muted);font-weight:normal;">(optional, e.g. "QA Bot")</span></label>
+                            <input type="text" class="input" id="ba-label" placeholder="e.g. QA Bot" maxlength="64">
                         </div>
                         <div class="form-row">
-                            <label class="form-label" for="ba-key">API Key</label>
-                            <input type="password" class="input" id="ba-key" placeholder="cmak_xxxxxxxxxxxx" autocomplete="off" style="font-family:monospace;">
-                        </div>
-                        <div class="form-row">
-                            <label class="form-label" for="ba-server">Server URL <span style="color:var(--text-muted);font-weight:normal;">(optional, uses default if empty)</span></label>
-                            <input type="text" class="input" id="ba-server" placeholder="https://api.coco.xyz/clawmark">
+                            <label class="form-label">Permission Scopes</label>
+                            <div class="ba-scopes-grid">
+                                <label class="ba-scope-option"><input type="checkbox" class="ba-scope-cb" value="perception" checked> <span>Perception</span> <small>Receive browser events</small></label>
+                                <label class="ba-scope-option"><input type="checkbox" class="ba-scope-cb" value="action" checked> <span>Action</span> <small>Execute page operations</small></label>
+                                <label class="ba-scope-option"><input type="checkbox" class="ba-scope-cb" value="session" checked> <span>Session</span> <small>View/manage sessions</small></label>
+                                <label class="ba-scope-option"><input type="checkbox" class="ba-scope-cb" value="annotation"> <span>Annotation</span> <small>Receive user annotations</small></label>
+                                <label class="ba-scope-option"><input type="checkbox" class="ba-scope-cb" value="issue"> <span>Issue</span> <small>Create/manage issues</small></label>
+                            </div>
                         </div>
                         <div class="form-actions" style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-                            <button class="btn btn-primary btn-small" id="btn-save-bound-agent">Test &amp; Save</button>
+                            <button class="btn btn-primary btn-small" id="btn-save-bound-agent">Generate Token</button>
                             <button class="btn btn-secondary btn-small" id="btn-cancel-bound-agent">Cancel</button>
                             <span class="help-text" id="ba-status" style="margin-left:8px;"></span>
+                        </div>
+                        <div class="ba-token-result" id="ba-token-result" style="display:none;">
+                            <label class="form-label">Binding Token <small>(shown only once)</small></label>
+                            <div class="ba-token-box">
+                                <code id="ba-token-value" class="ba-token-code"></code>
+                                <button class="btn btn-secondary btn-small" id="btn-copy-token">Copy</button>
+                            </div>
+                            <label class="form-label" style="margin-top:8px;">Install Command</label>
+                            <div class="ba-token-box">
+                                <code id="ba-install-cmd" class="ba-token-code"></code>
+                                <button class="btn btn-secondary btn-small" id="btn-copy-install">Copy</button>
+                            </div>
                         </div>
                     </div>
                 </div>

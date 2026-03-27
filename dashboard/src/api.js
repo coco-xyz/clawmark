@@ -211,6 +211,48 @@ export async function rotateAgentKey(id) {
     });
 }
 
+// ---- Bindings (#108 Agent Binding)
+
+export async function createBindingToken(data) {
+    return apiFetch('/api/v2/bindings/create-token', {
+        method: 'POST',
+        body: data,
+    });
+}
+
+export async function listBindings() {
+    return apiFetch('/api/v2/bindings');
+}
+
+export async function getBinding(id) {
+    return apiFetch(`/api/v2/bindings/${id}`);
+}
+
+export async function updateBinding(id, data) {
+    return apiFetch(`/api/v2/bindings/${id}`, {
+        method: 'PUT',
+        body: data,
+    });
+}
+
+export async function suspendBinding(id) {
+    return apiFetch(`/api/v2/bindings/${id}/suspend`, {
+        method: 'POST',
+    });
+}
+
+export async function resumeBinding(id) {
+    return apiFetch(`/api/v2/bindings/${id}/resume`, {
+        method: 'POST',
+    });
+}
+
+export async function revokeBinding(id) {
+    return apiFetch(`/api/v2/bindings/${id}`, {
+        method: 'DELETE',
+    });
+}
+
 // ---- Extension Bridge (auth sync)
 
 let _extensionId = null;
