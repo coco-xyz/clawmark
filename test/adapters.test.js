@@ -1843,3 +1843,144 @@ describe('AdapterRegistry — new adapter types integration', () => {
         assert.equal(registry.channels.has('bad'), false);
     });
 });
+
+// ============================================ dispatchToTargets retry tracking
+
+describe('dispatchToTargets — retry count (#42)', () => {
+    /**
+     * Regression: initial dispatch failure set retries=1 instead of 0,
+     * effectively wasting one retry attempt (max 3 retries became max 2).
+     */
+
+    function makeDispatchDb() {
+        const entries = new Map();
+        let seq = 0;
+        return {
+            entries,
+            createDispatchEntry(data) {
+                const id = `dsp-test-${++seq}`;
+                entries.set(id, {
+                    id,
+                    ...data,
+                    target_config: typeof data.target_config === 'string'
+                        ? data.target_config : JSON.stringify(data.target_config),
+                    status: 'pending',
+                    retries: 0,
+                    last_error: null,
+                    external_id: null,
+                    external_url: null,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                });
+                return id;
+            },
+            updateDispatchEntry(id, updates) {
+                const entry = entries.get(id);
+                if (!entry) return;
+                Object.assign(entry, updates, { updated_at: new Date().toISOString() });
+            },
+            getItem(id) { return { id, quote: 'test', source_url: 'http://test' }; },
+            getPendingDispatches() {
+                return [...entries.values()].filter(
+                    e => ['pending', 'failed'].includes(e.status) && e.retries < 3
+                );
+            },
+            getUserAuth() { return null; },
+        };
+    }
+
+    it('initial failure should set retries to 0', async () => {
+        const db = makeDispatchDb();
+        const registry = new AdapterRegistry();
+
+        // Register a failing adapter
+        class FailAdapter {
+            constructor() { this.type = 'fail-adapter'; }
+            validate() { return { ok: true }; }
+            async send() { throw new Error('Simulated failure'); }
+        }
+        registry.adapterTypes.set('fail-adapter', FailAdapter);
+        registry.db = db;
+
+        const results = await registry.dispatchToTargets(
+            'item.created',
+            { id: 'item-1', quote: 'test' },
+            [{ target_type: 'fail-adapter', target_config: { foo: 1 }, method: 'auto' }],
+        );
+
+        assert.equal(results.length, 1);
+        assert.equal(results[0].status, 'failed');
+
+        const entry = [...db.entries.values()][0];
+        assert.equal(entry.retries, 0, 'Initial failure should not increment retries');
+        assert.equal(entry.status, 'failed');
+    });
+
+    it('retry worker should get 3 full retry attempts after initial failure', async () => {
+        const db = makeDispatchDb();
+        const registry = new AdapterRegistry();
+
+        class FailAdapter {
+            constructor() { this.type = 'fail-adapter'; }
+            validate() { return { ok: true }; }
+            async send() { throw new Error('Still failing'); }
+        }
+        registry.adapterTypes.set('fail-adapter', FailAdapter);
+        registry.db = db;
+
+        // Simulate initial failure
+        await registry.dispatchToTargets(
+            'item.created',
+            { id: 'item-2', quote: 'test' },
+            [{ target_type: 'fail-adapter', target_config: {}, method: 'auto' }],
+        );
+
+        const entry = [...db.entries.values()][0];
+        assert.equal(entry.retries, 0);
+
+        // Simulate 3 retry worker runs (bypass backoff by backdating updated_at)
+        for (let i = 0; i < 3; i++) {
+            entry.updated_at = '2000-01-01T00:00:00.000Z'; // bypass backoff
+            await registry.retryFailed();
+        }
+
+        assert.equal(entry.retries, 3);
+        assert.equal(entry.status, 'exhausted');
+    });
+
+    it('successful retry should set status to sent', async () => {
+        const db = makeDispatchDb();
+        const registry = new AdapterRegistry();
+
+        let callCount = 0;
+        class FlakeyAdapter {
+            constructor() { this.type = 'flakey-adapter'; }
+            validate() { return { ok: true }; }
+            async send() {
+                callCount++;
+                if (callCount <= 1) throw new Error('Temporary failure');
+                return { external_id: '42', external_url: 'http://example.com/42' };
+            }
+        }
+        registry.adapterTypes.set('flakey-adapter', FlakeyAdapter);
+        registry.db = db;
+
+        // Initial dispatch fails
+        await registry.dispatchToTargets(
+            'item.created',
+            { id: 'item-3', quote: 'test' },
+            [{ target_type: 'flakey-adapter', target_config: {}, method: 'auto' }],
+        );
+
+        const entry = [...db.entries.values()][0];
+        assert.equal(entry.status, 'failed');
+        assert.equal(entry.retries, 0);
+
+        // Retry succeeds
+        entry.updated_at = '2000-01-01T00:00:00.000Z';
+        const retried = await registry.retryFailed();
+        assert.equal(retried, 1);
+        assert.equal(entry.status, 'sent');
+        assert.equal(entry.retries, 1);
+    });
+});

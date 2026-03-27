@@ -223,7 +223,7 @@ class AdapterRegistry {
                 } catch (err) {
                     this.db.updateDispatchEntry(entry.dispatch_id, {
                         status: 'failed',
-                        retries: 1,
+                        retries: 0,
                         last_error: err.message,
                     });
                     console.error(`[adapters] ${event} → ${entry.target_type} failed (dispatch ${entry.dispatch_id}):`, err.message);
