@@ -2629,7 +2629,8 @@ app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (re
 
     const agent_id = req.agent?.id || null;
     // #118: instance_id from request body (set by extension per Chrome Profile)
-    const instanceId = (typeof instance_id === 'string' && instance_id) ? instance_id.slice(0, 64) : null;
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const instanceId = (typeof instance_id === 'string' && UUID_RE.test(instance_id)) ? instance_id : null;
     const enriched = events.map(e => ({
         app_id,
         agent_id,
@@ -3089,7 +3090,8 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
     const { session_id, tab_id, url, title, start_time, events, snapshots, metadata, instance_id } = req.body;
     const agent_id = req.v2Auth?.agent?.id || null;
     // #118: instance_id from request body (set by extension per Chrome Profile)
-    const instanceId = (typeof instance_id === 'string' && instance_id) ? instance_id.slice(0, 64) : null;
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const instanceId = (typeof instance_id === 'string' && UUID_RE.test(instance_id)) ? instance_id : null;
 
     // Validate events array
     if (events && (!Array.isArray(events) || events.length > 1000)) {
@@ -3128,6 +3130,7 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
         const result = itemsDb.createSession({
             app_id,
             agent_id,
+            instance_id: instanceId,
             tab_id,
             url,
             title,

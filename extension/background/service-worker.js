@@ -35,25 +35,27 @@ const GOOGLE_CLIENT_ID = ClawMarkConfig.GOOGLE_CLIENT_ID
 // (NOT sync) so different profiles on the same account get distinct IDs.
 
 let _instanceId = null;
+let _instanceIdPromise = null;
 
 async function getInstanceId() {
     if (_instanceId) return _instanceId;
-    const result = await chrome.storage.local.get('instance_id');
-    if (result.instance_id) {
-        _instanceId = result.instance_id;
-        return _instanceId;
+    if (!_instanceIdPromise) {
+        _instanceIdPromise = (async () => {
+            const result = await chrome.storage.local.get('instance_id');
+            if (result.instance_id) {
+                _instanceId = result.instance_id;
+                return _instanceId;
+            }
+            _instanceId = crypto.randomUUID();
+            await chrome.storage.local.set({ instance_id: _instanceId });
+            return _instanceId;
+        })();
     }
-    // Generate UUID v4
-    _instanceId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-    });
-    await chrome.storage.local.set({ instance_id: _instanceId });
-    return _instanceId;
+    return _instanceIdPromise;
 }
 
 // Initialize on load
-getInstanceId();
+getInstanceId().catch(err => console.warn('[instance-id] init failed:', err.message));
 
 async function getConfig() {
     const result = await chrome.storage.sync.get({

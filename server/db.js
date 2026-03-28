@@ -449,6 +449,13 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
     `);
 
+    // ----------------------------------------- migration: sessions.instance_id (#118 multi-instance)
+    const sessCols = db.pragma('table_info(sessions)').map(c => c.name);
+    if (!sessCols.includes('instance_id')) {
+        db.exec(`ALTER TABLE sessions ADD COLUMN instance_id TEXT`);
+        console.log('[db] migrated: added column sessions.instance_id');
+    }
+
     db.exec(`
         CREATE TABLE IF NOT EXISTS session_events (
             id              TEXT PRIMARY KEY,
@@ -802,10 +809,10 @@ function initDb(dataDir) {
     const sessionStmts = {
         insertSession: db.prepare(`
             INSERT INTO sessions
-                (id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                (id, app_id, agent_id, instance_id, tab_id, url, title, start_time, end_time,
                  event_count, snapshot_count, total_size, status, metadata, created_at, updated_at)
             VALUES
-                (@id, @app_id, @agent_id, @tab_id, @url, @title, @start_time, @end_time,
+                (@id, @app_id, @agent_id, @instance_id, @tab_id, @url, @title, @start_time, @end_time,
                  @event_count, @snapshot_count, @total_size, @status, @metadata, @created_at, @updated_at)
         `),
         getSession: db.prepare('SELECT * FROM sessions WHERE id = ?'),
@@ -2424,7 +2431,7 @@ function initDb(dataDir) {
     // P2-5: ISO 8601 date format validation
     const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 
-    function createSession({ app_id, agent_id, tab_id, url, title, start_time, events, snapshots, metadata }) {
+    function createSession({ app_id, agent_id, instance_id, tab_id, url, title, start_time, events, snapshots, metadata }) {
         // P2-5: Validate start_time format
         if (start_time && !ISO_DATE_RE.test(start_time)) {
             throw new Error('INVALID_START_TIME');
@@ -2461,6 +2468,7 @@ function initDb(dataDir) {
                 id: sessionId,
                 app_id,
                 agent_id: agent_id || null,
+                instance_id: instance_id || null,
                 tab_id: tab_id || null,
                 url: (url || '').slice(0, 2048) || null,
                 title: (title || '').slice(0, 512) || null,
