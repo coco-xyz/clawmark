@@ -237,6 +237,9 @@ async function _flushSessions() {
             return;
         }
 
+        // #118: include instance_id in session payloads
+        const instanceId = typeof getInstanceId === 'function' ? await getInstanceId() : null;
+
         // Process each session group
         for (const [localId, group] of grouped) {
             const ctrl = new AbortController();
@@ -257,6 +260,7 @@ async function _flushSessions() {
                             session_id: serverSessionId,
                             events: group.events,
                             snapshots: group.snapshots.length > 0 ? group.snapshots : undefined,
+                            instance_id: instanceId,
                         }),
                         signal: ctrl.signal,
                     });
@@ -288,6 +292,7 @@ async function _flushSessions() {
                             start_time: new Date(group.startTime).toISOString(),
                             events: group.events,
                             snapshots: group.snapshots.length > 0 ? group.snapshots : undefined,
+                            instance_id: instanceId,
                         }),
                         signal: ctrl.signal,
                     });

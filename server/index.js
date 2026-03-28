@@ -2619,7 +2619,7 @@ app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (re
     const app_id = req.v2Auth?.app_id;
     if (!app_id) return res.status(400).json({ error: 'No app context' });
 
-    const { events } = req.body;
+    const { events, instance_id } = req.body;
     if (!Array.isArray(events) || events.length === 0) {
         return res.status(400).json({ error: 'events must be a non-empty array' });
     }
@@ -2628,9 +2628,13 @@ app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (re
     }
 
     const agent_id = req.agent?.id || null;
+    // #118: instance_id from request body (set by extension per Chrome Profile)
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const instanceId = (typeof instance_id === 'string' && UUID_RE.test(instance_id)) ? instance_id : null;
     const enriched = events.map(e => ({
         app_id,
         agent_id,
+        instance_id: instanceId,
         type: e.type || 'unknown',
         message: (e.message || '').slice(0, 4096),
         stack: (e.stack || '').slice(0, 8192) || null,
@@ -3083,8 +3087,11 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
     const app_id = req.v2Auth?.app_id;
     if (!app_id) return res.status(400).json({ error: 'No app context' });
 
-    const { session_id, tab_id, url, title, start_time, events, snapshots, metadata } = req.body;
+    const { session_id, tab_id, url, title, start_time, events, snapshots, metadata, instance_id } = req.body;
     const agent_id = req.v2Auth?.agent?.id || null;
+    // #118: instance_id from request body (set by extension per Chrome Profile)
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const instanceId = (typeof instance_id === 'string' && UUID_RE.test(instance_id)) ? instance_id : null;
 
     // Validate events array
     if (events && (!Array.isArray(events) || events.length > 1000)) {
@@ -3112,6 +3119,7 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
                         event_count: result.event_count,
                         snapshot_count: result.snapshot_count,
                         url: existing.url,
+                        instance_id: instanceId,
                     });
                 } catch { /* non-critical */ }
             }
@@ -3122,6 +3130,7 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
         const result = itemsDb.createSession({
             app_id,
             agent_id,
+            instance_id: instanceId,
             tab_id,
             url,
             title,
@@ -3152,6 +3161,7 @@ app.post('/api/v2/agent-channel/sessions', sessionLimiter, v2AuthOrAgent, (req, 
                     title,
                     start_time,
                     event_count: result.event_count || (events || []).length,
+                    instance_id: instanceId,
                 });
             } catch { /* non-critical */ }
         }

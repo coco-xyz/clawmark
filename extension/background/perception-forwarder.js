@@ -197,6 +197,9 @@ async function _flush() {
             return;
         }
 
+        // #118: include instance_id in perception payload
+        const instanceId = typeof getInstanceId === 'function' ? await getInstanceId() : null;
+
         const ctrl = new AbortController();
         timer = setTimeout(() => ctrl.abort(), 15000);
 
@@ -206,7 +209,7 @@ async function _flush() {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${authToken}`,
             },
-            body: JSON.stringify({ events: batch }),
+            body: JSON.stringify({ events: batch, instance_id: instanceId }),
             signal: ctrl.signal,
         });
 

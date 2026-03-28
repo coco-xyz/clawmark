@@ -382,6 +382,12 @@ function initDb(dataDir) {
     }
     db.exec(`CREATE INDEX IF NOT EXISTS idx_perception_agent ON perception_events(app_id, agent_id)`);
 
+    // ----------------------------------------- migration: perception_events.instance_id (#118 multi-instance)
+    if (!peCols.includes('instance_id')) {
+        db.exec(`ALTER TABLE perception_events ADD COLUMN instance_id TEXT`);
+        console.log('[db] migrated: added column perception_events.instance_id');
+    }
+
     // ----------------------------------------- schema: perception_issues (#69 dedup tracking)
     db.exec(`
         CREATE TABLE IF NOT EXISTS perception_issues (
@@ -442,6 +448,13 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(app_id, start_time);
         CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
     `);
+
+    // ----------------------------------------- migration: sessions.instance_id (#118 multi-instance)
+    const sessCols = db.pragma('table_info(sessions)').map(c => c.name);
+    if (!sessCols.includes('instance_id')) {
+        db.exec(`ALTER TABLE sessions ADD COLUMN instance_id TEXT`);
+        console.log('[db] migrated: added column sessions.instance_id');
+    }
 
     db.exec(`
         CREATE TABLE IF NOT EXISTS session_events (
@@ -729,9 +742,9 @@ function initDb(dataDir) {
     const perceptionStmts = {
         insertEvent: db.prepare(`
             INSERT INTO perception_events
-                (id, app_id, agent_id, type, message, stack, source, line, severity, url, fingerprint, context, created_at)
+                (id, app_id, agent_id, instance_id, type, message, stack, source, line, severity, url, fingerprint, context, created_at)
             VALUES
-                (@id, @app_id, @agent_id, @type, @message, @stack, @source, @line, @severity, @url, @fingerprint, @context, @created_at)
+                (@id, @app_id, @agent_id, @instance_id, @type, @message, @stack, @source, @line, @severity, @url, @fingerprint, @context, @created_at)
         `),
         getEventsByFingerprint: db.prepare(`
             SELECT * FROM perception_events
@@ -796,10 +809,10 @@ function initDb(dataDir) {
     const sessionStmts = {
         insertSession: db.prepare(`
             INSERT INTO sessions
-                (id, app_id, agent_id, tab_id, url, title, start_time, end_time,
+                (id, app_id, agent_id, instance_id, tab_id, url, title, start_time, end_time,
                  event_count, snapshot_count, total_size, status, metadata, created_at, updated_at)
             VALUES
-                (@id, @app_id, @agent_id, @tab_id, @url, @title, @start_time, @end_time,
+                (@id, @app_id, @agent_id, @instance_id, @tab_id, @url, @title, @start_time, @end_time,
                  @event_count, @snapshot_count, @total_size, @status, @metadata, @created_at, @updated_at)
         `),
         getSession: db.prepare('SELECT * FROM sessions WHERE id = ?'),
@@ -2054,16 +2067,17 @@ function initDb(dataDir) {
 
     // ------------------------------------------------- perception methods (#69)
 
-    function createPerceptionEvent({ app_id, agent_id, type, message, stack, source, line, severity, url, fingerprint, context }) {
+    function createPerceptionEvent({ app_id, agent_id, instance_id, type, message, stack, source, line, severity, url, fingerprint, context }) {
         const id = genId('pe');
         const now = new Date().toISOString();
         perceptionStmts.insertEvent.run({
-            id, app_id, agent_id: agent_id || null, type, message: message || '',
+            id, app_id, agent_id: agent_id || null, instance_id: instance_id || null,
+            type, message: message || '',
             stack: stack || null, source: source || null, line: line || null,
             severity: severity || 'error', url: url || null,
             fingerprint, context: JSON.stringify(context || {}), created_at: now,
         });
-        return { id, created_at: now };
+        return { id, instance_id: instance_id || null, created_at: now };
     }
 
     function createPerceptionEvents(events) {
@@ -2417,7 +2431,7 @@ function initDb(dataDir) {
     // P2-5: ISO 8601 date format validation
     const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 
-    function createSession({ app_id, agent_id, tab_id, url, title, start_time, events, snapshots, metadata }) {
+    function createSession({ app_id, agent_id, instance_id, tab_id, url, title, start_time, events, snapshots, metadata }) {
         // P2-5: Validate start_time format
         if (start_time && !ISO_DATE_RE.test(start_time)) {
             throw new Error('INVALID_START_TIME');
@@ -2454,6 +2468,7 @@ function initDb(dataDir) {
                 id: sessionId,
                 app_id,
                 agent_id: agent_id || null,
+                instance_id: instance_id || null,
                 tab_id: tab_id || null,
                 url: (url || '').slice(0, 2048) || null,
                 title: (title || '').slice(0, 512) || null,
