@@ -226,6 +226,7 @@ X-Agent-Key: cmak_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ```json
 {
+  "instance_id": "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
   "events": [
     {
       "type": "runtime-error",
@@ -243,6 +244,11 @@ X-Agent-Key: cmak_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
     }
   ]
 }
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| instance_id | string (UUID v4) | 否 | 浏览器实例标识（#118 多实例支持）。每个 Chrome Profile 生成唯一 UUID，用于区分来自不同浏览器实例的事件。Server 会透传给 Agent WebSocket 推送。 |
 ```
 
 **events 数组元素字段:**
@@ -429,6 +435,51 @@ Upsert 一个追踪 issue（Agent 消费者去重后调用）。
 | Agent 注册 | `agentRegisterLimiter`（更严格） |
 
 > 超限时返回 HTTP 429 Too Many Requests。
+
+---
+
+## 多实例支持 (#117)
+
+### instance_id
+
+每个 Chrome Profile（浏览器实例）在首次安装扩展时生成一个 UUID v4 作为 `instance_id`，存储在 `chrome.storage.local` 中。
+
+**数据流：**
+1. 扩展端上报 perception 事件时在 POST body 中附带 `instance_id`
+2. Server 存储 `instance_id` 到 `perception_events` 和 `sessions` 表
+3. Server 通过 WebSocket 推送事件时透传 `instance_id` 给 Agent
+4. zylos-clawmark 组件解析 `instance_id`，并使用 fingerprint 去重避免同一事件被多个实例重复处理
+
+### target_instance（Action 路由）
+
+Agent 发送 Action 时可指定 `target_instance` 参数，将命令路由到特定浏览器实例。
+
+**路由优先级：**
+1. `target_instance` — 精确指定目标实例
+2. `session_id` 粘性路由 — 同一 session 的后续 action 自动路由到上次响应的实例
+3. 最近活跃 — 选择最近有活动的扩展连接
+
+**WebSocket Action 协议消息：**
+
+```json
+// Agent → Server
+{ "type": "action", "action_type": "click", "payload": {"selector": "#btn"}, "target_instance": "uuid-of-instance" }
+
+// Server → Agent (结果)
+{ "type": "result", "action_id": "act-123", "status": "completed", "result": {...}, "instance_id": "uuid-of-instance" }
+```
+
+### zylos-clawmark 组件
+
+组件自动处理多实例场景：
+- **Perception 去重：** 同一 fingerprint + type + message 在 5 秒内只处理一次，避免多实例重复上报
+- **instance_id 解析：** 事件的 `instance_id` 字段在 C4 消息和日志中展示
+- **Action target_instance：** `send.js` 支持 `--target-instance <id>` 参数指定目标实例
+
+```bash
+# 指定目标实例
+node scripts/send.js <binding_id> click '{"selector":"#btn"}' --target-instance <instance_id>
+```
 
 ---
 
