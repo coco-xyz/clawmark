@@ -3577,6 +3577,7 @@ const serverBuildTime = (() => {
 app.post('/api/v2/shares', apiWriteLimiter, v2Auth, (req, res) => {
     const { source_url, title, guest_name_required, max_feedbacks, expires_in_hours } = req.body;
     if (!source_url) return res.status(400).json({ error: 'source_url is required' });
+    if (!/^https?:\/\//i.test(source_url)) return res.status(400).json({ error: 'source_url must be an HTTP or HTTPS URL' });
 
     const share_token = crypto.randomBytes(32).toString('hex');
     const expires_at = expires_in_hours
@@ -3620,30 +3621,18 @@ app.get('/api/v2/shares/:token/info', apiReadLimiter, (req, res) => {
     }
 
     const feedbacks = itemsDb.db.prepare(`
-        SELECT id, content, created_by, created_at, quote
+        SELECT id, quote, created_by, created_at,
+               (SELECT content FROM messages WHERE item_id = items.id ORDER BY created_at ASC LIMIT 1) AS content
         FROM items
-        JOIN json_each(items.metadata) AS je ON je.key = 'share_token' AND je.value = ?
-        WHERE items.app_id = ?
-        ORDER BY items.created_at DESC
-    `).all(share.share_token, share.app_id);
-
-    // Fallback: metadata is a JSON string, not a JSON object in SQLite
-    // Use LIKE-based query instead
-    const feedbacksFallback = feedbacks.length === 0
-        ? itemsDb.db.prepare(`
-            SELECT id, quote, created_by, created_at,
-                   (SELECT content FROM messages WHERE item_id = items.id ORDER BY created_at ASC LIMIT 1) AS content
-            FROM items
-            WHERE app_id = ? AND created_by LIKE 'guest:%' AND metadata LIKE ?
-            ORDER BY created_at DESC
-        `).all(share.app_id, `%"share_token":"${share.share_token}"%`)
-        : feedbacks;
+        WHERE app_id = ? AND created_by LIKE 'guest:%' AND metadata LIKE ?
+        ORDER BY created_at DESC
+    `).all(share.app_id, `%"share_token":"${share.share_token}"%`);
 
     res.json({
         title: share.title,
         source_url: share.source_url,
         guest_name_required: !!share.guest_name_required,
-        feedbacks: feedbacksFallback,
+        feedbacks,
     });
 });
 
