@@ -299,6 +299,14 @@ const agentRegisterLimiter = rateLimit({
     message: { error: 'Agent registration rate limit exceeded' },
 });
 
+const guestFeedbackLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Feedback rate limit exceeded, try again later' },
+});
+
 // ---------------------------------------------------------------------- multer
 
 const upload = multer({
@@ -3559,6 +3567,279 @@ const serverBuildTime = (() => {
     try { return require('child_process').execSync('git show -s --format=%cI HEAD', { encoding: 'utf-8' }).trim(); }
     catch { return process.env.BUILD_TIME || new Date().toISOString(); }
 })();
+
+// ================================================================= Guest Share (#102)
+// Share links for non-technical users to submit feedback without
+// installing the extension or logging in.
+// =================================================================
+
+// -- Create share link (authenticated)
+app.post('/api/v2/shares', apiWriteLimiter, v2Auth, (req, res) => {
+    const { source_url, title, guest_name_required, max_feedbacks, expires_in_hours } = req.body;
+    if (!source_url) return res.status(400).json({ error: 'source_url is required' });
+    if (!/^https?:\/\//i.test(source_url)) return res.status(400).json({ error: 'source_url must be an HTTP or HTTPS URL' });
+
+    const share_token = crypto.randomBytes(32).toString('hex');
+    const expires_at = expires_in_hours
+        ? new Date(Date.now() + expires_in_hours * 60 * 60 * 1000).toISOString()
+        : null;
+
+    const share = itemsDb.createGuestShare({
+        share_token,
+        owner_user_id: req.v2Auth.user,
+        app_id: req.v2Auth.app_id,
+        source_url,
+        title,
+        guest_name_required: !!guest_name_required,
+        max_feedbacks: max_feedbacks || 100,
+        expires_at,
+    });
+
+    res.json({ success: true, share, share_url: `/share/${share_token}` });
+});
+
+// -- List my shares (authenticated)
+app.get('/api/v2/shares', apiReadLimiter, v2Auth, (req, res) => {
+    const shares = itemsDb.listGuestSharesByUser(req.v2Auth.user);
+    res.json({ shares });
+});
+
+// -- Delete a share (authenticated)
+app.delete('/api/v2/shares/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    const result = itemsDb.deleteGuestShare(req.params.id, req.v2Auth.user);
+    if (!result.success) return res.status(404).json({ error: 'Share not found' });
+    res.json({ success: true });
+});
+
+// -- Get share info + existing feedback (public, no auth)
+app.get('/api/v2/shares/:token/info', apiReadLimiter, (req, res) => {
+    const share = itemsDb.getGuestShareByToken(req.params.token);
+    if (!share) return res.status(404).json({ error: 'Share not found' });
+
+    if (share.expires_at && new Date(share.expires_at) < new Date()) {
+        return res.status(410).json({ error: 'This share link has expired' });
+    }
+
+    const feedbacks = itemsDb.db.prepare(`
+        SELECT id, quote, created_by, created_at,
+               (SELECT content FROM messages WHERE item_id = items.id ORDER BY created_at ASC LIMIT 1) AS content
+        FROM items
+        WHERE app_id = ? AND created_by LIKE 'guest:%' AND metadata LIKE ?
+        ORDER BY created_at DESC
+    `).all(share.app_id, `%"share_token":"${share.share_token}"%`);
+
+    res.json({
+        title: share.title,
+        source_url: share.source_url,
+        guest_name_required: !!share.guest_name_required,
+        feedbacks,
+    });
+});
+
+// -- Submit guest feedback (public, rate-limited)
+app.post('/api/v2/shares/:token/feedback', guestFeedbackLimiter, (req, res) => {
+    const share = itemsDb.getGuestShareByToken(req.params.token);
+    if (!share) return res.status(404).json({ error: 'Share not found' });
+
+    if (share.expires_at && new Date(share.expires_at) < new Date()) {
+        return res.status(410).json({ error: 'This share link has expired' });
+    }
+
+    const feedbackCount = itemsDb.countGuestFeedbackByShare(share.share_token);
+    if (feedbackCount >= share.max_feedbacks) {
+        return res.status(429).json({ error: 'Maximum feedback limit reached for this share' });
+    }
+
+    const { name, email, content, quote } = req.body;
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+        return res.status(400).json({ error: 'content is required' });
+    }
+    if (content.length > 5000) {
+        return res.status(400).json({ error: 'content too long (max 5000 characters)' });
+    }
+    if (share.guest_name_required && (!name || typeof name !== 'string' || name.trim().length === 0)) {
+        return res.status(400).json({ error: 'name is required for this share' });
+    }
+
+    // Sanitize inputs
+    const safeName = name ? String(name).slice(0, 100).trim() : 'anonymous';
+    const safeEmail = email ? String(email).slice(0, 200).trim() : null;
+    const safeContent = String(content).slice(0, 5000).trim();
+    const safeQuote = quote ? String(quote).slice(0, 2000).trim() : null;
+
+    const guestUser = `guest:${safeName}`;
+
+    const item = itemsDb.createItem({
+        app_id: share.app_id,
+        doc: share.source_url,
+        type: 'comment',
+        title: null,
+        quote: safeQuote,
+        quote_position: null,
+        priority: 'normal',
+        created_by: guestUser,
+        version: null,
+        message: safeContent,
+        source_url: share.source_url,
+        source_title: share.title || null,
+        tags: ['guest-feedback'],
+        screenshots: [],
+        metadata: JSON.stringify({ share_token: share.share_token, guest_email: safeEmail }),
+    });
+
+    // Dispatch via delivery rules (same as authenticated items)
+    sendWebhook('item.created', item).catch(err => {
+        console.error(`[dispatch] Guest feedback dispatch error for ${item.id}:`, err.message);
+    });
+
+    res.json({ success: true, id: item.id });
+});
+
+// -- Share page (server-rendered HTML, no auth)
+app.get('/share/:token', apiReadLimiter, (req, res) => {
+    const share = itemsDb.getGuestShareByToken(req.params.token);
+    if (!share) return res.status(404).send('Share not found');
+
+    if (share.expires_at && new Date(share.expires_at) < new Date()) {
+        return res.status(410).send('This share link has expired');
+    }
+
+    const escHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const pageTitle = escHtml(share.title || share.source_url);
+    const nameRequired = share.guest_name_required ? 'true' : 'false';
+
+    res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feedback — ${pageTitle}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f0f;color:#e0e0e0;min-height:100vh;display:flex;justify-content:center;padding:20px}
+.container{max-width:600px;width:100%}
+h1{font-size:1.4rem;margin-bottom:4px;color:#fff}
+.subtitle{color:#888;font-size:0.85rem;margin-bottom:24px;word-break:break-all}
+.subtitle a{color:#6b9fff;text-decoration:none}
+.subtitle a:hover{text-decoration:underline}
+.form-group{margin-bottom:16px}
+label{display:block;font-size:0.85rem;color:#aaa;margin-bottom:4px}
+input,textarea{width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e0e0e0;font-size:0.95rem;outline:none;transition:border-color 0.2s}
+input:focus,textarea:focus{border-color:#6b9fff}
+textarea{min-height:120px;resize:vertical;font-family:inherit}
+.btn{padding:10px 24px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:0.95rem;cursor:pointer;transition:background 0.2s}
+.btn:hover{background:#1d4ed8}
+.btn:disabled{opacity:0.5;cursor:not-allowed}
+.msg{padding:12px;border-radius:6px;margin-top:12px;font-size:0.9rem}
+.msg.ok{background:#064e3b;color:#6ee7b7;border:1px solid #065f46}
+.msg.err{background:#7f1d1d;color:#fca5a5;border:1px solid #991b1b}
+.feedbacks{margin-top:32px}
+.feedbacks h2{font-size:1.1rem;margin-bottom:12px;color:#ccc}
+.fb-card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:12px 16px;margin-bottom:10px}
+.fb-card .fb-meta{font-size:0.8rem;color:#888;margin-bottom:6px}
+.fb-card .fb-quote{font-style:italic;color:#999;border-left:2px solid #444;padding-left:8px;margin-bottom:6px;font-size:0.9rem}
+.fb-card .fb-content{color:#ddd;font-size:0.95rem;white-space:pre-wrap}
+.powered{text-align:center;margin-top:24px;font-size:0.75rem;color:#555}
+.powered a{color:#666;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>${pageTitle}</h1>
+<p class="subtitle"><a href="${escHtml(share.source_url)}" target="_blank" rel="noopener">${escHtml(share.source_url)}</a></p>
+
+<form id="fbForm">
+  <div class="form-group" id="nameGroup">
+    <label for="guestName">Your name${share.guest_name_required ? ' *' : ' (optional)'}</label>
+    <input type="text" id="guestName" maxlength="100" placeholder="Name">
+  </div>
+  <div class="form-group">
+    <label for="guestContent">Your feedback *</label>
+    <textarea id="guestContent" maxlength="5000" placeholder="Share your thoughts..." required></textarea>
+  </div>
+  <button type="submit" class="btn" id="submitBtn">Submit Feedback</button>
+  <div id="msgBox" style="display:none"></div>
+</form>
+
+<div class="feedbacks" id="feedbackList"></div>
+<p class="powered">Powered by <a href="https://labs.coco.xyz/clawmark/" target="_blank">ClawMark</a></p>
+</div>
+
+<script>
+(function(){
+  const TOKEN = ${JSON.stringify(share.share_token)};
+  const NAME_REQ = ${nameRequired};
+  const API = '/api/v2/shares/' + TOKEN;
+
+  const form = document.getElementById('fbForm');
+  const nameInput = document.getElementById('guestName');
+  const contentInput = document.getElementById('guestContent');
+  const submitBtn = document.getElementById('submitBtn');
+  const msgBox = document.getElementById('msgBox');
+  const feedbackList = document.getElementById('feedbackList');
+
+  function escH(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+  function showMsg(text, ok){
+    msgBox.textContent = text;
+    msgBox.className = 'msg ' + (ok ? 'ok' : 'err');
+    msgBox.style.display = 'block';
+  }
+
+  function loadFeedbacks(){
+    fetch(API + '/info').then(r=>r.json()).then(data=>{
+      if(!data.feedbacks || data.feedbacks.length === 0){
+        feedbackList.innerHTML = '';
+        return;
+      }
+      let html = '<h2>Feedback (' + data.feedbacks.length + ')</h2>';
+      data.feedbacks.forEach(fb => {
+        const name = escH((fb.created_by||'').replace(/^guest:/,'') || 'anonymous');
+        const date = new Date(fb.created_at).toLocaleString();
+        html += '<div class="fb-card">';
+        html += '<div class="fb-meta">' + name + ' &middot; ' + date + '</div>';
+        if(fb.quote) html += '<div class="fb-quote">' + escH(fb.quote) + '</div>';
+        html += '<div class="fb-content">' + escH(fb.content || '') + '</div>';
+        html += '</div>';
+      });
+      feedbackList.innerHTML = html;
+    }).catch(()=>{});
+  }
+
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    const name = nameInput.value.trim();
+    const content = contentInput.value.trim();
+    if(!content){ showMsg('Please enter your feedback.', false); return; }
+    if(NAME_REQ && !name){ showMsg('Please enter your name.', false); return; }
+
+    submitBtn.disabled = true;
+    msgBox.style.display = 'none';
+
+    fetch(API + '/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name||undefined, content: content }),
+    }).then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+      .then(({ ok, data }) => {
+        if(ok){
+          showMsg('Thank you for your feedback!', true);
+          contentInput.value = '';
+          loadFeedbacks();
+        } else {
+          showMsg(data.error || 'Failed to submit feedback.', false);
+        }
+      })
+      .catch(() => showMsg('Network error, please try again.', false))
+      .finally(() => { submitBtn.disabled = false; });
+  });
+
+  loadFeedbacks();
+})();
+</script>
+</body>
+</html>`);
+});
 
 app.get('/health', (req, res) => {
     let dbOk = true;

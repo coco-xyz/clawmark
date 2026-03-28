@@ -629,6 +629,24 @@ function initDb(dataDir) {
         CREATE INDEX IF NOT EXISTS idx_bindings_token ON bindings(token_hash);
     `);
 
+    // ----------------------------------------- schema: guest_shares (#102 Guest Feedback)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS guest_shares (
+            id              TEXT PRIMARY KEY,
+            share_token     TEXT UNIQUE NOT NULL,
+            owner_user_id   TEXT NOT NULL,
+            app_id          TEXT NOT NULL,
+            source_url      TEXT NOT NULL,
+            title           TEXT,
+            guest_name_required INTEGER DEFAULT 0,
+            max_feedbacks   INTEGER DEFAULT 100,
+            expires_at      TEXT,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_guest_shares_token ON guest_shares(share_token);
+        CREATE INDEX IF NOT EXISTS idx_guest_shares_owner ON guest_shares(owner_user_id);
+    `);
+
     // ---------------------------------------------------- prepared statements
     const stmts = {
         insertItem: db.prepare(`
@@ -1029,7 +1047,7 @@ function initDb(dataDir) {
 
     function createItem({ app_id = 'default', doc, type = 'discuss', title, quote,
                           quote_position, priority = 'normal', created_by, version, message,
-                          source_url, source_title, tags, screenshots }) {
+                          source_url, source_title, tags, screenshots, metadata }) {
         const now = new Date().toISOString();
         const itemId = genId(type === 'issue' ? 'issue' : 'disc');
 
@@ -1044,7 +1062,7 @@ function initDb(dataDir) {
             created_at: now,
             updated_at: now,
             version: version || 'latest',
-            metadata: '{}',
+            metadata: metadata || '{}',
             source_url: source_url || null,
             source_title: source_title || null,
             tags: JSON.stringify(tags || []),
@@ -2884,6 +2902,36 @@ function initDb(dataDir) {
     }
 
 
+    // ------------------------------------------------- guest share methods (#102)
+
+    function createGuestShare({ share_token, owner_user_id, app_id, source_url, title, guest_name_required, max_feedbacks, expires_at }) {
+        const id = genId('gs');
+        const now = new Date().toISOString();
+        db.prepare(`
+            INSERT INTO guest_shares (id, share_token, owner_user_id, app_id, source_url, title, guest_name_required, max_feedbacks, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, share_token, owner_user_id, app_id, source_url, title || null, guest_name_required ? 1 : 0, max_feedbacks || 100, expires_at || null, now);
+        return { id, share_token, owner_user_id, app_id, source_url, title, guest_name_required, max_feedbacks, expires_at, created_at: now };
+    }
+
+    function getGuestShareByToken(token) {
+        return db.prepare('SELECT * FROM guest_shares WHERE share_token = ?').get(token) || null;
+    }
+
+    function listGuestSharesByUser(owner_user_id) {
+        return db.prepare('SELECT * FROM guest_shares WHERE owner_user_id = ? ORDER BY created_at DESC').all(owner_user_id);
+    }
+
+    function deleteGuestShare(id, owner_user_id) {
+        const result = db.prepare('DELETE FROM guest_shares WHERE id = ? AND owner_user_id = ?').run(id, owner_user_id);
+        return { success: result.changes > 0 };
+    }
+
+    function countGuestFeedbackByShare(share_token) {
+        const row = db.prepare(`SELECT COUNT(*) AS cnt FROM items WHERE created_by LIKE 'guest:%' AND metadata LIKE ?`).get(`%"share_token":"${share_token}"%`);
+        return row ? row.cnt : 0;
+    }
+
     // ------------------------------------------------- webhook methods (#88)
 
     function createWebhook({ app_id, agent_id, url, secret, event_filters, template, allow_http }) {
@@ -3151,6 +3199,12 @@ function initDb(dataDir) {
         updateBindingStatus,
         updateBindingHeartbeat,
         setBindingConnected,
+        // Guest Shares (#102)
+        createGuestShare,
+        getGuestShareByToken,
+        listGuestSharesByUser,
+        deleteGuestShare,
+        countGuestFeedbackByShare,
         // Webhooks (#88)
         createWebhook,
         getWebhook,
