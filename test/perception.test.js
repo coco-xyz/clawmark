@@ -259,6 +259,55 @@ describe('DB — perception events', () => {
         assert.equal(eventsA.length, 1);
         assert.equal(eventsA[0].message, 'A');
     });
+
+    // #118: instance_id support
+    it('should store and return instance_id on perception events', () => {
+        const result = dbApi.createPerceptionEvent({
+            app_id: 'test-app',
+            instance_id: 'inst-aaaa-bbbb',
+            type: 'js-error',
+            message: 'Instance error',
+            fingerprint: 'fp-inst',
+            severity: 'error',
+        });
+        assert.ok(result.id);
+        assert.equal(result.instance_id, 'inst-aaaa-bbbb');
+
+        const events = dbApi.getPerceptionEvents({ app_id: 'test-app' });
+        assert.equal(events.length, 1);
+        assert.equal(events[0].instance_id, 'inst-aaaa-bbbb');
+    });
+
+    it('should default instance_id to null when not provided', () => {
+        dbApi.createPerceptionEvent({
+            app_id: 'test-app',
+            type: 'js-error',
+            message: 'No instance',
+            fingerprint: 'fp-noinst',
+            severity: 'error',
+        });
+
+        const events = dbApi.getPerceptionEvents({ app_id: 'test-app' });
+        assert.equal(events.length, 1);
+        assert.equal(events[0].instance_id, null);
+    });
+
+    it('should batch create events with instance_id', () => {
+        const events = [
+            { app_id: 'test-app', instance_id: 'inst-1', type: 'js-error', message: 'E1', fingerprint: 'fp1', severity: 'error' },
+            { app_id: 'test-app', instance_id: 'inst-2', type: 'js-error', message: 'E2', fingerprint: 'fp2', severity: 'error' },
+        ];
+        const results = dbApi.createPerceptionEvents(events);
+        assert.equal(results.length, 2);
+        assert.equal(results[0].instance_id, 'inst-1');
+        assert.equal(results[1].instance_id, 'inst-2');
+
+        const all = dbApi.getPerceptionEvents({ app_id: 'test-app' });
+        assert.equal(all.length, 2);
+        const instances = new Set(all.map(e => e.instance_id));
+        assert.ok(instances.has('inst-1'));
+        assert.ok(instances.has('inst-2'));
+    });
 });
 
 describe('DB — perception issues', () => {

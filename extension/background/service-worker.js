@@ -30,6 +30,31 @@ const DEFAULT_SERVER = ClawMarkConfig.DEFAULT_SERVER;
 const GOOGLE_CLIENT_ID = ClawMarkConfig.GOOGLE_CLIENT_ID
     || 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
 
+// ------------------------------------------------------------------ instance ID (#118)
+// Each Chrome Profile gets a unique instance_id, stored in chrome.storage.local
+// (NOT sync) so different profiles on the same account get distinct IDs.
+
+let _instanceId = null;
+
+async function getInstanceId() {
+    if (_instanceId) return _instanceId;
+    const result = await chrome.storage.local.get('instance_id');
+    if (result.instance_id) {
+        _instanceId = result.instance_id;
+        return _instanceId;
+    }
+    // Generate UUID v4
+    _instanceId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
+    await chrome.storage.local.set({ instance_id: _instanceId });
+    return _instanceId;
+}
+
+// Initialize on load
+getInstanceId();
+
 async function getConfig() {
     const result = await chrome.storage.sync.get({
         serverUrl: DEFAULT_SERVER,
@@ -512,12 +537,16 @@ async function handleExternalMessage(message, sender) {
             await chrome.storage.sync.set(updates);
             return { success: true };
         }
+        case 'GET_INSTANCE_ID':
+            return { instance_id: await getInstanceId() };
+
         case 'PING':
             return {
                 pong: true,
                 version: chrome.runtime.getManifest().version,
                 commit: ClawMarkConfig.GIT_COMMIT || '',
                 buildTime: ClawMarkConfig.BUILD_TIME || '',
+                instance_id: await getInstanceId(),
             };
         default:
             return { error: `Unknown external message: ${message.type}` };
@@ -781,6 +810,10 @@ async function handleMessage(message, sender) {
                 return { error: true, items: [] };
             }
         }
+
+        // ── Instance ID (#118) ─────────────────────────────────────────
+        case 'GET_INSTANCE_ID':
+            return { instance_id: await getInstanceId() };
 
         case 'CHECK_VERSION':
             return checkForUpdate();

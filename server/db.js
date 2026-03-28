@@ -382,6 +382,12 @@ function initDb(dataDir) {
     }
     db.exec(`CREATE INDEX IF NOT EXISTS idx_perception_agent ON perception_events(app_id, agent_id)`);
 
+    // ----------------------------------------- migration: perception_events.instance_id (#118 multi-instance)
+    if (!peCols.includes('instance_id')) {
+        db.exec(`ALTER TABLE perception_events ADD COLUMN instance_id TEXT`);
+        console.log('[db] migrated: added column perception_events.instance_id');
+    }
+
     // ----------------------------------------- schema: perception_issues (#69 dedup tracking)
     db.exec(`
         CREATE TABLE IF NOT EXISTS perception_issues (
@@ -729,9 +735,9 @@ function initDb(dataDir) {
     const perceptionStmts = {
         insertEvent: db.prepare(`
             INSERT INTO perception_events
-                (id, app_id, agent_id, type, message, stack, source, line, severity, url, fingerprint, context, created_at)
+                (id, app_id, agent_id, instance_id, type, message, stack, source, line, severity, url, fingerprint, context, created_at)
             VALUES
-                (@id, @app_id, @agent_id, @type, @message, @stack, @source, @line, @severity, @url, @fingerprint, @context, @created_at)
+                (@id, @app_id, @agent_id, @instance_id, @type, @message, @stack, @source, @line, @severity, @url, @fingerprint, @context, @created_at)
         `),
         getEventsByFingerprint: db.prepare(`
             SELECT * FROM perception_events
@@ -2054,16 +2060,17 @@ function initDb(dataDir) {
 
     // ------------------------------------------------- perception methods (#69)
 
-    function createPerceptionEvent({ app_id, agent_id, type, message, stack, source, line, severity, url, fingerprint, context }) {
+    function createPerceptionEvent({ app_id, agent_id, instance_id, type, message, stack, source, line, severity, url, fingerprint, context }) {
         const id = genId('pe');
         const now = new Date().toISOString();
         perceptionStmts.insertEvent.run({
-            id, app_id, agent_id: agent_id || null, type, message: message || '',
+            id, app_id, agent_id: agent_id || null, instance_id: instance_id || null,
+            type, message: message || '',
             stack: stack || null, source: source || null, line: line || null,
             severity: severity || 'error', url: url || null,
             fingerprint, context: JSON.stringify(context || {}), created_at: now,
         });
-        return { id, created_at: now };
+        return { id, instance_id: instance_id || null, created_at: now };
     }
 
     function createPerceptionEvents(events) {
