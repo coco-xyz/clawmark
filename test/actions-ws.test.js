@@ -87,9 +87,10 @@ async function teardown() {
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
-function connect(key) {
+function connect(key, opts = {}) {
+    const query = opts.instance_id ? `?instance_id=${opts.instance_id}` : '';
     return new Promise((resolve, reject) => {
-        const ws = new WebSocket(`ws://localhost:${port}/ws/agent-channel/actions`, {
+        const ws = new WebSocket(`ws://localhost:${port}/ws/agent-channel/actions${query}`, {
             headers: { 'x-agent-key': key },
         });
         // Buffer messages from the start so we don't miss early ones
@@ -485,5 +486,149 @@ describe('Action WS — cross-WS result callback (perception bridge)', () => {
         assert.equal(lastOnResult.data.error, 'Action timed out');
 
         agentWs.close();
+    });
+});
+
+// ================================================================= #119 multi-instance routing
+
+describe('Action WS — multi-instance routing (#119)', () => {
+    beforeEach(async () => { setup(); await startServer(); });
+    afterEach(teardown);
+
+    it('should dispatch to targeted instance when target_instance specified', async () => {
+        // Two extensions for same app, different instances
+        const ext1 = await connect(EXT_KEY, { instance_id: 'inst-aaa' });
+        await waitMsg(ext1, m => m.type === 'connected');
+        const ext2 = await connect(EXT_KEY, { instance_id: 'inst-bbb' });
+        await waitMsg(ext2, m => m.type === 'connected');
+
+        const agentWs = await connect(AGENT_KEY);
+        await waitMsg(agentWs, m => m.type === 'connected');
+
+        // Send action targeting inst-bbb
+        send(agentWs, { type: 'action', action_type: 'click', payload: { selector: '#btn' }, target_instance: 'inst-bbb' });
+        await waitMsg(agentWs, m => m.type === 'action_queued');
+
+        // ext2 (inst-bbb) should receive the action
+        const extMsg = await waitMsg(ext2, m => m.type === 'action');
+        assert.equal(extMsg.action_type, 'click');
+
+        // ext1 (inst-aaa) should NOT receive it — verify with a short timeout
+        await assert.rejects(
+            () => waitMsg(ext1, m => m.type === 'action', 300),
+            /timeout/
+        );
+
+        agentWs.close();
+        ext1.close();
+        ext2.close();
+    });
+
+    it('should fallback to most recently active instance when no target specified', async () => {
+        const ext1 = await connect(EXT_KEY, { instance_id: 'inst-old' });
+        await waitMsg(ext1, m => m.type === 'connected');
+
+        // Small delay so ext2 connects later (more recent)
+        await new Promise(r => setTimeout(r, 50));
+
+        const ext2 = await connect(EXT_KEY, { instance_id: 'inst-new' });
+        await waitMsg(ext2, m => m.type === 'connected');
+
+        const agentWs = await connect(AGENT_KEY);
+        await waitMsg(agentWs, m => m.type === 'connected');
+
+        // No target_instance — should go to most recently active (ext2)
+        send(agentWs, { type: 'action', action_type: 'screenshot', payload: {} });
+        await waitMsg(agentWs, m => m.type === 'action_queued');
+
+        const extMsg = await waitMsg(ext2, m => m.type === 'action');
+        assert.equal(extMsg.action_type, 'screenshot');
+
+        agentWs.close();
+        ext1.close();
+        ext2.close();
+    });
+
+    it('should include instance_id in result delivery', async () => {
+        const ext = await connect(EXT_KEY, { instance_id: 'inst-xyz' });
+        await waitMsg(ext, m => m.type === 'connected');
+
+        const agentWs = await connect(AGENT_KEY);
+        await waitMsg(agentWs, m => m.type === 'connected');
+
+        send(agentWs, { type: 'action', action_type: 'screenshot', payload: {} });
+        const queued = await waitMsg(agentWs, m => m.type === 'action_queued');
+        await waitMsg(ext, m => m.type === 'action');
+
+        send(ext, { type: 'result', action_id: queued.action_id, result: { data: 'ok' } });
+
+        const result = await waitMsg(agentWs, m => m.type === 'result');
+        assert.equal(result.instance_id, 'inst-xyz');
+        assert.equal(result.status, 'completed');
+
+        agentWs.close();
+        ext.close();
+    });
+
+    it('should bind session to instance for sticky routing', async () => {
+        const ext1 = await connect(EXT_KEY, { instance_id: 'inst-sticky-a' });
+        await waitMsg(ext1, m => m.type === 'connected');
+        const ext2 = await connect(EXT_KEY, { instance_id: 'inst-sticky-b' });
+        await waitMsg(ext2, m => m.type === 'connected');
+
+        const agentWs = await connect(AGENT_KEY);
+        await waitMsg(agentWs, m => m.type === 'connected');
+
+        // First action targets inst-sticky-a with session_id
+        send(agentWs, { type: 'action', action_type: 'click', payload: {}, session_id: 'sess-1', target_instance: 'inst-sticky-a' });
+        const q1 = await waitMsg(agentWs, m => m.type === 'action_queued');
+        const a1 = await waitMsg(ext1, m => m.type === 'action');
+
+        // Complete the action so session→instance binding is recorded
+        send(ext1, { type: 'result', action_id: q1.action_id, result: {} });
+        await waitMsg(agentWs, m => m.type === 'result');
+
+        // Second action same session, no target — should stick to inst-sticky-a
+        send(agentWs, { type: 'action', action_type: 'screenshot', payload: {}, session_id: 'sess-1' });
+        await waitMsg(agentWs, m => m.type === 'action_queued');
+
+        const a2 = await waitMsg(ext1, m => m.type === 'action');
+        assert.equal(a2.action_type, 'screenshot');
+
+        // ext2 should NOT receive it
+        await assert.rejects(
+            () => waitMsg(ext2, m => m.type === 'action', 300),
+            /timeout/
+        );
+
+        agentWs.close();
+        ext1.close();
+        ext2.close();
+    });
+
+    it('should include instance_id in connected message', async () => {
+        const ext = await connect(EXT_KEY, { instance_id: 'inst-welcome' });
+        const msg = await waitMsg(ext, m => m.type === 'connected');
+        assert.equal(msg.instance_id, 'inst-welcome');
+        ext.close();
+    });
+
+    it('should work with legacy extensions (no instance_id)', async () => {
+        // Extension connects without instance_id — backward compatible
+        const ext = await connect(EXT_KEY);
+        const msg = await waitMsg(ext, m => m.type === 'connected');
+        assert.equal(msg.instance_id, null);
+
+        const agentWs = await connect(AGENT_KEY);
+        await waitMsg(agentWs, m => m.type === 'connected');
+
+        send(agentWs, { type: 'action', action_type: 'click', payload: { selector: '#x' } });
+        await waitMsg(agentWs, m => m.type === 'action_queued');
+
+        const extMsg = await waitMsg(ext, m => m.type === 'action');
+        assert.equal(extMsg.action_type, 'click');
+
+        agentWs.close();
+        ext.close();
     });
 });
