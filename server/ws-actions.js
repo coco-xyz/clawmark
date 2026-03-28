@@ -4,16 +4,16 @@ const { WebSocketServer } = require('ws');
 const { hashKey } = require('./agent-auth');
 
 /**
- * Action WebSocket handler (#78)
+ * Action WebSocket handler (#78, #119 multi-instance routing)
  *
  * Manages bidirectional WebSocket connections between agents and extensions
  * for real-time action dispatch and result delivery.
  *
  * Protocol messages:
- *   Agent → Server:   { type: 'action', action_type, payload, session_id?, timeout_ms? }
+ *   Agent → Server:   { type: 'action', action_type, payload, session_id?, target_instance?, timeout_ms? }
  *   Server → Ext:     { type: 'action', action_id, action_type, payload }
- *   Ext → Server:     { type: 'result', action_id, result?, error? }
- *   Server → Agent:   { type: 'result', action_id, status, result?, error? }
+ *   Ext → Server:     { type: 'result', action_id, result?, error?, instance_id? }
+ *   Server → Agent:   { type: 'result', action_id, status, result?, error?, instance_id? }
  *   Both:             { type: 'pong' } (response to ping)
  */
 
@@ -27,10 +27,28 @@ function initActionWs(server, db, opts = {}) {
     // Connection registries: app_id → Set<ws>
     const agentConnections = new Map();    // agent sockets by app_id
     const extensionConnections = new Map(); // extension sockets by app_id
+    // #119: instance_id → ws (for targeted action dispatch)
+    const instanceConnections = new Map();
+    // #119: session_id → instance_id (sticky routing within a session)
+    const sessionInstanceMap = new Map();
 
     // ------------------------------------------------- upgrade handler
     server.on('upgrade', (req, socket, head) => {
-        if (req.url !== '/ws/agent-channel/actions') return;
+        // #119: support both exact path and path with query params
+        let pathname, searchParams;
+        try {
+            const url = new URL(req.url, 'http://localhost');
+            pathname = url.pathname;
+            searchParams = url.searchParams;
+        } catch {
+            if (req.url === '/ws/agent-channel/actions') {
+                pathname = req.url;
+                searchParams = new URLSearchParams();
+            } else {
+                return;
+            }
+        }
+        if (pathname !== '/ws/agent-channel/actions') return;
 
         const key = req.headers['x-agent-key'];
         if (!key) {
@@ -59,7 +77,9 @@ function initActionWs(server, db, opts = {}) {
                 socket.destroy();
                 return;
             }
-            authContext = { role: 'extension', app_id: apiKey.app_id };
+            // #119: extension may provide instance_id via query param (set by #118)
+            const instanceId = searchParams.get('instance_id') || null;
+            authContext = { role: 'extension', app_id: apiKey.app_id, instance_id: instanceId };
         } else {
             socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
             socket.destroy();
@@ -76,14 +96,20 @@ function initActionWs(server, db, opts = {}) {
     wss.on('connection', (ws) => {
         const ctx = ws.authContext;
         ws.isAlive = true;
+        ws.lastActivity = Date.now(); // #119: track activity for fallback routing
 
         // Register connection
         const registry = ctx.role === 'agent' ? agentConnections : extensionConnections;
         if (!registry.has(ctx.app_id)) registry.set(ctx.app_id, new Set());
         registry.get(ctx.app_id).add(ws);
 
+        // #119: register instance connection if instance_id is present
+        if (ctx.role === 'extension' && ctx.instance_id) {
+            instanceConnections.set(ctx.instance_id, ws);
+        }
+
         // Send welcome
-        wsSend(ws, { type: 'connected', role: ctx.role, app_id: ctx.app_id });
+        wsSend(ws, { type: 'connected', role: ctx.role, app_id: ctx.app_id, instance_id: ctx.instance_id || null });
 
         // If extension connects, dispatch any queued actions
         if (ctx.role === 'extension') {
@@ -95,6 +121,8 @@ function initActionWs(server, db, opts = {}) {
         ws.on('message', (raw) => {
             let msg;
             try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+            ws.lastActivity = Date.now(); // #119: update activity on every message
 
             if (msg.type === 'pong') { ws.isAlive = true; return; }
 
@@ -110,6 +138,12 @@ function initActionWs(server, db, opts = {}) {
             if (set) {
                 set.delete(ws);
                 if (set.size === 0) registry.delete(ctx.app_id);
+            }
+            // #119: clean up instance connection
+            if (ctx.role === 'extension' && ctx.instance_id) {
+                if (instanceConnections.get(ctx.instance_id) === ws) {
+                    instanceConnections.delete(ctx.instance_id);
+                }
             }
         });
     });
@@ -127,10 +161,16 @@ function initActionWs(server, db, opts = {}) {
 
     // ------------------------------------------------- agent action handler
     function handleAgentAction(ws, ctx, msg) {
-        const { action_type, payload, session_id, timeout_ms } = msg;
+        const { action_type, payload, session_id, target_instance, timeout_ms } = msg;
 
         if (!action_type || !VALID_ACTION_TYPES.has(action_type)) {
             return wsSend(ws, { type: 'error', error: `Invalid action_type. Allowed: ${[...VALID_ACTION_TYPES].join(', ')}` });
+        }
+
+        // #119: resolve target instance — explicit > session sticky > fallback
+        let resolvedInstance = target_instance || null;
+        if (!resolvedInstance && session_id) {
+            resolvedInstance = sessionInstanceMap.get(session_id) || null;
         }
 
         try {
@@ -146,7 +186,7 @@ function initActionWs(server, db, opts = {}) {
             wsSend(ws, { type: 'action_queued', action_id: action.id, status: 'queued' });
 
             // Try to dispatch immediately to connected extension
-            dispatchAction(action.id, ctx.app_id);
+            dispatchAction(action.id, ctx.app_id, resolvedInstance);
         } catch (err) {
             if (err.message === 'QUEUE_FULL') {
                 return wsSend(ws, { type: 'error', error: 'Action queue full (max 100 pending)' });
@@ -171,6 +211,14 @@ function initActionWs(server, db, opts = {}) {
         } catch { return; } // Invalid transition
         if (!updated) return;
 
+        // #119: include instance_id in result (from extension context or message)
+        const instanceId = msg.instance_id || ctx.instance_id || null;
+
+        // #119: bind session to instance for sticky routing
+        if (action.session_id && instanceId) {
+            sessionInstanceMap.set(action.session_id, instanceId);
+        }
+
         // Push result to the agent on action WS
         const resultData = {
             action_id,
@@ -178,6 +226,7 @@ function initActionWs(server, db, opts = {}) {
             status,
             result: result || null,
             error: error || null,
+            instance_id: instanceId,
         };
 
         const agentSockets = agentConnections.get(ctx.app_id);
@@ -194,17 +243,46 @@ function initActionWs(server, db, opts = {}) {
     }
 
     // ------------------------------------------------- dispatch helpers
-    function dispatchAction(actionId, appId) {
-        const extSockets = extensionConnections.get(appId);
-        if (!extSockets || extSockets.size === 0) return false;
 
+    /**
+     * #119: Find the best extension socket for dispatch.
+     * Priority: targeted instance > session-sticky instance > most recently active.
+     */
+    function findExtensionSocket(appId, targetInstance) {
+        // 1. Targeted instance — exact match
+        if (targetInstance) {
+            const targeted = instanceConnections.get(targetInstance);
+            if (targeted && targeted.readyState === 1 && targeted.authContext.app_id === appId) {
+                return targeted;
+            }
+            // Target specified but not connected — return null (don't fallback silently)
+            return null;
+        }
+
+        // 2. Fallback — most recently active extension for this app
+        const extSockets = extensionConnections.get(appId);
+        if (!extSockets || extSockets.size === 0) return null;
+
+        let best = null;
+        let bestActivity = 0;
+        for (const ws of extSockets) {
+            if (ws.readyState !== 1) continue; // WebSocket.OPEN
+            if ((ws.lastActivity || 0) > bestActivity) {
+                bestActivity = ws.lastActivity || 0;
+                best = ws;
+            }
+        }
+        return best;
+    }
+
+    function dispatchAction(actionId, appId, targetInstance) {
         const action = db.getAction(actionId);
         if (!action || action.status !== 'queued') return false;
 
-        // B2 fix: send WS first, then update DB — if socket is dead, action stays queued
-        const ext = extSockets.values().next().value;
-        if (ext.readyState !== 1) return false; // WebSocket.OPEN
+        const ext = findExtensionSocket(appId, targetInstance);
+        if (!ext) return false;
 
+        // B2 fix: send WS first, then update DB — if socket is dead, action stays queued
         try {
             ext.send(JSON.stringify({
                 type: 'action',
@@ -273,7 +351,11 @@ function initActionWs(server, db, opts = {}) {
         let agents = 0, extensions = 0;
         for (const set of agentConnections.values()) agents += set.size;
         for (const set of extensionConnections.values()) extensions += set.size;
-        return { agents, extensions, apps: new Set([...agentConnections.keys(), ...extensionConnections.keys()]).size };
+        return {
+            agents, extensions,
+            instances: instanceConnections.size,
+            apps: new Set([...agentConnections.keys(), ...extensionConnections.keys()]).size,
+        };
     }
 
     return { wss, checkTimeouts, dispatchAction, dispatchQueuedActions, getStats };
