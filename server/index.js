@@ -1027,6 +1027,65 @@ app.put('/api/v2/user/settings', apiWriteLimiter, v2Auth, (req, res) => {
     res.json({ settings });
 });
 
+// -- GET /api/v2/instances — list browser instances (#120)
+app.get('/api/v2/instances', apiReadLimiter, v2Auth, (req, res) => {
+    if (!req.v2Auth?.userId) return res.status(401).json({ error: 'JWT auth required' });
+    const appId = req.v2Auth.app_id;
+    if (!appId) return res.json({ instances: [] });
+
+    // Get connected instances from WS runtime state
+    const actionWs = app.locals.actionWs;
+    const connected = actionWs ? actionWs.getInstanceList(appId) : [];
+
+    // Get saved labels from DB
+    const labels = itemsDb.getInstanceLabelsByApp(appId);
+    const labelMap = new Map(labels.map(l => [l.instance_id, l]));
+
+    // Merge: connected instances + any labeled instances that are offline
+    const seenIds = new Set();
+    const instances = [];
+
+    for (const inst of connected) {
+        seenIds.add(inst.instance_id);
+        const labelRow = labelMap.get(inst.instance_id);
+        instances.push({
+            instance_id: inst.instance_id,
+            label: labelRow?.label || '',
+            connected: true,
+            last_activity: inst.last_activity,
+        });
+    }
+
+    // Include offline instances that have labels (user named them before)
+    for (const labelRow of labels) {
+        if (!seenIds.has(labelRow.instance_id)) {
+            instances.push({
+                instance_id: labelRow.instance_id,
+                label: labelRow.label,
+                connected: false,
+                last_activity: null,
+            });
+        }
+    }
+
+    res.json({ instances });
+});
+
+// -- PUT /api/v2/instances/:id — update instance label (#120)
+app.put('/api/v2/instances/:id', apiWriteLimiter, v2Auth, (req, res) => {
+    if (!req.v2Auth?.userId) return res.status(401).json({ error: 'JWT auth required' });
+    const appId = req.v2Auth.app_id;
+    if (!appId) return res.status(400).json({ error: 'Could not resolve app' });
+
+    const instanceId = req.params.id;
+    const { label } = req.body;
+    if (typeof label !== 'string') return res.status(400).json({ error: 'label must be a string' });
+    if (label.length > 64) return res.status(400).json({ error: 'label must be 64 chars or fewer' });
+
+    const result = itemsDb.setInstanceLabel(instanceId, appId, label.trim());
+    res.json(result);
+});
+
 // -- POST /api/v2/items — create item with full V2 schema
 app.post('/api/v2/items', apiWriteLimiter, v2Auth, async (req, res) => {
     const { type, source_url, source_title, quote, quote_position,
@@ -3892,6 +3951,7 @@ const server = app.listen(PORT, () => {
         onResult: (agentId, appId, data) => perceptionWs.pushActionResult(agentId, appId, data),
     });
     actionWsRef = actionWs;
+    app.locals.actionWs = actionWs;
 
     // CDP Channel WebSocket (#83)
     const cdpWs = initCdpWs(server, itemsDb);

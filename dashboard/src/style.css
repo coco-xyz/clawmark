@@ -1226,9 +1226,9 @@ label {
     }
 }
 
-/* ---- Bound Agents & Site Permissions (#108 Agent Binding) ---- */
+/* ---- Bound Agents, Instances & Site Permissions (#108, #120) ---- */
 
-.bound-agents-list { margin-bottom: 4px; }
+.bound-agents-list, .instances-list { margin-bottom: 4px; }
 
 .bound-agent-item {
     display: flex;
@@ -1241,7 +1241,18 @@ label {
     margin-bottom: 8px;
 }
 
-.bound-agent-item:last-child { margin-bottom: 0; }
+.bound-agent-item:last-child, .instance-item:last-child { margin-bottom: 0; }
+
+.instance-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+}
 
 .ba-status-dot {
     width: 8px;

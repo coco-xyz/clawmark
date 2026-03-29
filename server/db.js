@@ -456,6 +456,18 @@ function initDb(dataDir) {
         console.log('[db] migrated: added column sessions.instance_id');
     }
 
+    // ----------------------------------------- migration: instance_labels (#120 Dashboard UI)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS instance_labels (
+            instance_id     TEXT NOT NULL,
+            app_id          TEXT NOT NULL,
+            label           TEXT NOT NULL DEFAULT '',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            PRIMARY KEY (instance_id, app_id)
+        )
+    `);
+
     db.exec(`
         CREATE TABLE IF NOT EXISTS session_events (
             id              TEXT PRIMARY KEY,
@@ -3055,6 +3067,38 @@ function initDb(dataDir) {
         return { deleted: result.changes };
     }
 
+    // ------------------------------------------------- Instance Labels (#120)
+
+    const instanceLabelStmts = {
+        get: db.prepare(`SELECT * FROM instance_labels WHERE instance_id = ? AND app_id = ?`),
+        listByApp: db.prepare(`SELECT * FROM instance_labels WHERE app_id = ? ORDER BY updated_at DESC`),
+        upsert: db.prepare(`
+            INSERT INTO instance_labels (instance_id, app_id, label, created_at, updated_at)
+            VALUES (@instance_id, @app_id, @label, @created_at, @updated_at)
+            ON CONFLICT(instance_id, app_id) DO UPDATE SET label = @label, updated_at = @updated_at
+        `),
+        delete: db.prepare(`DELETE FROM instance_labels WHERE instance_id = ? AND app_id = ?`),
+    };
+
+    function getInstanceLabel(instanceId, appId) {
+        return instanceLabelStmts.get.get(instanceId, appId);
+    }
+
+    function getInstanceLabelsByApp(appId) {
+        return instanceLabelStmts.listByApp.all(appId);
+    }
+
+    function setInstanceLabel(instanceId, appId, label) {
+        const now = new Date().toISOString();
+        instanceLabelStmts.upsert.run({ instance_id: instanceId, app_id: appId, label, created_at: now, updated_at: now });
+        return { instance_id: instanceId, label, updated_at: now };
+    }
+
+    function deleteInstanceLabel(instanceId, appId) {
+        const result = instanceLabelStmts.delete.run(instanceId, appId);
+        return { deleted: result.changes > 0 };
+    }
+
     return {
         db,
         genId,
@@ -3236,6 +3280,11 @@ function initDb(dataDir) {
         getWebhookDeliveries,
         getPendingWebhookRetries,
         cleanupOldWebhookDeliveries,
+        // Instance Labels (#120)
+        getInstanceLabel,
+        getInstanceLabelsByApp,
+        setInstanceLabel,
+        deleteInstanceLabel,
     };
 }
 
