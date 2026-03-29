@@ -22,6 +22,7 @@ import {
     getAgentActions,
     getQualityReport,
     createBindingToken, listBindings, suspendBinding, resumeBinding, revokeBinding,
+    getInstances, updateInstanceLabel,
 } from './api.js';
 
 import { startGoogleLogin, extractAuthCode, getRedirectUri, clearUrlParams } from './auth.js';
@@ -105,6 +106,7 @@ function showApp(user) {
     loadOverview();
     loadConnection();
     loadBoundAgents();
+    loadInstances();
     loadSitePermissions();
     loadPassiveMonitor();
     loadAuthsList();
@@ -1149,6 +1151,87 @@ document.getElementById('bound-agents-list').addEventListener('click', async (e)
     } catch (err) {
         showToast('Action failed: ' + err.message, 'error');
         btn.disabled = false;
+    }
+});
+
+// ------------------------------------------------------------------ Browser Instances (#120)
+
+let instances = [];
+
+async function loadInstances() {
+    try {
+        const data = await getInstances();
+        instances = Array.isArray(data?.instances) ? data.instances : [];
+    } catch {
+        instances = [];
+    }
+    renderInstances();
+}
+
+function renderInstances() {
+    const listEl = document.getElementById('instances-list');
+    const emptyEl = document.getElementById('instances-empty');
+
+    listEl.querySelectorAll('.instance-item').forEach(el => el.remove());
+
+    if (instances.length === 0) {
+        emptyEl.style.display = '';
+        return;
+    }
+    emptyEl.style.display = 'none';
+
+    // Sort: connected first, then by last_activity descending
+    const sorted = [...instances].sort((a, b) => {
+        if (a.connected !== b.connected) return a.connected ? -1 : 1;
+        return (b.last_activity || 0) - (a.last_activity || 0);
+    });
+
+    sorted.forEach(inst => {
+        const el = document.createElement('div');
+        el.className = 'instance-item';
+        const statusCls = inst.connected ? 'connected' : 'disconnected';
+        const statusLabel = inst.connected ? 'Connected' : 'Offline';
+        const displayLabel = inst.label || inst.instance_id.slice(0, 8) + '...';
+        const idPreview = inst.instance_id.slice(0, 12) + '...';
+
+        el.innerHTML = `
+            <span class="ba-status-dot ${statusCls}" title="${escHtml(statusLabel)}"></span>
+            <div class="ba-info">
+                <div class="ba-name instance-label-display" data-instance-id="${escHtml(inst.instance_id)}">${escHtml(displayLabel)}</div>
+                <div class="ba-meta">${escHtml(idPreview)} · ${escHtml(statusLabel)}</div>
+            </div>
+            <div class="ba-actions">
+                <button class="btn btn-secondary btn-small" data-inst-action="rename" data-instance-id="${escHtml(inst.instance_id)}" data-current-label="${escHtml(inst.label || '')}">Rename</button>
+            </div>
+        `;
+        listEl.appendChild(el);
+    });
+}
+
+// Instance list actions (delegated)
+document.getElementById('instances-list').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-inst-action]');
+    if (!btn) return;
+    const action = btn.dataset.instAction;
+    const instanceId = btn.dataset.instanceId;
+    if (!instanceId) return;
+
+    if (action === 'rename') {
+        const currentLabel = btn.dataset.currentLabel || '';
+        const newLabel = prompt('Instance label (e.g. "Work Chrome", "Personal"):', currentLabel);
+        if (newLabel === null) return; // cancelled
+
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        try {
+            await updateInstanceLabel(instanceId, newLabel.trim());
+            await loadInstances();
+            showToast(newLabel.trim() ? `Renamed to "${newLabel.trim()}"` : 'Label cleared');
+        } catch (err) {
+            showToast('Rename failed: ' + err.message, 'error');
+            btn.disabled = false;
+            btn.textContent = 'Rename';
+        }
     }
 });
 

@@ -211,6 +211,19 @@ export async function rotateAgentKey(id) {
     });
 }
 
+// ---- Instances (#120 Multi-instance Dashboard)
+
+export async function getInstances() {
+    return apiFetch('/api/v2/instances');
+}
+
+export async function updateInstanceLabel(instanceId, label) {
+    return apiFetch(`/api/v2/instances/${encodeURIComponent(instanceId)}`, {
+        method: 'PUT',
+        body: { label },
+    });
+}
+
 // ---- Bindings (#108 Agent Binding)
 
 export async function createBindingToken(data) {

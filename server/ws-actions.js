@@ -358,7 +358,22 @@ function initActionWs(server, db, opts = {}) {
         };
     }
 
-    return { wss, checkTimeouts, dispatchAction, dispatchQueuedActions, getStats };
+    // #120: list connected instances for a given app_id
+    function getInstanceList(appId) {
+        const result = [];
+        for (const [instanceId, ws] of instanceConnections) {
+            if (ws.readyState !== 1) continue; // WebSocket.OPEN
+            if (ws.authContext.app_id !== appId) continue;
+            result.push({
+                instance_id: instanceId,
+                connected: true,
+                last_activity: ws.lastActivity || null,
+            });
+        }
+        return result;
+    }
+
+    return { wss, checkTimeouts, dispatchAction, dispatchQueuedActions, getStats, getInstanceList };
 }
 
 module.exports = { initActionWs };
