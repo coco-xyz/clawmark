@@ -4,6 +4,18 @@
 
 ## [0.8.0] — 2026-03-06
 
+## [1.1.0] — 2026-03-29
+
+### 📋 文档
+
+- #114 complete Agent Channel API Reference
+- add PRD for multi-browser instance support
+- #95 Native SDK multi-platform research — tech spec
+
+
+---
+
+
 ## [1.0.2] — 2026-03-27
 
 ### ✨ 新增
