@@ -632,3 +632,52 @@ describe('Action WS — multi-instance routing (#119)', () => {
         ext.close();
     });
 });
+
+// ── broadcastPerception (#127) ──────────────────────────────────────────
+
+describe('broadcastPerception (#127)', () => {
+    beforeEach(async () => { setup(); await startServer(); });
+    afterEach(teardown);
+
+    it('should push perception events to connected agents', async () => {
+        const ws = await connect(AGENT_KEY);
+        const welcome = await waitMsg(ws, m => m.type === 'connected');
+        assert.equal(welcome.role, 'agent');
+        assert.ok(Array.isArray(welcome.scopes), 'welcome should include scopes');
+        assert.ok(welcome.scopes.includes('perception'));
+
+        const events = [
+            { type: 'error', message: 'Uncaught TypeError', severity: 'P1', fingerprint: 'fp1' },
+            { type: 'error', message: 'ReferenceError: x', severity: 'P2', fingerprint: 'fp2' },
+        ];
+        const pushed = actionWs.broadcastPerception(APP_ID, events);
+        assert.equal(pushed, 2);
+
+        const msg1 = await waitMsg(ws, m => m.type === 'perception');
+        assert.equal(msg1.payload.fingerprint, 'fp1');
+
+        const msg2 = await waitMsg(ws, m => m.type === 'perception' && m.payload.fingerprint === 'fp2');
+        assert.equal(msg2.payload.severity, 'P2');
+
+        ws.close();
+    });
+
+    it('should not push to agents of different app', async () => {
+        const ws = await connect(AGENT_KEY);
+        await waitMsg(ws, m => m.type === 'connected');
+
+        const pushed = actionWs.broadcastPerception(APP_ID_OTHER, [
+            { type: 'error', message: 'test', fingerprint: 'fp3' },
+        ]);
+        assert.equal(pushed, 0);
+
+        ws.close();
+    });
+
+    it('should return 0 when no agents connected', () => {
+        const pushed = actionWs.broadcastPerception(APP_ID, [
+            { type: 'error', message: 'test', fingerprint: 'fp4' },
+        ]);
+        assert.equal(pushed, 0);
+    });
+});

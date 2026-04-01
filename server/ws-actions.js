@@ -108,8 +108,12 @@ function initActionWs(server, db, opts = {}) {
             instanceConnections.set(ctx.instance_id, ws);
         }
 
-        // Send welcome
-        wsSend(ws, { type: 'connected', role: ctx.role, app_id: ctx.app_id, instance_id: ctx.instance_id || null });
+        // Send welcome (include scopes for agents)
+        const welcome = { type: 'connected', role: ctx.role, app_id: ctx.app_id, instance_id: ctx.instance_id || null };
+        if (ctx.role === 'agent') {
+            welcome.scopes = ['action', 'perception'];
+        }
+        wsSend(ws, welcome);
 
         // If extension connects, dispatch any queued actions
         if (ctx.role === 'extension') {
@@ -373,7 +377,25 @@ function initActionWs(server, db, opts = {}) {
         return result;
     }
 
-    return { wss, checkTimeouts, dispatchAction, dispatchQueuedActions, getStats, getInstanceList };
+    /**
+     * Broadcast perception events to all connected agents for an app.
+     * Agents on the action WS also receive perception events for real-time awareness.
+     */
+    function broadcastPerception(appId, events) {
+        const sockets = agentConnections.get(appId);
+        if (!sockets || sockets.size === 0) return 0;
+
+        let pushed = 0;
+        for (const ws of sockets) {
+            for (const event of events) {
+                wsSend(ws, { type: 'perception', payload: event });
+                pushed++;
+            }
+        }
+        return pushed;
+    }
+
+    return { wss, checkTimeouts, dispatchAction, dispatchQueuedActions, getStats, getInstanceList, broadcastPerception };
 }
 
 module.exports = { initActionWs };
