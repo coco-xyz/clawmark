@@ -2724,11 +2724,19 @@ app.post('/api/v2/agent-channel/perception', apiWriteLimiter, v2AuthOrAgent, (re
             });
         } catch { /* non-critical */ }
 
-        // Push to bound agents via WebSocket (#109)
+        // Push to bound agents via perception WS (#109)
         if (app.locals.perceptionWs) {
             setImmediate(() => {
                 try { app.locals.perceptionWs.pushPerceptionEvents(app_id, valid); }
                 catch (e) { console.debug('[ws-perception] push error:', e.message); }
+            });
+        }
+
+        // Push to agents on action WS (#127)
+        if (app.locals.actionWs) {
+            setImmediate(() => {
+                try { app.locals.actionWs.broadcastPerception(app_id, valid); }
+                catch (e) { console.debug('[ws-actions] perception broadcast error:', e.message); }
             });
         }
 
