@@ -495,32 +495,32 @@
             <div class="card">
                 <div class="card-title">Bound Agents</div>
                 <div class="card-desc">
-                    Connect your AI agents by entering their API key (<code>cmak_</code> prefix).
-                    Each agent can monitor errors, execute actions, and record sessions based on site permissions.
+                    Paste your API key (<code>cmak_</code>) from the Dashboard to connect.
+                    Register agents in the Dashboard first, then paste the key here.
                 </div>
 
                 <div class="agent-list" id="agent-list">
-                    <div class="agent-empty" id="agent-empty">No agents bound yet</div>
+                    <div class="agent-empty" id="agent-empty">No agents connected yet. Register one in the Dashboard, then paste the key here.</div>
                 </div>
 
-                <button class="btn primary" id="btn-add-agent">+ Add Agent</button>
+                <button class="btn primary" id="btn-add-agent">+ Connect Agent</button>
 
                 <div class="add-agent-form" id="add-agent-form">
-                    <div class="form-row">
-                        <label for="agent-name-input">Agent Name</label>
-                        <input type="text" id="agent-name-input" placeholder="e.g. QA Bot" maxlength="64">
-                    </div>
                     <div class="form-row">
                         <label for="agent-key-input">API Key</label>
                         <input type="password" id="agent-key-input" class="mono" placeholder="cmak_xxxxxxxxxxxx" autocomplete="off">
                     </div>
                     <div class="form-row">
-                        <label for="agent-server-input">Server URL (optional, uses default if empty)</label>
+                        <label for="agent-name-input">Display Name <span style="color:#666;font-weight:normal;">(optional, auto-detected from server)</span></label>
+                        <input type="text" id="agent-name-input" placeholder="Auto-detected from server" maxlength="64">
+                    </div>
+                    <div class="form-row">
+                        <label for="agent-server-input">Server URL <span style="color:#666;font-weight:normal;">(optional, uses default if empty)</span></label>
                         <input type="text" id="agent-server-input" placeholder="https://api.coco.xyz/clawmark">
                     </div>
                     <div class="form-actions">
                         <button class="btn" id="btn-cancel-agent">Cancel</button>
-                        <button class="btn primary" id="btn-save-agent">Test & Save</button>
+                        <button class="btn primary" id="btn-save-agent">Verify & Connect</button>
                     </div>
                     <div class="form-status" id="agent-form-status"></div>
                 </div>

@@ -21,6 +21,7 @@ import {
     getErrorTrends,
     getAgentActions,
     getQualityReport,
+    registerAgent, listAgents, deactivateAgent, rotateAgentKey,
     createBindingToken, listBindings, suspendBinding, resumeBinding, revokeBinding,
     getInstances, updateInstanceLabel,
 } from './api.js';
@@ -105,6 +106,7 @@ function showApp(user) {
 
     loadOverview();
     loadConnection();
+    loadRegisteredAgents();
     loadBoundAgents();
     loadInstances();
     loadSitePermissions();
@@ -925,6 +927,172 @@ document.getElementById('btn-save-passive').addEventListener('click', async () =
         showToast('Failed to save settings', 'error');
     }
     setTimeout(() => { statusEl.textContent = ''; }, 3000);
+});
+
+// ------------------------------------------------------------------ Registered Agents (#126 Unified Config)
+
+let registeredAgents = [];
+
+async function loadRegisteredAgents() {
+    try {
+        const data = await listAgents();
+        registeredAgents = Array.isArray(data?.agents) ? data.agents : [];
+    } catch {
+        registeredAgents = [];
+    }
+    renderRegisteredAgents();
+}
+
+function renderRegisteredAgents() {
+    const listEl = document.getElementById('registered-agents-list');
+    const emptyEl = document.getElementById('registered-agents-empty');
+
+    listEl.querySelectorAll('.bound-agent-item').forEach(el => el.remove());
+
+    if (registeredAgents.length === 0) {
+        emptyEl.style.display = '';
+        return;
+    }
+    emptyEl.style.display = 'none';
+
+    registeredAgents.forEach(agent => {
+        const el = document.createElement('div');
+        el.className = 'bound-agent-item';
+        const statusCls = agent.status === 'active' ? 'connected' : 'disconnected';
+        const statusLabel = agent.status === 'active' ? 'Active' : 'Inactive';
+        const lastSeen = agent.last_seen ? new Date(agent.last_seen).toLocaleString() : 'Never';
+
+        el.innerHTML = `
+            <span class="ba-status-dot ${statusCls}" title="${escHtml(statusLabel)}"></span>
+            <div class="ba-info">
+                <div class="ba-name">${escHtml(agent.name)}</div>
+                <div class="ba-meta">Key: ${escHtml(agent.key_prefix)} · Last seen: ${escHtml(lastSeen)}</div>
+            </div>
+            <div class="ba-actions">
+                <button class="btn btn-secondary btn-small" data-ra-action="rotate" data-ra-id="${escHtml(agent.id)}" title="Rotate API key">Rotate Key</button>
+                <button class="btn btn-danger btn-small" data-ra-action="remove" data-ra-id="${escHtml(agent.id)}">Remove</button>
+            </div>
+        `;
+        listEl.appendChild(el);
+    });
+}
+
+// Register Agent button
+document.getElementById('btn-register-agent').addEventListener('click', () => {
+    const form = document.getElementById('register-agent-form');
+    form.style.display = 'block';
+    document.getElementById('ra-name').value = '';
+    document.getElementById('ra-status').textContent = '';
+    document.getElementById('ra-key-result').style.display = 'none';
+    document.getElementById('btn-save-register-agent').style.display = '';
+    document.getElementById('ra-name').focus();
+});
+
+document.getElementById('btn-cancel-register-agent').addEventListener('click', () => {
+    document.getElementById('register-agent-form').style.display = 'none';
+    document.getElementById('ra-key-result').style.display = 'none';
+    document.getElementById('btn-save-register-agent').style.display = '';
+});
+
+// Register Agent submit
+document.getElementById('btn-save-register-agent').addEventListener('click', async () => {
+    const name = document.getElementById('ra-name').value.trim();
+    const statusEl = document.getElementById('ra-status');
+
+    if (!name) {
+        statusEl.textContent = 'Please enter an agent name';
+        statusEl.style.color = 'var(--danger)';
+        return;
+    }
+
+    statusEl.textContent = 'Registering...';
+    statusEl.style.color = 'var(--text-muted)';
+    document.getElementById('btn-save-register-agent').disabled = true;
+
+    try {
+        const result = await registerAgent({ name });
+
+        // Show API key result
+        const keyResultEl = document.getElementById('ra-key-result');
+        document.getElementById('ra-key-value').textContent = result.api_key;
+        keyResultEl.style.display = 'block';
+
+        document.getElementById('btn-save-register-agent').style.display = 'none';
+        statusEl.textContent = '';
+
+        await loadRegisteredAgents();
+        showToast('Agent registered — copy the API key now, it won\'t be shown again');
+    } catch (err) {
+        statusEl.textContent = 'Failed: ' + (err.message || 'Unknown error');
+        statusEl.style.color = 'var(--danger)';
+    } finally {
+        document.getElementById('btn-save-register-agent').disabled = false;
+    }
+});
+
+// Copy agent key button
+document.getElementById('btn-copy-agent-key')?.addEventListener('click', () => {
+    const key = document.getElementById('ra-key-value').textContent;
+    navigator.clipboard.writeText(key).then(() => {
+        showToast('API key copied to clipboard');
+    }).catch(() => {
+        // Fallback for insecure contexts or denied permissions
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = key;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            showToast('API key copied to clipboard');
+        } catch {
+            showToast('Failed to copy — please select and copy the key manually', 'error');
+        }
+    });
+});
+
+// Registered agent list actions (delegated)
+document.getElementById('registered-agents-list').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-ra-action]');
+    if (!btn) return;
+    const action = btn.dataset.raAction;
+    const id = btn.dataset.raId;
+    if (!id) return;
+
+    btn.disabled = true;
+
+    try {
+        if (action === 'rotate') {
+            const agent = registeredAgents.find(a => a.id === id);
+            if (!confirm(`Rotate key for "${agent?.name || id}"? The old key will stop working immediately.`)) {
+                btn.disabled = false;
+                return;
+            }
+            const result = await rotateAgentKey(id);
+            // Show the new key in a temporary alert
+            const keyResultEl = document.getElementById('ra-key-result');
+            document.getElementById('ra-key-value').textContent = result.api_key;
+            keyResultEl.style.display = 'block';
+            document.getElementById('register-agent-form').style.display = 'block';
+            document.getElementById('btn-save-register-agent').style.display = 'none';
+            showToast('Key rotated — copy the new key now');
+        } else if (action === 'remove') {
+            const agent = registeredAgents.find(a => a.id === id);
+            if (!confirm(`Remove agent "${agent?.name || id}"? This will deactivate it permanently.`)) {
+                btn.disabled = false;
+                return;
+            }
+            await deactivateAgent(id);
+            showToast('Agent removed');
+        }
+
+        await loadRegisteredAgents();
+    } catch (err) {
+        showToast('Action failed: ' + err.message, 'error');
+        btn.disabled = false;
+    }
 });
 
 // ------------------------------------------------------------------ Bound Agents (#108 Agent Binding)

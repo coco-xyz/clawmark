@@ -3056,6 +3056,13 @@ app.post('/api/v2/agent-channel/register', agentRegisterLimiter, v2Auth, (req, r
     }
 });
 
+// GET /api/v2/agent-channel/me — return current agent's info (authenticated via X-Agent-Key)
+app.get('/api/v2/agent-channel/me', apiReadLimiter, v2AuthOrAgent, (req, res) => {
+    const agent = req.v2Auth?.agent;
+    if (!agent) return res.status(401).json({ error: 'Agent key required' });
+    res.json({ id: agent.id, name: agent.name, status: agent.status, key_prefix: agent.key_prefix });
+});
+
 // GET /api/v2/agent-channel/agents — list agents for current app
 app.get('/api/v2/agent-channel/agents', apiReadLimiter, v2Auth, (req, res) => {
     const app_id = req.v2Auth?.app_id;
