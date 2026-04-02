@@ -382,14 +382,45 @@
 
                 <!-- Bound Agents (#108 Agent Binding) -->
                 <div class="card" id="bound-agents-card">
-                    <h3>Bound Agents</h3>
-                    <p class="help-text">Manage Agent bindings. Generate a token, send it to the Agent owner, and the Agent connects automatically via the <code>zylos-clawmark</code> component.</p>
-                    <div class="bound-agents-list" id="bound-agents-list">
-                        <div class="empty-state" id="bound-agents-empty">No agents bound yet. Click "+ Bind Agent" to get started.</div>
+                    <h3>Agents</h3>
+                    <p class="help-text">Register agents directly or invite external agents via binding token. Registered agents get an API key shown once — copy it immediately.</p>
+
+                    <!-- Registered Agents list -->
+                    <div class="bound-agents-list" id="registered-agents-list">
+                        <div class="empty-state" id="registered-agents-empty">No agents registered yet.</div>
                     </div>
-                    <div style="margin-top:12px;">
-                        <button class="btn btn-primary btn-small" id="btn-add-bound-agent">+ Bind Agent</button>
+
+                    <!-- Bound Agents list -->
+                    <div class="bound-agents-list" id="bound-agents-list" style="margin-top:8px;">
+                        <div class="empty-state" id="bound-agents-empty" style="display:none;">No bound agents.</div>
                     </div>
+
+                    <div style="margin-top:12px;display:flex;gap:8px;">
+                        <button class="btn btn-primary btn-small" id="btn-register-agent">+ Register Agent</button>
+                        <button class="btn btn-secondary btn-small" id="btn-add-bound-agent">+ Invite Agent</button>
+                    </div>
+
+                    <!-- Register Agent form -->
+                    <div class="bound-agent-form" id="register-agent-form" style="display:none;">
+                        <div class="form-row">
+                            <label class="form-label" for="ra-name">Agent Name</label>
+                            <input type="text" class="input" id="ra-name" placeholder="e.g. QA Bot" maxlength="100">
+                        </div>
+                        <div class="form-actions" style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+                            <button class="btn btn-primary btn-small" id="btn-save-register-agent">Register</button>
+                            <button class="btn btn-secondary btn-small" id="btn-cancel-register-agent">Cancel</button>
+                            <span class="help-text" id="ra-status" style="margin-left:8px;"></span>
+                        </div>
+                        <div class="ba-token-result" id="ra-key-result" style="display:none;">
+                            <label class="form-label">API Key <small>(shown only once — copy now!)</small></label>
+                            <div class="ba-token-box">
+                                <code id="ra-key-value" class="ba-token-code"></code>
+                                <button class="btn btn-secondary btn-small" id="btn-copy-agent-key">Copy</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bind Agent form (invite external agent) -->
                     <div class="bound-agent-form" id="bound-agent-form" style="display:none;">
                         <div class="form-row">
                             <label class="form-label" for="ba-label">Label <span style="color:var(--text-muted);font-weight:normal;">(optional, e.g. "QA Bot")</span></label>

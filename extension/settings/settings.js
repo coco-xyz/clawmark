@@ -158,17 +158,10 @@ btnCancelAgent.addEventListener('click', () => {
 });
 
 btnSaveAgent.addEventListener('click', async () => {
-    const name = agentNameInput.value.trim();
     const key = agentKeyInput.value.trim();
     const serverUrl = agentServerInput.value.trim();
 
-    // Validate
-    if (!name) {
-        agentFormStatus.textContent = 'Please enter an agent name';
-        agentFormStatus.className = 'form-status error';
-        return;
-    }
-
+    // Validate key
     if (!key.startsWith('cmak_') || key.length < 10) {
         agentFormStatus.textContent = 'Invalid API key — must start with cmak_ and be at least 10 characters';
         agentFormStatus.className = 'form-status error';
@@ -182,8 +175,8 @@ btnSaveAgent.addEventListener('click', async () => {
         return;
     }
 
-    // Test connection
-    agentFormStatus.textContent = 'Testing connection...';
+    // Verify key with server and fetch agent info
+    agentFormStatus.textContent = 'Verifying key...';
     agentFormStatus.className = 'form-status testing';
     btnSaveAgent.disabled = true;
 
@@ -199,6 +192,9 @@ btnSaveAgent.addEventListener('click', async () => {
             agentFormStatus.className = 'form-status error';
             return;
         }
+
+        // Use server-returned name if user left name blank
+        const name = agentNameInput.value.trim() || result.agentName || key.slice(0, 12);
 
         // Save agent
         const agent = {

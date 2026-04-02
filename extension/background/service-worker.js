@@ -594,7 +594,7 @@ async function handleMessage(message, sender) {
             const testKey = message.key;
             const testServerUrl = (message.serverUrl || (await getConfig()).serverUrl).replace(/\/$/, '');
             try {
-                const resp = await fetch(`${testServerUrl}/api/v2/agent-channel/perception/stats`, {
+                const resp = await fetch(`${testServerUrl}/api/v2/agent-channel/me`, {
                     method: 'GET',
                     headers: { 'X-Agent-Key': testKey },
                 });
@@ -605,7 +605,8 @@ async function handleMessage(message, sender) {
                 if (!resp.ok) {
                     return { error: `Server error (HTTP ${resp.status})` };
                 }
-                return { success: true };
+                const data = await resp.json();
+                return { success: true, agentId: data.id, agentName: data.name };
             } catch (err) {
                 return { error: err.message || 'Network error' };
             }
