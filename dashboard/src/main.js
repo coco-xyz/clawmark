@@ -1033,7 +1033,24 @@ document.getElementById('btn-save-register-agent').addEventListener('click', asy
 // Copy agent key button
 document.getElementById('btn-copy-agent-key')?.addEventListener('click', () => {
     const key = document.getElementById('ra-key-value').textContent;
-    navigator.clipboard.writeText(key).then(() => showToast('API key copied to clipboard'));
+    navigator.clipboard.writeText(key).then(() => {
+        showToast('API key copied to clipboard');
+    }).catch(() => {
+        // Fallback for insecure contexts or denied permissions
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = key;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            showToast('API key copied to clipboard');
+        } catch {
+            showToast('Failed to copy — please select and copy the key manually', 'error');
+        }
+    });
 });
 
 // Registered agent list actions (delegated)
