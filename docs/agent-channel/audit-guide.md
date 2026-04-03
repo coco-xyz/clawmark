@@ -48,6 +48,7 @@ ClawMark 提供三层审计记录，覆盖 Agent 的所有操作行为：
 | `cdp_action` | Agent 通过 CDP 执行浏览器操作 |
 | `auto_fix` | Agent 尝试自动修复 |
 | `classification` | AI 自动分类标注 |
+| `tag_generation` | AI 自动生成标签 |
 
 ### 查询方式
 

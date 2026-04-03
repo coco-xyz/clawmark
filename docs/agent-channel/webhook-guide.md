@@ -201,7 +201,7 @@ def handle_webhook():
 
 ```json
 {
-  "event_type": "perception.P1",
+  "event_type": "perception.error",
   "error": {
     "type": "runtime-error",
     "message": "TypeError: Cannot read property 'map' of undefined",
