@@ -182,7 +182,8 @@ class GitLabIssueAdapter {
                 ? `${this.serverUrl}${url}` : url;
             try {
                 const imageBuffer = await this._downloadFile(absoluteUrl);
-                const filename = url.split('/').pop() || 'screenshot.png';
+                const rawSegment = url.split('/').pop() || 'screenshot.png';
+                const filename = rawSegment.split('?')[0] || 'screenshot.png';
                 const result = await this._uploadFile(encodedProject, imageBuffer, filename);
                 if (result && result.markdown) {
                     urlMap.set(url, result.markdown);
@@ -221,7 +222,8 @@ class GitLabIssueAdapter {
         const parsed = new URL(this.baseUrl);
         const boundary = `----ClawMark${Date.now()}`;
         const disposition = `Content-Disposition: form-data; name="file"; filename="${filename}"`;
-        const contentType = filename.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        const ext = (filename.split('.').pop() || '').toLowerCase();
+        const contentType = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }[ext] || 'image/png';
 
         const header = Buffer.from(
             `--${boundary}\r\n${disposition}\r\nContent-Type: ${contentType}\r\n\r\n`
