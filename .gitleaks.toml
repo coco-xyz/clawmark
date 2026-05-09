@@ -1,0 +1,11 @@
+[allowlist]
+description = "Pre-existing findings audited at SAST setup — all are placeholder/example values in docs and test fixtures, not real credentials"
+commits = [
+  "ace2550aac47d36a4431cffd1b2062de1f5725ae",
+  "1060c57db7940a8619c4cf394e9faa809d5fed9e",
+  "3051a1bd80b8c89da1ae75bd12dfa6fd9f99f8fd",
+  "757ca6ca377cae46f211b389356401ec3fa84533",
+  "1e77f2b08f8454042c930dae4a1d597920d21341",
+  "bfc8f0ceb500f2e20b5f753b9fd4364462ef175a",
+  "c33036fb1859969b0457e4f166ed16ce5ecc8c86",
+]
