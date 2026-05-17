@@ -1,0 +1,11 @@
+.git
+.env
+config.json
+data/
+*.db
+test/
+dashboard/node_modules/
+extension/
+docs/
+*.zip
+node_modules/
